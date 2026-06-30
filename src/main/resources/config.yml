@@ -1,0 +1,32 @@
+# ExclusiveArenas Configuration
+# Plugin version this config was generated for. Do not change — used for automatic migration.
+config-version: 1
+
+private:
+  # How long (in seconds) the lobby countdown is set to when a private match is created.
+  # The countdown is paused by default until the host explicitly starts it.
+  lobby_time_seconds: 120
+
+  # How long (in minutes) to keep a private session alive after the host leaves the lobby.
+  # Once this expires with no host present, the session is ended and the arena is released.
+  host_abandon_timeout_minutes: 5
+
+  # Sessions older than this many hours are forcibly ended to prevent stuck state.
+  # Only applies when the arena is not in an active RUNNING game.
+  stale_session_hours: 12
+
+messages:
+  # Shown when a player tries to join a private arena gated by party membership.
+  # Placeholders: %arena% = arena name, %owner% = host's username
+  locked_hint_party: "&cThat arena is private. Join &f%owner%&c's party to enter."
+
+  # Shown when a player tries to join a private arena gated by join code.
+  # Placeholders: %arena% = arena name, %code% = the join code
+  locked_hint_code: "&cThat arena is private. Use &f/ea join <code>&c to enter."
+
+  # Shown when a player tries to join a private arena that has been set to Private (locked).
+  # Placeholders: %arena% = arena name
+  locked_private: "&cThat arena is currently set to private and is not accepting joins."
+
+  # Shown when the host's arena session is ended due to the abandon timeout.
+  session_abandoned: "&cPrivate match ended: the host did not return in time."

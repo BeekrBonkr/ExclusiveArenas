@@ -1,0 +1,20 @@
+name: ExclusiveArenas
+main: com.slg.exclusivearenas.ExclusiveArenasPlugin
+version: 1.0.0
+api-version: 1.21
+
+depend: [MBedwars]
+
+commands:
+  ea:
+    description: ExclusiveArenas — private match creation and controls for MBedwars.
+    usage: /ea [menu|arena|help|lobby|join|start|end|summon]
+    permission: exclusivearenas.command
+
+permissions:
+  exclusivearenas.command:
+    description: Allows players to create and manage private arenas.
+    default: true
+  exclusivearenas.bypass:
+    description: Allows bypassing private-match join restrictions.
+    default: op
