@@ -49,7 +49,7 @@ with its default value automatically on startup, and every key is commented inli
 | `/ea arena` (or `create`, `builder`) | Jump straight to the match builder |
 | `/ea list` (or `arenas`) | Open Arena Management — the matches you host |
 | `/ea help` | In-game help panel |
-| `/ea join <code>` | Join a private match by its join code |
+| `/ea join [code]` | Join a private match by its join code — or with no code at all, or any code, if your party's leader hosts an active match (that always takes priority) |
 | `/ea lobby` (or `controls`) | Open Match Controls for the match you're standing in |
 | `/ea start` | Start the match right now (host only) — also works when controlling remotely |
 | `/ea end` | End the match (host only) — also works when controlling remotely |
@@ -66,19 +66,25 @@ server actually hosts the arena; see [Remote Control](#remote-control)).
 ## Hosting a Private Match
 
 1. Run `/ea` and click **Arena Management**, then **Create New Arena** (or `/ea arena` directly).
-2. Click **Select Map** and choose an arena from the list. Each entry shows the arena's own
+2. **Join Policy is automatic, not a choice** — it's set from your current party leadership the
+   moment you open the builder:
+   - Leading a party → **Party Only**: only your party members may join.
+   - Not in a party at all → **Join Code**: players join with `/ea join <code>`.
+   - In a party but *not* its leader → the whole builder is locked; you're told to leave the
+     party instead (party members should join their leader's match — see `/ea join` below —
+     not create a competing one of their own).
+3. Click **Select Map** and choose an arena from the list. Each entry shows the arena's own
    MBedwars icon, and can be filtered by **team count** and **players per team** — the filter
    buttons cycle through values discovered from your actual arena roster, not a fixed list.
-3. Choose your **Join Policy**:
-   - **Party Only** — only members of your MBedwars party may join. You must be the *leader*
-     of a party to pick this (every Party-policy gating check assumes the host is a leader).
-   - **Join Code** — players join with `/ea join <code>`. You can't pick this while you're in
-     any party (mixing the two caused joiners to end up teleported in without properly joining).
 4. **Auto-Summon** (Party policy only) — keeps your party continuously synced with the match:
    members not currently in it get pulled in (with a chat message explaining why), and anyone
    who leaves your party gets removed from the match.
-5. Click **Create & Join** — the match is created and you're sent straight in, locally or across
-   servers.
+5. Click **Create & Join** to create the match and be sent straight in, locally or across
+   servers — or **shift-click** to create it without joining (grants you a ticket, so **Go to
+   Arena** in Match Controls still works whenever you're ready).
+
+You also can't open the builder at all while already inside one of your own private matches —
+leave it first.
 
 ### Match Controls
 
@@ -88,7 +94,8 @@ Open via the arena's entry in **Arena Management**, `/ea lobby`, or the host-onl
 - **Start Match** — begins the round immediately. There's no pre-game timer to wait out; MBedwars'
   own automatic lobby countdown is suppressed entirely, so the match only ever starts when you
   press this. Requires at least one other player in the arena.
-- **Join Policy** — switch between Party and Join Code live, while still in the lobby.
+- **Join Policy** — a live indicator of the match's current policy (still switchable here, on
+  an already-created match, unlike the automatic builder above).
 - **Public / Locked** (Code policy) or **Summon Party** (Party policy).
 - **Regenerate Code** (Code policy) — invalidates the old code and issues a new one.
 - **Manage Teams** — move players between teams while in the lobby (see below). Requires being
@@ -98,7 +105,7 @@ Open via the arena's entry in **Arena Management**, `/ea lobby`, or the host-onl
 - **Arena Settings** / **Quick Actions** — placeholder menus reserved for planned features
   (event timing, shop restrictions, cosmetics, one-click shortcuts); nothing in them does
   anything yet.
-- **End Match** — closes the session and kicks everyone.
+- **End Match** — closes the session and kicks everyone, players and spectators alike.
 
 #### Manage Teams
 
@@ -113,8 +120,8 @@ the team has room for flips the menu's title into a warning until you free up a 
 
 - Joining a Join Code match that's already `RUNNING` automatically spectates you instead of
   failing.
-- The [spectate-on-start lobby item](#custom-lobby-hotbar-items) lets any player opt out of
-  playing before the round begins.
+- The [spectate lobby item](#custom-lobby-hotbar-items) lets any player opt out of playing —
+  immediately, not just at round start — freeing their slot for someone else.
 
 ---
 
@@ -123,9 +130,9 @@ the team has room for flips the menu's title into a warning until you free up a 
 ExclusiveArenas registers two MBedwars lobby hotbar item **handlers**. Registering only makes a
 handler available by id — it won't appear anywhere until you add an entry referencing it to
 your live `lobby-hotbar.yml` (under `plugins/MBedwars/configs/.../lobby-hotbar.yml`; see
-MBedwars' own docs for the exact versioned path). Slot, icon, and display name are entirely up
-to you. Both items only ever appear inside an ExclusiveArenas private match — never on a regular
-public arena.
+MBedwars' own docs for the exact versioned path). Slot is yours to choose; name/item are just
+placeholders for `toggle-spectate`, which overrides its own icon and name at render time. Both
+items only ever appear inside an ExclusiveArenas private match — never on a regular public arena.
 
 ```yaml
 open-controls:
@@ -143,9 +150,12 @@ toggle-spectate:
 
 - **`exclusivearenas:open_controls`** — opens Match Controls for the host, without needing
   `/ea lobby`.
-- **`exclusivearenas:toggle_spectate`** — lets a player opt out of playing. Using it leaves
-  their team; using it again cancels the opt-out. Anyone still opted out when the round starts
-  is converted to a spectator instead of being forced onto a team.
+- **`exclusivearenas:toggle_spectate`** — lets a player opt out of playing. Using it immediately
+  converts them to a spectator — leaving their team and freeing their player slot right away,
+  rather than waiting until the round starts — and turns the item **green** (gray = joining as
+  a player). Using it again converts them back to a player and turns it gray. Being moved onto
+  a real team by any other means also clears the opt-out. A defensive check at round start
+  catches anyone still marked opted-out who somehow isn't already spectating.
 
 ---
 
