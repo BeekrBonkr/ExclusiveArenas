@@ -413,11 +413,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         String canonical = ArenaNames.canonical(arenaName);
         Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(canonical);
         if (local != null && local.exists()) {
-            if (local.getStatus() == ArenaStatus.RUNNING && !local.isPlaying(player)) {
-                local.addSpectator(player, SpectateReason.ENTER);
-            } else {
-                local.addPlayer(player);
-            }
+            addToArenaWithRetry(player, local, 3);
             return;
         }
 
@@ -432,6 +428,31 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             getLogger().warning("Failed to dispatch join command for " + arenaName + ": " + t.getMessage());
             player.sendMessage(ItemUtil.color("&cArena &f" + arenaName + " &cis unavailable."));
         }
+    }
+
+    /**
+     * Adds a player to a LOCAL arena, retrying a few times over ~1.5s if MBedwars doesn't
+     * actually register them the first time. Sometimes — most often right after an arena is
+     * freshly reserved — a join call ends up teleporting the player in without properly
+     * registering them as playing, and nothing else follows up on that except the next sweep
+     * of {@link ArenaEntryGuardTask}. This reacts immediately instead of waiting for that.
+     */
+    private void addToArenaWithRetry(Player player, Arena arena, int attemptsLeft) {
+        if (!player.isOnline()) return;
+        boolean registered = arena.getPlayers().contains(player) || arena.isSpectating(player);
+        if (!registered) {
+            if (arena.getStatus() == ArenaStatus.RUNNING) {
+                arena.addSpectator(player, SpectateReason.ENTER);
+            } else {
+                arena.addPlayer(player);
+            }
+        }
+        if (attemptsLeft <= 0) return;
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (!player.isOnline()) return;
+            boolean nowRegistered = arena.getPlayers().contains(player) || arena.isSpectating(player);
+            if (!nowRegistered) addToArenaWithRetry(player, arena, attemptsLeft - 1);
+        }, 10L);
     }
 
     /** True if the arena exists (locally or remotely) and is an empty lobby ready to be reserved. */
@@ -674,18 +695,9 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         Arena localArena = BedwarsAPI.getGameAPI().getArenaByExactName(arenaName);
         Player localPlayer = Bukkit.getPlayer(memberId);
 
-        // Both here → add directly (skip if they're already in this arena). A match already
-        // RUNNING can't accept new players, so pull them in as a spectator instead.
+        // Both here → add directly (skip if they're already in this arena).
         if (localArena != null && localArena.exists() && localPlayer != null && localPlayer.isOnline()) {
-            boolean alreadyThere = localArena.getPlayers().contains(localPlayer)
-                    || localArena.isSpectating(localPlayer);
-            if (!alreadyThere) {
-                if (localArena.getStatus() == ArenaStatus.RUNNING) {
-                    localArena.addSpectator(localPlayer, SpectateReason.ENTER);
-                } else {
-                    localArena.addPlayer(localPlayer);
-                }
-            }
+            addToArenaWithRetry(localPlayer, localArena, 3);
             if (onSuccess != null) onSuccess.run(); // synchronous local add — they're already there
             return;
         }
