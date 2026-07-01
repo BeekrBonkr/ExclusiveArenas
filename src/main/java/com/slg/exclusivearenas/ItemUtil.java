@@ -3,6 +3,7 @@ package com.slg.exclusivearenas;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.OfflinePlayer;
+import org.bukkit.enchantments.Enchantment;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -59,8 +60,14 @@ public final class ItemUtil {
                 for (String l : lore) if (l != null) lines.add(color(l));
                 skull.setLore(lines);
             }
-            skull.addItemFlags(ItemFlag.HIDE_ATTRIBUTES, ItemFlag.HIDE_ADDITIONAL_TOOLTIP);
-            if (glowing) skull.setEnchantmentGlintOverride(true);
+            skull.addItemFlags(ItemFlag.HIDE_ATTRIBUTES, ItemFlag.HIDE_ADDITIONAL_TOOLTIP, ItemFlag.HIDE_ENCHANTS);
+            if (glowing) {
+                // Belt-and-suspenders: the modern glint override should be enough on its own,
+                // but a real (hidden) enchant is the long-battle-tested way to force a glint on
+                // a skull, in case the override alone doesn't render for every client/version.
+                skull.addEnchant(Enchantment.UNBREAKING, 1, true);
+                skull.setEnchantmentGlintOverride(true);
+            }
             item.setItemMeta(skull);
         }
         return item;
