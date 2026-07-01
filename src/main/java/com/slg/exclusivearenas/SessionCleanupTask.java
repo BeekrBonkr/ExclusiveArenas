@@ -46,7 +46,6 @@ public final class SessionCleanupTask extends BukkitRunnable {
                             "&cPrivate match ended: the host did not return in time.")));
                 }
                 sessions.endSession(session);
-                plugin.getNetworkBus().broadcastEnd(session.getSessionId());
                 continue;
             }
 
@@ -57,7 +56,6 @@ public final class SessionCleanupTask extends BukkitRunnable {
                     plugin.getLogger().info("Ending stale session for arena "
                             + session.getArenaName() + " (created " + session.getCreatedAt() + ")");
                     sessions.endSession(session);
-                    plugin.getNetworkBus().broadcastEnd(session.getSessionId());
                 }
             }
         }
