@@ -52,7 +52,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
         switch (sub) {
             case "menu" -> gui.openMainMenu(p);
 
-            case "arena", "create", "builder" -> gui.openBuilder(p);
+            case "arena", "create", "builder" -> plugin.openBuilderMenu(p);
 
             case "list", "arenas" -> gui.openArenaList(p, 0);
 

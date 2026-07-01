@@ -328,13 +328,62 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     // ── Create & join ──────────────────────────────────────────────────────────
 
     /**
+     * Opens the match builder, first resolving the join policy from the player's current party
+     * leadership — a party leader always builds a Party-policy match, someone with no party
+     * always builds a Join Code match, and a party member who isn't its leader can't build one
+     * at all (they should join their leader's match instead; see {@code /ea join}).
+     */
+    public void openBuilderMenu(Player p) {
+        PartyResolver.getPartyMember(p, opt -> {
+            boolean inParty = opt.isPresent();
+            boolean isLeader = inParty && opt.get().getParty().getLeaders().stream()
+                    .anyMatch(leader -> leader.getUniqueId().equals(p.getUniqueId()));
+            boolean blocked = inParty && !isLeader;
+
+            Bukkit.getScheduler().runTask(this, () -> {
+                DraftPrivateMatch draft = draftService.getOrCreate(p.getUniqueId());
+                draft.setPartyBlocked(blocked);
+                if (!blocked) {
+                    draft.setJoinPolicy(isLeader ? JoinPolicy.PARTY : JoinPolicy.CODE);
+                    if (draft.getJoinPolicy() == JoinPolicy.CODE) {
+                        draft.setAutoSummon(false); // only meaningful for Party policy
+                        if (draft.getJoinCode() == null || draft.getJoinCode().isBlank()) {
+                            draft.setJoinCode(sessionService.generateCode());
+                        }
+                    }
+                }
+                guiManager.openBuilder(p);
+                if (blocked) {
+                    p.sendMessage(ItemUtil.color("&cYou're in someone else's party — leave it to host "
+                            + "your own private match, or use &f/ea join&c to join your leader's match."));
+                }
+            });
+        });
+    }
+
+    /**
      * Creates the private session described by the host's draft and immediately sends the
      * host into the chosen arena — local or on another server. Replaces the old two-step
      * "creation mode" flow with a single action from the builder.
      */
     public void createAndJoin(Player host, DraftPrivateMatch draft) {
+        createAndJoin(host, draft, true);
+    }
+
+    /**
+     * @param joinAfterCreate false to create the session without sending the host in (used for
+     *                        a shift-click on Create & Join) — a ticket is still granted, so
+     *                        "Go to Arena" in Match Controls works whenever they're ready.
+     */
+    public void createAndJoin(Player host, DraftPrivateMatch draft, boolean joinAfterCreate) {
         if (draft == null || !draft.isReadyToCreate()) {
             host.sendMessage(ItemUtil.color("&cSelect a map first."));
+            return;
+        }
+
+        Arena currentArena = BedwarsAPI.getGameAPI().getArenaByPlayer(host);
+        if (currentArena != null && sessionService.getByArena(currentArena) != null) {
+            host.sendMessage(ItemUtil.color("&cLeave your current private match before creating another one."));
             return;
         }
 
@@ -355,11 +404,11 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                     return;
                 }
             }
-            Bukkit.getScheduler().runTask(this, () -> finishCreateAndJoin(host, draft));
+            Bukkit.getScheduler().runTask(this, () -> finishCreateAndJoin(host, draft, joinAfterCreate));
         });
     }
 
-    private void finishCreateAndJoin(Player host, DraftPrivateMatch draft) {
+    private void finishCreateAndJoin(Player host, DraftPrivateMatch draft, boolean joinAfterCreate) {
         String arenaName = draft.getArenaName();
 
         int limit = getArenaLimit(host);
@@ -392,7 +441,8 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(canonical);
         if (local != null) prepareLobby(local, session);
 
-        host.sendMessage(ItemUtil.color("&aCreated your private match on &f" + canonical + "&a! Sending you in…"));
+        host.sendMessage(ItemUtil.color("&aCreated your private match on &f" + canonical + "&a!"
+                + (joinAfterCreate ? " Sending you in…" : "")));
         if (session.getJoinPolicy() == JoinPolicy.CODE) {
             host.sendMessage(ItemUtil.color("&7Join code: &f" + session.getJoinCode()
                     + " &7— share with &f/ea join " + session.getJoinCode()));
@@ -400,7 +450,11 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             host.sendMessage(ItemUtil.color("&7Gating: &aParty members only."));
         }
 
-        sendPlayerToArena(host, canonical);
+        if (joinAfterCreate) {
+            sendPlayerToArena(host, canonical);
+        } else {
+            host.sendMessage(ItemUtil.color("&7Use &fGo to Arena&7 in Match Controls whenever you're ready."));
+        }
     }
 
     /**
