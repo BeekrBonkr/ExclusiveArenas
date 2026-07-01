@@ -46,7 +46,11 @@ public final class ArenaBossBarTask extends BukkitRunnable {
             active.add(session.getSessionId());
             BossBar bar = bars.computeIfAbsent(session.getSessionId(),
                     id -> Bukkit.createBossBar("", BarColor.YELLOW, BarStyle.SOLID));
-            bar.setTitle(buildTitle(session, arena));
+
+            // Only push a title update when it actually changed — avoids sending an identical
+            // boss bar packet to every viewer once a second for no reason.
+            String title = buildTitle(session, arena);
+            if (!title.equals(bar.getTitle())) bar.setTitle(title);
 
             Set<Player> shouldSee = new HashSet<>(arena.getPlayers());
             shouldSee.addAll(arena.getSpectators());
