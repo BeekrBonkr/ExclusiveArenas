@@ -32,6 +32,8 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     private PrivacyConditionVariable privacyConditionVariable;
     private ArenaBossBarTask bossBarTask;
     private org.bukkit.scheduler.BukkitTask bossBarSchedulerTask;
+    private SpectateOnStartHandler spectateOnStartHandler;
+    private MatchControlsLobbyItemHandler matchControlsLobbyItemHandler;
 
     @Override
     public void onEnable() {
@@ -81,9 +83,45 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         startAutoSummon();
         startBossBar();
         registerConditionVariable();
+        registerLobbyItemHandlers();
 
         getLogger().info("ExclusiveArenas v" + getDescription().getVersion() + " enabled ("
                 + (database != null ? "database mode" : "single-server mode") + ").");
+    }
+
+    /**
+     * Registers our custom MBedwars lobby hotbar items. Registering only makes the handler
+     * available by id — an admin still has to add an entry referencing it to MBedwars' own
+     * lobby-hotbar.yml (slot/icon/name are entirely up to them):
+     *   - "exclusivearenas:open_controls"  → visible only to the match's host; opens Match Controls.
+     *   - "exclusivearenas:toggle_spectate" → any player; opts out of playing, spectates at round start.
+     */
+    private void registerLobbyItemHandlers() {
+        try {
+            this.matchControlsLobbyItemHandler = new MatchControlsLobbyItemHandler(this, sessionService, guiManager);
+            BedwarsAPI.getGameAPI().registerLobbyItemHandler(matchControlsLobbyItemHandler);
+
+            this.spectateOnStartHandler = new SpectateOnStartHandler(this, sessionService);
+            BedwarsAPI.getGameAPI().registerLobbyItemHandler(spectateOnStartHandler);
+            Bukkit.getPluginManager().registerEvents(spectateOnStartHandler, this);
+        } catch (Throwable t) {
+            getLogger().warning("Could not register lobby item handlers: " + t.getMessage());
+        }
+    }
+
+    private void unregisterLobbyItemHandlers() {
+        try {
+            if (matchControlsLobbyItemHandler != null) {
+                BedwarsAPI.getGameAPI().unregisterLobbyItemHandler(matchControlsLobbyItemHandler);
+            }
+            if (spectateOnStartHandler != null) {
+                BedwarsAPI.getGameAPI().unregisterLobbyItemHandler(spectateOnStartHandler);
+            }
+        } catch (Throwable ignored) {
+            // best effort on shutdown
+        }
+        matchControlsLobbyItemHandler = null;
+        spectateOnStartHandler = null;
     }
 
     /**
@@ -237,6 +275,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         stopAutoSummon();
         stopBossBar();
         unregisterConditionVariable();
+        unregisterLobbyItemHandlers();
         teardownDatabase();
         if (addon != null && addon.isRegistered()) addon.unregister();
         getLogger().info("ExclusiveArenas disabled.");
