@@ -17,5 +17,8 @@ Thumbs.db
 # Local secrets / env
 local.properties
 
+# Machine-specific Gradle overrides (e.g. a pinned JDK path)
+gradle.properties
+
 # Compiled output
 *.class

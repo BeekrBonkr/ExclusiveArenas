@@ -1,5 +1,6 @@
 plugins {
     id 'java'
+    id 'com.gradleup.shadow' version '9.0.0'
 }
 
 group = 'com.slg'
@@ -13,14 +14,41 @@ repositories {
 dependencies {
     compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
     compileOnly files('libs/MBedwars.jar')
+
+    // Shaded into the plugin jar — this is our own, standalone cross-server store.
+    implementation 'org.mariadb.jdbc:mariadb-java-client:3.5.3'
+    implementation 'com.zaxxer:HikariCP:6.3.0'
 }
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     options.release = 21
-    options.fork = true
-    options.forkOptions.executable = '/usr/lib/jvm/java-21-openjdk/bin/javac'
 }
+
+// Relocate the bundled libraries under our package so they can't clash with
+// another plugin (or the server) shipping a different HikariCP / driver version.
+def shadeBase = 'com.slg.exclusivearenas.libs'
+
+shadowJar {
+    archiveBaseName = 'ExclusiveArenas'
+    archiveClassifier = ''
+
+    // REQUIRED: rewrites META-INF/services/java.sql.Driver to the relocated driver
+    // class name. Without it the JDBC driver never registers and connections fail.
+    mergeServiceFiles()
+
+    relocate 'com.zaxxer.hikari', "${shadeBase}.hikari"
+    relocate 'org.mariadb.jdbc', "${shadeBase}.mariadb"
+
+    minimize {
+        // The driver is only referenced reflectively (via the service file), so
+        // minimize can't see it is used — keep it in full.
+        exclude(dependency('org.mariadb.jdbc:mariadb-java-client:.*'))
+    }
+}
+
+// Produce the shaded jar as the primary build artifact.
+build.dependsOn shadowJar
 
 jar {
     archiveBaseName = 'ExclusiveArenas'
