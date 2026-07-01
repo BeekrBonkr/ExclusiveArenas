@@ -20,7 +20,7 @@ public final class GuiHolder implements InventoryHolder {
 
     public enum Type {
         MAIN, ARENA_LIST, ADMIN_LIST, BUILDER, ARENA_SELECT, CONTROLS, ARENA_CONFIG,
-        TEAM_SELECT, TEAM_PLAYERS, HELP
+        TEAM_SELECT, TEAM_PLAYERS, QUICK_ACTIONS, HELP
     }
 
     private final Type type;

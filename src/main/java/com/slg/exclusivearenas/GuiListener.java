@@ -58,6 +58,7 @@ public final class GuiListener implements Listener {
             case ARENA_SELECT-> handleArenaSelect(p, gh, slot, clicked);
             case CONTROLS    -> handleControls(p, gh, slot);
             case ARENA_CONFIG-> handleArenaConfig(p, gh, slot);
+            case QUICK_ACTIONS-> handleQuickActions(p, gh, slot);
             case TEAM_SELECT -> handleTeamSelect(p, gh, slot);
             case TEAM_PLAYERS-> handleTeamPlayers(p, gh, slot, e.isShiftClick());
             case HELP        -> { if (slot == 22) gui.openMainMenu(p); }
@@ -195,6 +196,7 @@ public final class GuiListener implements Listener {
 
         switch (slot) {
             case 13 -> gui.openArenaConfig(p, session, gh.adminView()); // Arena settings (planned)
+            case 34 -> gui.openQuickActions(p, session, gh.adminView()); // Quick actions (planned)
             case 15 -> { // Manage teams (lobby only, requires the arena to be local)
                 if (!onThisServer) { p.sendMessage(color("&cTeam management requires being on the arena's server.")); return; }
                 if (!arena.getStatus().isLobby()) { p.sendMessage(color("&cTeams can only be managed while the arena is in its lobby.")); return; }
@@ -258,6 +260,18 @@ public final class GuiListener implements Listener {
     // ── Arena settings (planned feature — stubs only) ────────────────────────────────
 
     private void handleArenaConfig(Player p, GuiHolder gh, int slot) {
+        if (slot != 22) return; // only the Back button does anything right now
+
+        PrivateSession session = sessions.getById(gh.sessionId());
+        if (session == null) {
+            p.sendMessage(color("&cThat match no longer exists."));
+            reopenList(p, gh.adminView(), 0);
+            return;
+        }
+        gui.openControls(p, session, gh.adminView());
+    }
+
+    private void handleQuickActions(Player p, GuiHolder gh, int slot) {
         if (slot != 22) return; // only the Back button does anything right now
 
         PrivateSession session = sessions.getById(gh.sessionId());
