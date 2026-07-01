@@ -8,7 +8,7 @@ depend: [MBedwars]
 commands:
   ea:
     description: ExclusiveArenas — private match creation and controls for MBedwars.
-    usage: /ea [menu|arena|help|lobby|join|start|end|summon]
+    usage: /ea [menu|arena|list|help|join|start|end|summon|admin|reload]
     permission: exclusivearenas.command
 
 permissions:
@@ -18,3 +18,9 @@ permissions:
   exclusivearenas.bypass:
     description: Allows bypassing private-match join restrictions.
     default: op
+  exclusivearenas.admin:
+    description: Full admin control — the admin panel, controlling any match, and /ea reload.
+    default: op
+  exclusivearenas.limit.unlimited:
+    description: Allows hosting an unlimited number of simultaneous private matches.
+    default: false

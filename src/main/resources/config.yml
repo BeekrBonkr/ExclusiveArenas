@@ -1,11 +1,65 @@
 # ExclusiveArenas Configuration
 # Plugin version this config was generated for. Do not change — used for automatic migration.
-config-version: 1
+config-version: 4
+
+# Verbose debug logging. When true, ExclusiveArenas logs detailed database and sync activity
+# to the console. Leave false for normal operation — errors are always logged regardless.
+debug: false
+
+# Set true on your HUB/lobby server(s). When true, ExclusiveArenas prefixes the arena name
+# with '@' when routing a player to a match on another backend (MBedwars' remote-arena marker),
+# so cross-server joins work without you editing join_command_template by hand.
+is_hub_server: false
+
+# Unique id for THIS backend server. Stamped on sessions it creates in the shared database.
+# Give every server on the network a distinct value.
+server_id: "server-1"
+
+# Cross-server state is shared through our own MySQL/MariaDB database (not MBedwars').
+# When disabled, the plugin runs single-server in-memory exactly as before.
+database:
+  enabled: false
+  host: "localhost"
+  port: 3306
+  database: "exclusivearenas"
+  user: "root"
+  password: ""
+  # Tables are created as <table_prefix>sessions and <table_prefix>tickets.
+  table_prefix: "ea_"
+  use_ssl: false
+  # How often (seconds) each backend reconciles its caches against the database.
+  session_poll_seconds: 4
+  ticket_poll_seconds: 1
+  # How often each backend checks for remote commands queued against arenas it hosts (e.g. a
+  # host clicking Start/End Match from another server). Lower = more responsive remote control.
+  command_poll_seconds: 2
+
+network:
+  # Command dispatched (as the player) to transfer them to the backend hosting an arena that
+  # is not on this server. Placeholders: %arena% = arena name, %player% = player name.
+  join_command_template: "bw join %arena%"
 
 private:
-  # How long (in seconds) the lobby countdown is set to when a private match is created.
-  # The countdown is paused by default until the host explicitly starts it.
-  lobby_time_seconds: 120
+  # How long (in seconds) a join ticket stays valid before it expires. A ticket authorises
+  # one player to pass gating for a single join attempt (and to survive a cross-server hop).
+  ticket_ttl_seconds: 30
+
+  # Default number of simultaneous private matches a player may host when they have no
+  # exclusivearenas.limit.<n> permission. Grant exclusivearenas.limit.5 for five, or
+  # exclusivearenas.limit.unlimited (and exclusivearenas.admin) for no cap.
+  default_arena_limit: 1
+
+  # Length of generated join codes, in characters (minimum 4).
+  join_code_length: 6
+
+  # How often (seconds) each server checks its online players and pulls new party members
+  # into a match whose host enabled "Auto-summon". MBedwars already moves the host's existing
+  # party members; this handles people who join the party after the match has started.
+  auto_summon_poll_seconds: 5
+
+  # Shows everyone inside a private match's arena an orange-ish boss bar stating that it's
+  # private, its join policy, and whether the timer is currently paused.
+  bossbar_enabled: true
 
   # How long (in minutes) to keep a private session alive after the host leaves the lobby.
   # Once this expires with no host present, the session is ended and the arena is released.
@@ -14,6 +68,15 @@ private:
   # Sessions older than this many hours are forcibly ended to prevent stuck state.
   # Only applies when the arena is not in an active RUNNING game.
   stale_session_hours: 12
+
+# ExclusiveArenas registers an MBedwars arena-picker condition variable named
+# "exclusivearenas_private" (1 while an arena hosts one of our private matches, else 0).
+# To keep reserved private lobbies out of MBedwars' own ArenasGUI menu, add a condition to
+# the "arenas-collection" element(s) of your live ArenasGUI layout file(s)
+# (plugins/MBedwars/arenasgui-layouts/...), e.g.:
+#   - type: arenas-collection
+#     condition: "[exclusivearenas_private=0]"
+#     area: ...
 
 messages:
   # Shown when a player tries to join a private arena gated by party membership.

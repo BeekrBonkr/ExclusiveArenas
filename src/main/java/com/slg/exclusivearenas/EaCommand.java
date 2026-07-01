@@ -54,14 +54,33 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
 
             case "arena", "create", "builder" -> gui.openBuilder(p);
 
+            case "list", "arenas" -> gui.openArenaList(p, 0);
+
             case "help" -> gui.openHelp(p);
+
+            case "admin" -> {
+                if (!p.hasPermission(GuiManager.ADMIN_PERM)) {
+                    p.sendMessage(color("&cYou don't have permission for that."));
+                    return true;
+                }
+                gui.openAdminList(p, 0);
+            }
+
+            case "reload" -> {
+                if (!p.hasPermission(GuiManager.ADMIN_PERM)) {
+                    p.sendMessage(color("&cYou don't have permission for that."));
+                    return true;
+                }
+                plugin.reload();
+                p.sendMessage(color("&aExclusiveArenas configuration reloaded."));
+            }
 
             case "lobby", "controls" -> {
                 Arena arena = BedwarsAPI.getGameAPI().getArenaByPlayer(p);
                 if (arena == null) { p.sendMessage(color("&cYou are not in an arena.")); return true; }
                 PrivateSession session = sessions.getByArena(arena);
                 if (session == null) { p.sendMessage(color("&cThis is not a private match.")); return true; }
-                gui.openLobbyControls(p, session, arena);
+                gui.openControls(p, session, p.hasPermission(GuiManager.ADMIN_PERM));
             }
 
             case "join" -> {
@@ -72,18 +91,13 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
             case "start" -> {
                 PrivateSession session = requireHostedSession(p);
                 if (session == null) return true;
-                Arena arena = BedwarsAPI.getGameAPI().getArenaByPlayer(p);
-                plugin.startLobbyCountdown(arena, session);
+                plugin.requestStartMatch(p, session);
             }
 
             case "end" -> {
                 PrivateSession session = requireHostedSession(p);
                 if (session == null) return true;
-                Arena arena = BedwarsAPI.getGameAPI().getArenaByPlayer(p);
-                arena.broadcast(color("&cThe host ended the private match."));
-                sessions.endSession(session);
-                plugin.getNetworkBus().broadcastEnd(session.getSessionId());
-                arena.kickAllPlayers();
+                plugin.requestEndMatch(p, session);
             }
 
             case "summon" -> {
@@ -93,8 +107,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                     p.sendMessage(color("&c/ea summon only works for Party-policy matches."));
                     return true;
                 }
-                Arena arena = BedwarsAPI.getGameAPI().getArenaByPlayer(p);
-                plugin.summonPartyToArena(p, arena, session);
+                plugin.summonPartyToArena(p, session);
             }
 
             default -> {
@@ -117,22 +130,23 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
-        // Authorise this player on the arena server (local grant + network broadcast), then route them.
+        // Authorise this player (write-through to the shared DB) then route them to the arena.
         tickets.grant(p.getUniqueId(), session.getSessionId(), session.getArenaName());
-        plugin.getNetworkBus().broadcastTicket(p.getUniqueId(), session.getSessionId(), session.getArenaName());
         plugin.sendPlayerToArena(p, session.getArenaName());
     }
 
-    /** Returns the session the player is hosting in their current arena, or null with an error. */
+    /**
+     * Returns the private match this player should be controlling: whatever they're physically
+     * standing in, if it's a private match, otherwise whichever match they host — so these
+     * commands also work when controlling the arena remotely, from elsewhere on the network.
+     */
     private PrivateSession requireHostedSession(Player p) {
         Arena arena = BedwarsAPI.getGameAPI().getArenaByPlayer(p);
-        if (arena == null) {
-            p.sendMessage(color("&cYou are not in an arena."));
-            return null;
-        }
-        PrivateSession session = sessions.getByArena(arena);
+        PrivateSession session = arena != null ? sessions.getByArena(arena) : null;
+
+        if (session == null) session = sessions.getByOwner(p.getUniqueId());
         if (session == null) {
-            p.sendMessage(color("&cThis is not a private match."));
+            p.sendMessage(color("&cYou aren't hosting a private match."));
             return null;
         }
         if (!p.getUniqueId().equals(session.getOwner()) && !p.hasPermission(PERM_BYPASS)) {
@@ -145,9 +159,13 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) {
-            return partial(args[0], Arrays.asList(
-                    "menu", "arena", "help", "lobby", "join",
-                    "start", "end", "summon"));
+            List<String> subs = new java.util.ArrayList<>(Arrays.asList(
+                    "menu", "arena", "list", "help", "lobby", "join", "start", "end", "summon"));
+            if (sender.hasPermission(GuiManager.ADMIN_PERM)) {
+                subs.add("admin");
+                subs.add("reload");
+            }
+            return partial(args[0], subs);
         }
         return Collections.emptyList();
     }
