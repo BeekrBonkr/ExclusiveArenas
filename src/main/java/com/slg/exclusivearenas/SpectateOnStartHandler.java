@@ -1,13 +1,19 @@
 package com.slg.exclusivearenas;
 
+import de.marcely.bedwars.api.BedwarsAPI;
 import de.marcely.bedwars.api.arena.Arena;
 import de.marcely.bedwars.api.event.arena.RoundStartEvent;
+import de.marcely.bedwars.api.event.player.PlayerTeamChangeEvent;
 import de.marcely.bedwars.api.game.lobby.LobbyItem;
 import de.marcely.bedwars.api.game.lobby.LobbyItemHandler;
+import de.marcely.bedwars.api.game.spectator.KickSpectatorReason;
 import de.marcely.bedwars.api.game.spectator.SpectateReason;
+import de.marcely.bedwars.api.game.spectator.Spectator;
+import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 
 import java.util.ArrayList;
@@ -18,9 +24,10 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * A lobby hotbar item — add an entry to MBedwars' lobby-hotbar.yml with
  * {@code handler: 'exclusivearenas:toggle_spectate'} — visible only inside an ExclusiveArenas
- * private match, that lets a player opt out of playing: using it leaves their team, and marks
- * them to be converted into a spectator the moment the round actually starts instead of being
- * forced to play. Using it again cancels the opt-out.
+ * private match, that lets a player opt out of playing. Using it immediately converts them to a
+ * spectator (leaving their team and freeing up their arena player slot right away, rather than
+ * waiting until the round starts), and turns gray; using it again returns them to being a
+ * player and turns green. Being moved onto a real team by any means also clears the opt-out.
  */
 public final class SpectateOnStartHandler extends LobbyItemHandler implements Listener {
 
@@ -36,21 +43,84 @@ public final class SpectateOnStartHandler extends LobbyItemHandler implements Li
 
     @Override
     public boolean isVisible(Player player, Arena arena, LobbyItem item) {
-        return arena.getStatus().isLobby() && sessions.getByArena(arena) != null;
+        if (!arena.getStatus().isLobby() || sessions.getByArena(arena) == null) return false;
+        item.setItem(buildIcon(opted.contains(player.getUniqueId())));
+        return true;
     }
 
     @Override
     public void handleUse(Player player, Arena arena, LobbyItem item) {
+        if (!arena.getStatus().isLobby()) {
+            player.sendMessage(ItemUtil.color("&cYou can only do that while the match is in its lobby."));
+            return;
+        }
+
         UUID id = player.getUniqueId();
-        if (opted.remove(id)) {
-            player.sendMessage(ItemUtil.color("&aYou'll play in this match — pick a team to join in."));
+        if (opted.contains(id)) {
+            switchToPlaying(player, arena, id);
+        } else {
+            switchToSpectating(player, arena, id);
+        }
+
+        item.setItem(buildIcon(opted.contains(id)));
+        try {
+            BedwarsAPI.getGameAPI().forceLobbyHotbarRefresh(player);
+        } catch (Throwable ignored) {
+            // best effort — the item will still update next time it's rendered
+        }
+    }
+
+    private void switchToSpectating(Player player, Arena arena, UUID id) {
+        if (arena.isSpectating(player)) {
+            opted.add(id); // already spectating somehow — just reflect it, nothing to do
+            return;
+        }
+        Spectator spectator = arena.addSpectator(player, SpectateReason.PLUGIN);
+        if (spectator == null) {
+            player.sendMessage(ItemUtil.color("&cCouldn't switch you to spectating — try again."));
             return;
         }
         opted.add(id);
-        arena.leaveTeamDuringLobby(player);
-        player.sendMessage(ItemUtil.color("&eYou'll spectate this match once it starts."));
+        player.sendMessage(ItemUtil.color("&eYou're now spectating — you won't play this match."));
     }
 
+    private void switchToPlaying(Player player, Arena arena, UUID id) {
+        Spectator spectator = arena.getSpectateData(player);
+        if (spectator != null && spectator.isPresent()) spectator.kick(KickSpectatorReason.JOIN_ARENA);
+
+        opted.remove(id);
+        if (!arena.getPlayers().contains(player)) {
+            if (arena.addPlayer(player) != null) {
+                // MBedwars rejected the re-add (e.g. the arena filled up while spectating) —
+                // leave them spectating rather than stranding them in limbo.
+                opted.add(id);
+                player.sendMessage(ItemUtil.color("&cCouldn't rejoin as a player — the match may be full."));
+                return;
+            }
+        }
+        player.sendMessage(ItemUtil.color("&aYou'll play in this match — pick a team to join in."));
+    }
+
+    /**
+     * Defensive: if a player somehow ends up on a real team while still marked opted-out
+     * (shouldn't normally happen once they're actually spectating, but covers odd edge cases —
+     * an admin command, a future code path, etc.), clear the flag so their hotbar reflects it.
+     */
+    @EventHandler
+    public void onTeamChange(PlayerTeamChangeEvent event) {
+        if (event.getNewTeam() == null) return;
+        if (opted.remove(event.getPlayer().getUniqueId())) {
+            try {
+                BedwarsAPI.getGameAPI().forceLobbyHotbarRefresh(event.getPlayer());
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    /**
+     * Defensive: anyone still marked opted-out when the round starts is force-spectated, in
+     * case they never actually ended up spectating (e.g. addSpectator silently failed earlier).
+     */
     @EventHandler
     public void onRoundStart(RoundStartEvent event) {
         if (opted.isEmpty()) return;
@@ -59,5 +129,12 @@ public final class SpectateOnStartHandler extends LobbyItemHandler implements Li
             if (!opted.remove(player.getUniqueId())) continue;
             arena.addSpectator(player, SpectateReason.PLUGIN);
         }
+    }
+
+    private ItemStack buildIcon(boolean spectating) {
+        return ItemUtil.button(spectating ? Material.GREEN_DYE : Material.GRAY_DYE,
+                spectating ? "&aJoining as Spectator" : "&7Joining as Player",
+                spectating ? "&7You will not play this match." : "&7You will play this match.",
+                "&8▶ Click to toggle");
     }
 }
