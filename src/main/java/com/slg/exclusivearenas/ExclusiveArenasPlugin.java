@@ -4,6 +4,7 @@ import de.marcely.bedwars.api.BedwarsAPI;
 import de.marcely.bedwars.api.arena.Arena;
 import de.marcely.bedwars.api.arena.ArenaStatus;
 import de.marcely.bedwars.api.arena.Team;
+import de.marcely.bedwars.api.game.spectator.KickSpectatorReason;
 import de.marcely.bedwars.api.game.spectator.SpectateReason;
 import de.marcely.bedwars.api.hook.PartiesHook;
 import de.marcely.bedwars.api.remote.RemoteAPI;
@@ -467,7 +468,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         String canonical = ArenaNames.canonical(arenaName);
         Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(canonical);
         if (local != null && local.exists()) {
-            addToArenaWithRetry(player, local, 3);
+            addToArenaWithRetry(player, local, sessionService.getByArenaName(canonical), 3);
             return;
         }
 
@@ -490,11 +491,19 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
      * freshly reserved — a join call ends up teleporting the player in without properly
      * registering them as playing, and nothing else follows up on that except the next sweep
      * of {@link ArenaEntryGuardTask}. This reacts immediately instead of waiting for that.
+     *
+     * A fresh ticket is granted before every attempt (when {@code session} is known) — tickets
+     * are consumed on use by the join gate, so without this a retry would be gated exactly like
+     * an unauthorised join and fail every time, which made the original retry a no-op for Code
+     * policy in particular.
      */
-    private void addToArenaWithRetry(Player player, Arena arena, int attemptsLeft) {
+    private void addToArenaWithRetry(Player player, Arena arena, PrivateSession session, int attemptsLeft) {
         if (!player.isOnline()) return;
         boolean registered = arena.getPlayers().contains(player) || arena.isSpectating(player);
         if (!registered) {
+            if (session != null) {
+                ticketService.grant(player.getUniqueId(), session.getSessionId(), arena.getName());
+            }
             if (arena.getStatus() == ArenaStatus.RUNNING) {
                 arena.addSpectator(player, SpectateReason.ENTER);
             } else {
@@ -505,7 +514,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         Bukkit.getScheduler().runTaskLater(this, () -> {
             if (!player.isOnline()) return;
             boolean nowRegistered = arena.getPlayers().contains(player) || arena.isSpectating(player);
-            if (!nowRegistered) addToArenaWithRetry(player, arena, attemptsLeft - 1);
+            if (!nowRegistered) addToArenaWithRetry(player, arena, session, attemptsLeft - 1);
         }, 10L);
     }
 
@@ -566,6 +575,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         if (arena != null && arena.exists()) {
             arena.broadcast(ItemUtil.color("&cThe private match has been ended."));
             arena.kickAllPlayers();
+            arena.kickAllSpectators(KickSpectatorReason.PLUGIN_STOP); // kickAllPlayers() alone leaves spectators behind
         }
     }
 
@@ -573,16 +583,25 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
     /**
      * Prepares a private match's arena while it sits in its lobby: relaxes the min-players
-     * requirement so a small party isn't fought by MBedwars' own lobby logic. There is no
-     * pre-game timer any more — the match only ever begins when the host explicitly starts it
-     * (see {@link #startMatchNow}); MBedwars' own automatic lobby countdown is unconditionally
-     * cancelled for private arenas (see the {@code ArenaLobbyCountdownStartEvent} guard in
-     * {@link PrivacyLifecycleListener}).
+     * requirement so a small party isn't fought by MBedwars' own lobby logic, and pins the
+     * lobby timer well out of reach. There is no pre-game timer any more — the match only ever
+     * begins when the host explicitly starts it (see {@link #startMatchNow}). MBedwars' own
+     * automatic lobby countdown is cancelled outright when it tries to start fresh (see the
+     * {@code ArenaLobbyCountdownStartEvent} guard in {@link PrivacyLifecycleListener}), but that
+     * only stops a fresh auto-start — MBedwars can also shorten an already-ticking countdown on
+     * its own (e.g. once the lobby fills up), which isn't a "start" and so isn't cancellable.
+     * Re-pinning the remaining time here (called on every join, so it keeps re-applying) keeps
+     * that from sneaking a round start in early.
      */
     public void prepareLobby(Arena arena, PrivateSession session) {
         if (arena == null || session == null) return;
         if (!arena.getStatus().isLobby()) return;
         relaxMinPlayers(arena, session);
+        try {
+            arena.setLobbyTimeRemaining(3600, false);
+        } catch (Throwable ignored) {
+            // best effort
+        }
     }
 
     /**
@@ -751,7 +770,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
         // Both here → add directly (skip if they're already in this arena).
         if (localArena != null && localArena.exists() && localPlayer != null && localPlayer.isOnline()) {
-            addToArenaWithRetry(localPlayer, localArena, 3);
+            addToArenaWithRetry(localPlayer, localArena, session, 3);
             if (onSuccess != null) onSuccess.run(); // synchronous local add — they're already there
             return;
         }
