@@ -255,6 +255,13 @@ public final class GuiManager {
                 "&7release the arena.",
                 "&8▶ Click"));
 
+        // Quick actions (planned, not yet functional)
+        inv.setItem(34, ItemUtil.button(Material.REDSTONE_TORCH, "&e&lQuick Actions",
+                "&7Handy one-click shortcuts",
+                "&7for managing this match.",
+                "&8",
+                "&8▶ Click to open"));
+
         inv.setItem(36, ItemUtil.button(Material.ARROW, "&7◀ Back",
                 adminView ? "&8Return to the admin list." : "&8Return to your matches."));
         inv.setItem(44, ItemUtil.button(Material.BARRIER, "&c&lClose"));
@@ -413,6 +420,29 @@ public final class GuiManager {
                 "Disable specific items in the in-game shop."));
         inv.setItem(15, ItemUtil.stub("Cosmetics",
                 "Enable or disable cosmetics for this match."));
+
+        inv.setItem(22, ItemUtil.button(Material.ARROW, "&7◀ Back", "&8Return to match controls."));
+        p.openInventory(inv);
+    }
+
+    // ── Quick actions (planned feature — stubs only) ─────────────────────────────────
+
+    /**
+     * Placeholder menu for one-click match shortcuts. Nothing here is wired up yet — just
+     * reserving the navigation/layout so real actions can be dropped in later.
+     */
+    public void openQuickActions(Player p, PrivateSession session, boolean adminView) {
+        GuiHolder holder = new GuiHolder(GuiHolder.Type.QUICK_ACTIONS)
+                .sessionId(session.getSessionId()).adminView(adminView);
+        Inventory inv = create(holder, 27, "&1&lQuick Actions &8· " + session.getArenaName());
+        frame(inv);
+
+        inv.setItem(10, ItemUtil.stub("Kick Non-Party Players", "Remove anyone not in your party from the match."));
+        inv.setItem(11, ItemUtil.stub("Reset Arena", "Reset the arena without ending the match."));
+        inv.setItem(12, ItemUtil.stub("Broadcast Message", "Send an announcement to everyone in the arena."));
+        inv.setItem(14, ItemUtil.stub("Lock Teams", "Prevent further team changes for this match."));
+        inv.setItem(15, ItemUtil.stub("Toggle PvP", "Enable or disable player damage in the lobby."));
+        inv.setItem(16, ItemUtil.stub("Refill Chests", "Reset all chests without regenerating the arena."));
 
         inv.setItem(22, ItemUtil.button(Material.ARROW, "&7◀ Back", "&8Return to match controls."));
         p.openInventory(inv);
