@@ -2,6 +2,7 @@ package com.slg.exclusivearenas;
 
 import de.marcely.bedwars.api.BedwarsAPI;
 import de.marcely.bedwars.api.arena.Arena;
+import de.marcely.bedwars.api.arena.ArenaStatus;
 import de.marcely.bedwars.api.remote.RemoteAPI;
 import de.marcely.bedwars.api.remote.RemoteArena;
 
@@ -60,5 +61,22 @@ public final class ArenaNames {
         if (local != null && local.exists()) return local.getStatus().isLobby();
         RemoteArena remote = findRemote(arenaName);
         return remote != null && remote.getStatus().isLobby();
+    }
+
+    /**
+     * True if the arena is genuinely still in play (lobby or running) rather than stopped or
+     * being reset. Used as a fresher-than-our-own-DB-poll sanity check before acting on a
+     * session that might have just ended elsewhere on the network — MBedwars' own arena status
+     * (local or via RemoteAPI) reflects reality faster than our session cache can reconcile.
+     */
+    public static boolean isActiveStatus(String arenaName) {
+        Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(canonical(arenaName));
+        if (local != null && local.exists()) return isActive(local.getStatus());
+        RemoteArena remote = findRemote(arenaName);
+        return remote != null && isActive(remote.getStatus());
+    }
+
+    private static boolean isActive(ArenaStatus status) {
+        return status == ArenaStatus.LOBBY || status == ArenaStatus.RUNNING;
     }
 }
