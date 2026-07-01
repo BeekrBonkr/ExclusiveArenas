@@ -3,7 +3,9 @@ package com.slg.exclusivearenas;
 import de.marcely.bedwars.api.arena.AddPlayerIssue;
 import de.marcely.bedwars.api.arena.Arena;
 import de.marcely.bedwars.api.event.player.PlayerJoinArenaEvent;
+import de.marcely.bedwars.api.event.player.SpectatorJoinArenaEvent;
 import de.marcely.bedwars.api.event.remote.RemotePlayerPreJoinLocalArenaEvent;
+import de.marcely.bedwars.api.game.spectator.SpectateReason;
 import de.marcely.bedwars.api.hook.PartiesHook;
 import de.marcely.bedwars.api.remote.RemotePlayer;
 import org.bukkit.Bukkit;
@@ -43,7 +45,7 @@ public final class JoinListener implements Listener {
         PrivateSession session = sessions.getByArena(arena);
         if (session == null) return; // arena is not private, allow the join
 
-        plugin.pauseLobbyCountdownIfNeeded(arena, session);
+        plugin.prepareLobby(arena, session);
 
         if (player.hasPermission(BYPASS_PERM)) return;
 
@@ -74,6 +76,48 @@ public final class JoinListener implements Listener {
             }
             // Public code session — player didn't use /ea join so they don't have a ticket
             event.addIssue(buildIssue(session, arena, "code"));
+        }
+    }
+
+    // ── Spectator join (same gating as a regular join) ─────────────────────────
+
+    @EventHandler(priority = EventPriority.NORMAL)
+    public void onSpectatorJoin(SpectatorJoinArenaEvent event) {
+        // Only gate a deliberate "join as spectator" attempt — internal transitions like
+        // dying, losing, or following a party elsewhere are never blocked.
+        if (event.getReason() != SpectateReason.ENTER) return;
+
+        Player player = event.getPlayer();
+        Arena arena = event.getArena();
+        UUID playerId = player.getUniqueId();
+
+        PrivateSession session = sessions.getByArena(arena);
+        if (session == null) return;
+
+        if (player.hasPermission(BYPASS_PERM)) return;
+        if (playerId.equals(session.getOwner())) return;
+        if (tickets.consumeIfValid(playerId, session.getSessionId(), arena.getName())) return;
+
+        if (session.getJoinPolicy() == JoinPolicy.PARTY) {
+            PartyResolver.isInLeadersParty(player, session.getOwner(), allowed -> {
+                if (allowed) return;
+                event.setCancelled(true);
+                player.sendMessage(ItemUtil.color(plugin.getEaConfig()
+                        .str("messages.locked_hint_party", "&cThat arena is private. Join &f%owner%&c's party to enter.")
+                        .replace("%owner%", ownerName(session))));
+            });
+            return;
+        }
+
+        // Code policy: a ticket (checked above) is required — a bare spectate attempt has none.
+        event.setCancelled(true);
+        if (!session.isPublic()) {
+            player.sendMessage(ItemUtil.color(plugin.getEaConfig().str("messages.locked_private",
+                    "&cThat arena is currently private and is not accepting joins.")));
+        } else {
+            player.sendMessage(ItemUtil.color(plugin.getEaConfig()
+                    .str("messages.locked_hint_code", "&cThat arena is private. Use &f/ea join <code>&c to enter.")
+                    .replace("%code%", session.getJoinCode() != null ? session.getJoinCode() : "")));
         }
     }
 
@@ -123,15 +167,15 @@ public final class JoinListener implements Listener {
             PartiesHook.Party party = opt.get().getParty();
 
             // Find if any leader in the party has an active private session with PARTY policy
+            outer:
             for (PartiesHook.Member leader : party.getLeaders()) {
-                PrivateSession session = sessions.getByOwner(leader.getUniqueId());
-                if (session == null || session.getJoinPolicy() != JoinPolicy.PARTY) continue;
+                for (PrivateSession session : sessions.getSessionsByOwner(leader.getUniqueId())) {
+                    if (session.getJoinPolicy() != JoinPolicy.PARTY) continue;
 
-                tickets.grant(player.getUniqueId(), session.getSessionId(), session.getArenaName());
-                plugin.getNetworkBus().broadcastTicket(
-                        player.getUniqueId(), session.getSessionId(), session.getArenaName());
-                plugin.sendPlayerToArena(player, session.getArenaName());
-                break; // only summon to one session
+                    tickets.grant(player.getUniqueId(), session.getSessionId(), session.getArenaName());
+                    plugin.sendPlayerToArena(player, session.getArenaName());
+                    break outer; // only summon to one session
+                }
             }
         });
     }
@@ -155,6 +199,11 @@ public final class JoinListener implements Listener {
         }
 
         return AddPlayerIssue.construct("exclusivearenas.private", ItemUtil.color(msg));
+    }
+
+    private String ownerName(PrivateSession session) {
+        OfflinePlayer off = Bukkit.getOfflinePlayer(session.getOwner());
+        return off.getName() != null ? off.getName() : "?";
     }
 
     private AddPlayerIssue buildLockedIssue(Arena arena) {
