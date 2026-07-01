@@ -78,6 +78,21 @@ private:
 #     condition: "[exclusivearenas_private=0]"
 #     area: ...
 
+# ExclusiveArenas also registers two custom MBedwars lobby hotbar item handlers. Registering
+# only makes them available — add an entry referencing one to your live lobby-hotbar.yml
+# (plugins/MBedwars/configs/.../lobby-hotbar.yml) to actually give players the item; slot/icon/
+# name are entirely up to you:
+#   open-controls:
+#     name: '&eMatch Controls'
+#     slot: 2
+#     handler: 'exclusivearenas:open_controls'   # only visible to the match's host
+#     item: 'command_block'
+#   toggle-spectate:
+#     name: '&7Spectate This Match'
+#     slot: 3
+#     handler: 'exclusivearenas:toggle_spectate'  # any player; opts out of playing
+#     item: 'gray_dye'
+
 messages:
   # Shown when a player tries to join a private arena gated by party membership.
   # Placeholders: %arena% = arena name, %owner% = host's username
