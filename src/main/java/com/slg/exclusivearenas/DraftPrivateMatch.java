@@ -13,6 +13,7 @@ public final class DraftPrivateMatch {
     private JoinPolicy joinPolicy = JoinPolicy.PARTY;
     private String joinCode;
     private boolean isPublic = true; // only relevant for CODE policy
+    private boolean autoSummon = false; // auto-pull new party members into the arena
 
     public DraftPrivateMatch(UUID owner) {
         this.owner = owner;
@@ -33,6 +34,9 @@ public final class DraftPrivateMatch {
 
     public boolean isPublic() { return isPublic; }
     public void setPublic(boolean isPublic) { this.isPublic = isPublic; }
+
+    public boolean isAutoSummon() { return autoSummon; }
+    public void setAutoSummon(boolean autoSummon) { this.autoSummon = autoSummon; }
 
     public boolean isReadyToCreate() {
         if (arenaName == null || arenaName.isBlank()) return false;
