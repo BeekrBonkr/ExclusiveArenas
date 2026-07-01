@@ -2,6 +2,8 @@ package com.slg.exclusivearenas;
 
 import de.marcely.bedwars.api.BedwarsAPI;
 import de.marcely.bedwars.api.arena.Arena;
+import de.marcely.bedwars.api.hook.PartiesHook;
+import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -83,10 +85,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                 gui.openControls(p, session, p.hasPermission(GuiManager.ADMIN_PERM));
             }
 
-            case "join" -> {
-                if (args.length < 2) { p.sendMessage(color("&cUsage: /ea join <code>")); return true; }
-                handleJoin(p, args[1].trim());
-            }
+            case "join" -> handleJoin(p, args.length >= 2 ? args[1].trim() : null);
 
             case "start" -> {
                 PrivateSession session = requireHostedSession(p);
@@ -117,14 +116,48 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
+    /**
+     * If the player is in a party whose leader hosts an active match, that always takes
+     * priority over whatever code was typed (or lets {@code /ea join} work with no code at
+     * all) — a party member's place is in their leader's match, not a different one they
+     * happened to type a code for.
+     */
     private void handleJoin(Player p, String code) {
-        // Session state is replicated to every server, so the code resolves locally even when
-        // the arena lives on another server.
-        PrivateSession session = sessions.getByJoinCode(code);
-        if (session == null) {
-            p.sendMessage(color("&cInvalid or expired join code."));
-            return;
-        }
+        PartyResolver.getPartyMember(p, opt -> {
+            PrivateSession hostSession = null;
+            if (opt.isPresent()) {
+                for (PartiesHook.Member leader : opt.get().getParty().getLeaders()) {
+                    PrivateSession s = sessions.getByOwner(leader.getUniqueId());
+                    if (s != null && s.getJoinPolicy() == JoinPolicy.PARTY) {
+                        hostSession = s;
+                        break;
+                    }
+                }
+            }
+            PrivateSession finalHostSession = hostSession;
+
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                if (finalHostSession != null) {
+                    joinSession(p, finalHostSession);
+                    return;
+                }
+                if (code == null || code.isBlank()) {
+                    p.sendMessage(color("&cUsage: /ea join <code>"));
+                    return;
+                }
+                // Session state is replicated to every server, so the code resolves locally
+                // even when the arena lives on another server.
+                PrivateSession session = sessions.getByJoinCode(code);
+                if (session == null) {
+                    p.sendMessage(color("&cInvalid or expired join code."));
+                    return;
+                }
+                joinSession(p, session);
+            });
+        });
+    }
+
+    private void joinSession(Player p, PrivateSession session) {
         if (session.getJoinPolicy() == JoinPolicy.CODE && !session.isPublic()) {
             p.sendMessage(color("&cThat arena is currently private and not accepting joins."));
             return;
