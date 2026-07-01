@@ -15,6 +15,10 @@ public final class DraftPrivateMatch {
     private boolean isPublic = true; // only relevant for CODE policy
     private boolean autoSummon = false; // auto-pull new party members into the arena
 
+    // Cached at builder-open time: true when the player is a member (not leader) of someone
+    // else's party, in which case the whole creation menu is locked.
+    private boolean partyBlocked = false;
+
     public DraftPrivateMatch(UUID owner) {
         this.owner = owner;
     }
@@ -37,6 +41,9 @@ public final class DraftPrivateMatch {
 
     public boolean isAutoSummon() { return autoSummon; }
     public void setAutoSummon(boolean autoSummon) { this.autoSummon = autoSummon; }
+
+    public boolean isPartyBlocked() { return partyBlocked; }
+    public void setPartyBlocked(boolean partyBlocked) { this.partyBlocked = partyBlocked; }
 
     public boolean isReadyToCreate() {
         if (arenaName == null || arenaName.isBlank()) return false;

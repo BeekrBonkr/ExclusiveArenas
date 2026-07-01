@@ -54,7 +54,7 @@ public final class GuiListener implements Listener {
             case MAIN        -> handleMain(p, slot);
             case ARENA_LIST  -> handleList(p, gh, slot, false);
             case ADMIN_LIST  -> handleList(p, gh, slot, true);
-            case BUILDER     -> handleBuilder(p, slot);
+            case BUILDER     -> handleBuilder(p, slot, e.isShiftClick());
             case ARENA_SELECT-> handleArenaSelect(p, gh, slot, clicked);
             case CONTROLS    -> handleControls(p, gh, slot);
             case ARENA_CONFIG-> handleArenaConfig(p, gh, slot);
@@ -87,7 +87,7 @@ public final class GuiListener implements Listener {
             case 50 -> reopenList(p, admin, page); // refresh
             case 49 -> {
                 if (admin) { p.closeInventory(); return; }        // "Close" on admin list
-                gui.openBuilder(p);                                // "Create New Arena" on player list
+                plugin.openBuilderMenu(p);                         // "Create New Arena" on player list
             }
             default -> {
                 UUID sessionId = gh.sessionAt(slot);
@@ -105,22 +105,17 @@ public final class GuiListener implements Listener {
 
     // ── Builder ──────────────────────────────────────────────────────────────────────
 
-    private void handleBuilder(Player p, int slot) {
+    private void handleBuilder(Player p, int slot, boolean shiftClick) {
         DraftPrivateMatch d = drafts.getOrCreate(p.getUniqueId());
+        if (d.isPartyBlocked()) {
+            if (slot == 18) { gui.openArenaList(p, 0); return; }
+            if (slot == 26) { p.closeInventory(); return; }
+            p.sendMessage(color("&cLeave your party before you can host your own private match."));
+            return;
+        }
+
         switch (slot) {
             case 10 -> gui.openArenaSelect(p, 0);
-            case 12 -> {
-                if (d.getJoinPolicy() == JoinPolicy.PARTY) {
-                    d.setJoinPolicy(JoinPolicy.CODE);
-                    d.setAutoSummon(false); // auto-summon only applies to Party-policy matches
-                    if (d.getJoinCode() == null || d.getJoinCode().isBlank()) {
-                        d.setJoinCode(sessions.generateCode());
-                    }
-                } else {
-                    d.setJoinPolicy(JoinPolicy.PARTY);
-                }
-                gui.openBuilder(p);
-            }
             case 13 -> {
                 if (d.getJoinPolicy() == JoinPolicy.PARTY) {
                     d.setAutoSummon(!d.isAutoSummon());
@@ -135,7 +130,7 @@ public final class GuiListener implements Listener {
             }
             case 16 -> {
                 p.closeInventory();
-                plugin.createAndJoin(p, d);
+                plugin.createAndJoin(p, d, !shiftClick); // shift-click: create without joining
             }
             case 18 -> gui.openArenaList(p, 0);
             case 26 -> p.closeInventory();

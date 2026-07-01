@@ -456,6 +456,23 @@ public final class GuiManager {
         Inventory inv = create(holder, 27, "&1&lNew Private Match");
         frame(inv);
 
+        if (d.isPartyBlocked()) {
+            inv.setItem(13, ItemUtil.button(Material.BARRIER, "&c&lLeave Your Party",
+                    "&7You're in someone else's party.",
+                    "&8",
+                    "&7Only a party's &fleader&7 can host a",
+                    "&7Party-policy match, and members can't",
+                    "&7host a Join Code match either — join",
+                    "&7your leader's match instead, or leave",
+                    "&7the party to host your own.",
+                    "&8",
+                    "&8▶ Try &f/ea join &8to join your leader's match"));
+            inv.setItem(18, ItemUtil.button(Material.ARROW, "&7◀ Back", "&8Return to your matches."));
+            inv.setItem(26, ItemUtil.button(Material.BARRIER, "&c&lClose"));
+            p.openInventory(inv);
+            return;
+        }
+
         String mapLabel = d.getArenaName() == null ? "&cNot selected" : "&a" + d.getArenaName();
         inv.setItem(10, ItemUtil.button(Material.FILLED_MAP, "&b&lSelect Map",
                 "&7Current: " + mapLabel,
@@ -467,7 +484,9 @@ public final class GuiManager {
                 "&7Mode: " + (isParty ? "&bParty Only" : "&dJoin Code"),
                 "&8",
                 isParty ? "&7Only your party members can join." : "&7Players join with &f/ea join <code>",
-                "&8▶ Click to switch"));
+                "&8",
+                isParty ? "&8(You lead a party)" : "&8(You aren't leading a party)",
+                "&8Automatic — based on your party leadership."));
 
         if (isParty) {
             inv.setItem(13, ItemUtil.button(
@@ -496,7 +515,9 @@ public final class GuiManager {
                 ready ? Material.LIME_CONCRETE : Material.GRAY_CONCRETE,
                 ready ? "&a&lCreate & Join" : "&7&lCreate & Join",
                 ready ? "&7Create your match on &f" + d.getArenaName() : "&8Select a map first.",
-                ready ? "&8▶ Click to create" : null));
+                "&8",
+                ready ? "&8▶ Click to create and join" : null,
+                ready ? "&8▶ Shift-click to create without joining" : null));
 
         inv.setItem(18, ItemUtil.button(Material.ARROW, "&7◀ Back", "&8Return to your matches."));
         inv.setItem(26, ItemUtil.button(Material.BARRIER, "&c&lClose"));
