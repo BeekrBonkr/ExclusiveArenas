@@ -258,7 +258,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
         switch (op) {
             case "list" -> {
                 p.sendMessage(Lang.msg("cmd.timeline-header", "%arena%", session.getArenaName()));
-                for (SessionSettings.TimelineEntry entry : timelines.effectiveTimeline(session)) {
+                for (SessionSettings.TimelineEntry entry : timelines.effectiveTimeline(session.getSettings())) {
                     TimelineService.Definition def = timelines.definition(entry.id());
                     p.sendMessage(Lang.msg("cmd.timeline-line",
                             "%time%", TimelineService.format(entry.seconds()),
@@ -292,7 +292,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                     delta = target - currentEventTime(timelines, session, id);
                 }
 
-                int newTime = timelines.moveEvent(session, id, delta);
+                int newTime = timelines.moveEvent(session.getSettings(), id, delta);
                 if (newTime < 0) {
                     p.sendMessage(Lang.msg("cmd.timeline-unknown-event", "%id%", args[2]));
                     return;
@@ -317,7 +317,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                     p.sendMessage(Lang.msg("timeline.cannot-delete-end"));
                     return;
                 }
-                if (timelines.deleteEvent(session, id)) {
+                if (timelines.deleteEvent(session.getSettings(), id)) {
                     sessions.saveSettings(session);
                     p.sendMessage(Lang.msg("timeline.deleted",
                             "%event%", def != null ? def.name() : id));
@@ -325,7 +325,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
             }
 
             case "reset" -> {
-                timelines.resetTimeline(session);
+                timelines.resetTimeline(session.getSettings());
                 sessions.saveSettings(session);
                 p.sendMessage(Lang.msg("timeline.reset"));
             }
@@ -343,7 +343,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
     }
 
     private static int currentEventTime(TimelineService timelines, PrivateSession session, String id) {
-        for (SessionSettings.TimelineEntry entry : timelines.effectiveTimeline(session)) {
+        for (SessionSettings.TimelineEntry entry : timelines.effectiveTimeline(session.getSettings())) {
             if (entry.id().equals(id)) return entry.seconds();
         }
         return 0;

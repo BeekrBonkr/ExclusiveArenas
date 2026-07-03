@@ -94,7 +94,14 @@ server actually hosts the arena; see [Remote Control](#remote-control)).
 3. Click **Select Map** and choose an arena from the list. Each entry shows the arena's own
    MBedwars icon, and can be filtered by **team count** and **players per team** — the filter
    buttons cycle through values discovered from your actual arena roster, not a fixed list.
-4. Click **Create & Join** to create the match and be sent straight in, locally or across
+   The moment you select one it's soft-reserved for you — no one else can pick the same arena
+   in their own builder until you create your match, back out, or leave the menu (this lock
+   self-expires after 10 minutes in case you just wander off).
+4. (Optional) Click **Arena Settings** to configure [Event Timeline](#event-timeline),
+   [Shop Items](#shop-overrides), and [Team Size](#team-size) *before* the match is created —
+   the exact same editors as Match Controls, just working on your draft. Whatever you set here
+   is applied the moment the arena is actually created.
+5. Click **Create & Join** to create the match and be sent straight in, locally or across
    servers — or **shift-click** to create it without joining (grants you a ticket, so **Go to
    Arena** in Match Controls still works whenever you're ready). Use **Summon Party** in Match
    Controls (or the [party-summon lobby item](#custom-lobby-hotbar-items)) afterwards to pull

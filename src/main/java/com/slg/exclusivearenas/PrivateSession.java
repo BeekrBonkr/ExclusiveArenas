@@ -8,7 +8,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-public final class PrivateSession {
+public final class PrivateSession implements SettingsHolder {
 
     private final UUID sessionId;
     private final UUID owner;

@@ -82,6 +82,7 @@ public final class GuiListener implements Listener {
             case HELP        -> { if (slot == GuiStyle.slot("help.buttons.back")) gui.openMainMenu(p); }
             case PRESET_NAME -> handlePresetName(p, gh, slot, e.getView());
             case TEAM_SIZE   -> handleTeamSize(p, gh, slot);
+            case BUILDER_SETTINGS -> handleBuilderSettings(p, slot);
         }
     }
 
@@ -168,11 +169,20 @@ public final class GuiListener implements Listener {
         } else if (slot == GuiStyle.slot("builder.buttons.create-ready")) {
             p.closeInventory();
             plugin.createAndJoin(p, d, !shiftClick); // shift-click: create without joining
+        } else if (slot == GuiStyle.slot("builder.buttons.arena-settings") && d.getArenaName() != null) {
+            gui.openBuilderSettings(p, d);
         } else if (slot == GuiStyle.slot("builder.buttons.back")) {
+            releaseDraftArena(p, d);
             gui.openArenaList(p, 0);
         } else if (slot == GuiStyle.slot("builder.buttons.close")) {
+            releaseDraftArena(p, d);
             p.closeInventory();
         }
+    }
+
+    /** Gives up a drafted (not-yet-created) arena pick so someone else can select it. */
+    private void releaseDraftArena(Player p, DraftPrivateMatch d) {
+        if (d.getArenaName() != null) sessions.releaseDraftArena(d.getArenaName(), p.getUniqueId());
     }
 
     // ── Arena selector ──────────────────────────────────────────────────────────────
@@ -194,12 +204,15 @@ public final class GuiListener implements Listener {
         String name = ChatColor.stripColor(clicked.getItemMeta().getDisplayName());
         if (name == null || name.isBlank()) return;
 
-        if (sessions.isArenaReserved(name)) {
+        if (!sessions.reserveDraftArena(name, p.getUniqueId())) {
             p.sendMessage(Lang.msg("create.arena-reserved"));
             return;
         }
 
         DraftPrivateMatch d = drafts.getOrCreate(p.getUniqueId());
+        if (d.getArenaName() != null && !d.getArenaName().equalsIgnoreCase(name)) {
+            sessions.releaseDraftArena(d.getArenaName(), p.getUniqueId());
+        }
         d.setArenaName(name);
         if (d.getJoinPolicy() == JoinPolicy.CODE && (d.getJoinCode() == null || d.getJoinCode().isBlank())) {
             d.setJoinCode(sessions.generateCode());
@@ -279,21 +292,46 @@ public final class GuiListener implements Listener {
         }
     }
 
-    // ── Team size editor ──────────────────────────────────────────────────────────────
+    // ── Arena settings hub, during creation ─────────────────────────────────────────
 
-    private void handleTeamSize(Player p, GuiHolder gh, int slot) {
-        PrivateSession session = requireManageable(p, gh);
-        if (session == null) return;
-
-        if (slot == GuiStyle.slot("team-size.buttons.back")) {
-            gui.openArenaConfig(p, session, gh.adminView());
+    private void handleBuilderSettings(Player p, int slot) {
+        DraftPrivateMatch draft = drafts.get(p.getUniqueId());
+        if (draft == null || draft.getArenaName() == null) {
+            p.sendMessage(Lang.msg("create.select-map-first"));
+            gui.openBuilder(p);
             return;
         }
 
-        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        if (slot == GuiStyle.slot("builder-settings.buttons.event-timeline")) {
+            if (plugin.getTimelineService().isEnabled()) gui.openTimeline(p, draft, false, null);
+        } else if (slot == GuiStyle.slot("builder-settings.buttons.shop-config")) {
+            gui.openShopPages(p, draft, false);
+        } else if (slot == GuiStyle.slot("builder-settings.buttons.team-size")) {
+            gui.openTeamSize(p, draft, false);
+        } else if (slot == GuiStyle.slot("builder-settings.buttons.back")) {
+            gui.openBuilder(p);
+        }
+    }
+
+    // ── Team size editor ──────────────────────────────────────────────────────────────
+
+    private void handleTeamSize(Player p, GuiHolder gh, int slot) {
+        SettingsHolder holder = resolveSettingsHolder(p, gh);
+        if (holder == null) return;
+        boolean adminView = gh.adminView();
+
+        if (slot == GuiStyle.slot("team-size.buttons.back")) {
+            openSettingsHub(p, holder, adminView);
+            return;
+        }
+
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(holder.getArenaName());
         if (arena == null || !arena.exists()) return; // only "back" works on the unavailable view
 
-        if (!plugin.canChangeTeamSize(arena)) {
+        // A draft has no live match to disrupt yet — always editable, and there's nothing to
+        // restore-to, unlike a live session's locked-once-someone-joins rule.
+        boolean isDraft = !(holder instanceof PrivateSession);
+        if (!isDraft && !plugin.canChangeTeamSize(arena)) {
             if (slot == GuiStyle.slot("team-size.buttons.minus-one")
                     || slot == GuiStyle.slot("team-size.buttons.plus-one")
                     || slot == GuiStyle.slot("team-size.buttons.reset")) {
@@ -302,9 +340,9 @@ public final class GuiListener implements Listener {
             return;
         }
 
-        Integer original = session.getOriginalPlayersPerTeam();
+        Integer original = holder instanceof PrivateSession session ? session.getOriginalPlayersPerTeam() : null;
         int fallback = original != null ? original : arena.getPlayersPerTeam();
-        Integer override = session.getSettings().getPlayersPerTeam();
+        Integer override = holder.getSettings().getPlayersPerTeam();
         int current = override != null ? override : fallback;
 
         Integer next = null;
@@ -321,12 +359,14 @@ public final class GuiListener implements Listener {
         }
         if (!changed) return;
 
-        session.getSettings().setPlayersPerTeam(next != null && next != fallback ? next : null);
-        sessions.saveSettings(session);
-        plugin.applyPlayersPerTeamOverride(arena, session);
+        holder.getSettings().setPlayersPerTeam(next != null && next != fallback ? next : null);
+        if (holder instanceof PrivateSession session) {
+            sessions.saveSettings(session);
+            plugin.applyPlayersPerTeamOverride(arena, session);
+        }
         p.sendMessage(Lang.msg("teamsize.changed",
                 "%amount%", String.valueOf(next != null ? next : fallback)));
-        gui.openTeamSize(p, session, gh.adminView());
+        gui.openTeamSize(p, holder, adminView);
     }
 
     // ── Saved configurations (presets) ───────────────────────────────────────────────
@@ -465,13 +505,14 @@ public final class GuiListener implements Listener {
     // ── Event timeline editor ────────────────────────────────────────────────────────
 
     private void handleTimeline(Player p, GuiHolder gh, int slot) {
-        PrivateSession session = requireManageable(p, gh);
-        if (session == null) return;
+        SettingsHolder holder = resolveSettingsHolder(p, gh);
+        if (holder == null) return;
+        boolean adminView = gh.adminView();
 
         TimelineService timelines = plugin.getTimelineService();
 
         if (slot == GuiStyle.slot("timeline.buttons.back")) {
-            gui.openArenaConfig(p, session, gh.adminView());
+            openSettingsHub(p, holder, adminView);
             return;
         }
         if (slot == GuiStyle.slot("timeline.buttons.close")) {
@@ -479,10 +520,10 @@ public final class GuiListener implements Listener {
             return;
         }
         if (slot == GuiStyle.slot("timeline.buttons.reset")) {
-            timelines.resetTimeline(session);
-            sessions.saveSettings(session);
+            timelines.resetTimeline(holder.getSettings());
+            persist(holder);
             p.sendMessage(Lang.msg("timeline.reset"));
-            gui.openTimeline(p, session, gh.adminView(), null);
+            gui.openTimeline(p, holder, adminView, null);
             return;
         }
 
@@ -490,7 +531,7 @@ public final class GuiListener implements Listener {
         String clickedEvent = gh.keyAt(slot);
         if (clickedEvent != null) {
             String next = clickedEvent.equals(gh.selectedEvent()) ? null : clickedEvent;
-            gui.openTimeline(p, session, gh.adminView(), next);
+            gui.openTimeline(p, holder, adminView, next);
             return;
         }
 
@@ -505,16 +546,16 @@ public final class GuiListener implements Listener {
         else if (slot == GuiStyle.slot("timeline.buttons.plus-minute")) delta = 60;
 
         if (delta != 0) {
-            int newTime = timelines.moveEvent(session, selected, delta);
+            int newTime = timelines.moveEvent(holder.getSettings(), selected, delta);
             if (newTime >= 0) {
-                sessions.saveSettings(session);
+                persist(holder);
                 TimelineService.Definition def = timelines.definition(selected);
                 boolean isEnd = def != null && def.type() == TimelineService.Type.MATCH_END;
                 p.sendMessage(Lang.msg(isEnd ? "timeline.end-moved" : "timeline.moved",
                         "%event%", def != null ? def.name() : selected,
                         "%time%", TimelineService.format(newTime)));
             }
-            gui.openTimeline(p, session, gh.adminView(), selected);
+            gui.openTimeline(p, holder, adminView, selected);
             return;
         }
 
@@ -524,51 +565,67 @@ public final class GuiListener implements Listener {
                 p.sendMessage(Lang.msg("timeline.cannot-delete-end"));
                 return;
             }
-            if (timelines.deleteEvent(session, selected)) {
-                sessions.saveSettings(session);
+            if (timelines.deleteEvent(holder.getSettings(), selected)) {
+                persist(holder);
                 p.sendMessage(Lang.msg("timeline.deleted",
                         "%event%", def != null ? def.name() : selected));
             }
-            gui.openTimeline(p, session, gh.adminView(), null);
+            gui.openTimeline(p, holder, adminView, null);
+        }
+    }
+
+    /** Syncs a live session's settings across the network; a no-op for a not-yet-created draft. */
+    private void persist(SettingsHolder holder) {
+        if (holder instanceof PrivateSession session) sessions.saveSettings(session);
+    }
+
+    /** "Back" from Timeline/Shop/Team Size — the real Arena Settings hub, or the builder's, for a draft. */
+    private void openSettingsHub(Player p, SettingsHolder holder, boolean adminView) {
+        if (holder instanceof PrivateSession session) {
+            gui.openArenaConfig(p, session, adminView);
+        } else {
+            gui.openBuilderSettings(p, (DraftPrivateMatch) holder);
         }
     }
 
     // ── Shop configuration ───────────────────────────────────────────────────────────
 
     private void handleShopPages(Player p, GuiHolder gh, int slot) {
-        PrivateSession session = requireManageable(p, gh);
-        if (session == null) return;
+        SettingsHolder holder = resolveSettingsHolder(p, gh);
+        if (holder == null) return;
+        boolean adminView = gh.adminView();
 
         if (slot == GuiStyle.slot("shop-pages.buttons.back")) {
-            gui.openArenaConfig(p, session, gh.adminView());
+            openSettingsHub(p, holder, adminView);
             return;
         }
         if (slot == GuiStyle.slot("shop-pages.buttons.reset")) {
-            session.getSettings().clearShopOverrides();
-            sessions.saveSettings(session);
+            holder.getSettings().clearShopOverrides();
+            persist(holder);
             p.sendMessage(Lang.msg("shop.reset-all"));
-            gui.openShopPages(p, session, gh.adminView());
+            gui.openShopPages(p, holder, adminView);
             return;
         }
 
         String pageName = gh.keyAt(slot);
-        if (pageName != null) gui.openShopItems(p, session, gh.adminView(), pageName, 0);
+        if (pageName != null) gui.openShopItems(p, holder, adminView, pageName, 0);
     }
 
     private void handleShopItems(Player p, GuiHolder gh, int slot, boolean shiftClick) {
-        PrivateSession session = requireManageable(p, gh);
-        if (session == null) return;
+        SettingsHolder holder = resolveSettingsHolder(p, gh);
+        if (holder == null) return;
+        boolean adminView = gh.adminView();
 
         if (slot == GuiStyle.slot("shop-items.buttons.back")) {
-            gui.openShopPages(p, session, gh.adminView());
+            gui.openShopPages(p, holder, adminView);
             return;
         }
         if (slot == GuiStyle.slot("shop-items.buttons.previous-page")) {
-            gui.openShopItems(p, session, gh.adminView(), gh.shopPage(), gh.page() - 1);
+            gui.openShopItems(p, holder, adminView, gh.shopPage(), gh.page() - 1);
             return;
         }
         if (slot == GuiStyle.slot("shop-items.buttons.next-page")) {
-            gui.openShopItems(p, session, gh.adminView(), gh.shopPage(), gh.page() + 1);
+            gui.openShopItems(p, holder, adminView, gh.shopPage(), gh.page() + 1);
             return;
         }
 
@@ -578,52 +635,53 @@ public final class GuiListener implements Listener {
         if (item == null) return;
 
         if (shiftClick) {
-            gui.openShopPrice(p, session, gh.adminView(), gh.shopPage(), itemId);
+            gui.openShopPrice(p, holder, adminView, gh.shopPage(), itemId);
             return;
         }
 
-        SessionSettings.ShopOverride override = session.getSettings().getOrCreateShopOverride(itemId);
+        SessionSettings.ShopOverride override = holder.getSettings().getOrCreateShopOverride(itemId);
         override.setDisabled(!override.isDisabled());
         boolean nowDisabled = override.isDisabled();
-        session.getSettings().pruneShopOverride(itemId);
-        sessions.saveSettings(session);
+        holder.getSettings().pruneShopOverride(itemId);
+        persist(holder);
 
         String itemName = ChatColor.stripColor(ItemUtil.color(item.getDisplayName()));
         p.sendMessage(Lang.msg(nowDisabled ? "shop.item-disabled" : "shop.item-enabled",
                 "%item%", itemName));
-        gui.openShopItems(p, session, gh.adminView(), gh.shopPage(), gh.page());
+        gui.openShopItems(p, holder, adminView, gh.shopPage(), gh.page());
     }
 
     private void handleShopPrice(Player p, GuiHolder gh, int slot) {
-        PrivateSession session = requireManageable(p, gh);
-        if (session == null) return;
+        SettingsHolder holder = resolveSettingsHolder(p, gh);
+        if (holder == null) return;
+        boolean adminView = gh.adminView();
 
         String itemId = gh.shopItem();
         ShopItem item = itemId != null ? BedwarsAPI.getGameAPI().getShopItemById(itemId) : null;
         if (item == null) {
-            gui.openShopPages(p, session, gh.adminView());
+            gui.openShopPages(p, holder, adminView);
             return;
         }
         String itemName = ChatColor.stripColor(ItemUtil.color(item.getDisplayName()));
 
         if (slot == GuiStyle.slot("shop-price.buttons.back")) {
-            gui.openShopItems(p, session, gh.adminView(), gh.shopPage(), 0);
+            gui.openShopItems(p, holder, adminView, gh.shopPage(), 0);
             return;
         }
         if (slot == GuiStyle.slot("shop-price.buttons.reset")) {
-            SessionSettings.ShopOverride override = session.getSettings().getShopOverride(itemId);
+            SessionSettings.ShopOverride override = holder.getSettings().getShopOverride(itemId);
             if (override != null) {
                 override.setPrice(null, null);
-                session.getSettings().pruneShopOverride(itemId);
-                sessions.saveSettings(session);
+                holder.getSettings().pruneShopOverride(itemId);
+                persist(holder);
             }
             p.sendMessage(Lang.msg("shop.price-reset", "%item%", itemName));
-            gui.openShopPrice(p, session, gh.adminView(), gh.shopPage(), itemId);
+            gui.openShopPrice(p, holder, adminView, gh.shopPage(), itemId);
             return;
         }
 
         // Current effective price (override or default) as the editing base.
-        SessionSettings.ShopOverride override = session.getSettings().getOrCreateShopOverride(itemId);
+        SessionSettings.ShopOverride override = holder.getSettings().getOrCreateShopOverride(itemId);
         int amount;
         String currency;
         if (override.hasPriceOverride()) {
@@ -649,17 +707,17 @@ public final class GuiListener implements Listener {
         }
 
         if (!changed) {
-            session.getSettings().pruneShopOverride(itemId);
+            holder.getSettings().pruneShopOverride(itemId);
             return;
         }
 
         override.setPrice(amount, currency);
-        sessions.saveSettings(session);
+        persist(holder);
         p.sendMessage(Lang.msg("shop.price-set",
                 "%item%", itemName,
                 "%amount%", String.valueOf(amount),
                 "%currency%", GuiManager.currencyLabel(currency)));
-        gui.openShopPrice(p, session, gh.adminView(), gh.shopPage(), itemId);
+        gui.openShopPrice(p, holder, adminView, gh.shopPage(), itemId);
     }
 
     /** Cycles to the next registered MBedwars drop type (iron → gold → diamond → …). */
@@ -756,6 +814,24 @@ public final class GuiListener implements Listener {
      * Resolves the menu's session and enforces that only its host (or an admin/bypass
      * holder) may act. Returns null — with the player already messaged — otherwise.
      */
+    /**
+     * Resolves either a live session (via {@link #requireManageable}) or — when the menu was
+     * opened from the builder, signalled by a null {@code sessionId} — the clicking player's own
+     * in-progress draft. Messages the player and returns null if neither applies.
+     */
+    private SettingsHolder resolveSettingsHolder(Player p, GuiHolder gh) {
+        if (gh.sessionId() != null) {
+            return requireManageable(p, gh);
+        }
+        DraftPrivateMatch draft = drafts.get(p.getUniqueId());
+        if (draft == null || draft.getArenaName() == null) {
+            p.sendMessage(Lang.msg("create.select-map-first"));
+            gui.openBuilder(p);
+            return null;
+        }
+        return draft;
+    }
+
     private PrivateSession requireManageable(Player p, GuiHolder gh) {
         PrivateSession session = sessions.getById(gh.sessionId());
         if (session == null) {

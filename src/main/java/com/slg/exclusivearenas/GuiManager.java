@@ -67,7 +67,9 @@ public final class GuiManager {
         GuiHolder holder = new GuiHolder(GuiHolder.Type.MAIN);
         Inventory inv = create(holder, GuiStyle.size("main", 27), GuiStyle.title("main"));
         frame(inv);
-        accentDividers(inv, 11, 13, 15);
+        // Fill the whole row, not just the gaps — Admin is permission-gated, and without this
+        // its slot would be a bare hole for anyone lacking the permission.
+        fillInteriorRow(inv, 9, accentMaterial());
 
         String hosting = String.valueOf(sessions.countByOwner(p.getUniqueId()));
         String limit = limitLabel(plugin.getArenaLimit(p));
@@ -279,7 +281,10 @@ public final class GuiManager {
         Inventory inv = create(holder, GuiStyle.size("arena-config", 27),
                 GuiStyle.title("arena-config", "%arena%", session.getArenaName()));
         frame(inv);
-        accentDividers(inv, 11, 13, 15);
+        // Fill the whole row first, not just the gaps between buttons — event-timeline is
+        // conditionally hidden (timeline.enabled: false), and without this its slot would be
+        // left as a bare hole instead of reading as an intentional, evenly-filled row.
+        fillInteriorRow(inv, 9, accentMaterial());
 
         if (plugin.getTimelineService().isEnabled()) {
             GuiStyle.place(inv, "arena-config.buttons.event-timeline");
@@ -291,19 +296,41 @@ public final class GuiManager {
         p.openInventory(inv);
     }
 
+    /** The same Arena Settings hub, but for a not-yet-created builder draft. */
+    public void openBuilderSettings(Player p, DraftPrivateMatch draft) {
+        GuiHolder holder = new GuiHolder(GuiHolder.Type.BUILDER_SETTINGS);
+        Inventory inv = create(holder, GuiStyle.size("builder-settings", 27),
+                GuiStyle.title("builder-settings", "%arena%", draft.getArenaName()));
+        frame(inv);
+        fillInteriorRow(inv, 9, accentMaterial());
+
+        if (plugin.getTimelineService().isEnabled()) {
+            GuiStyle.place(inv, "builder-settings.buttons.event-timeline");
+        }
+        GuiStyle.place(inv, "builder-settings.buttons.shop-config");
+        GuiStyle.place(inv, "builder-settings.buttons.team-size");
+        GuiStyle.place(inv, "builder-settings.buttons.back");
+        p.openInventory(inv);
+    }
+
     /** Bounds on the players-per-team override — generous for every real BedWars team format. */
     static final int MIN_PLAYERS_PER_TEAM = 1;
     static final int MAX_PLAYERS_PER_TEAM = 8;
 
-    public void openTeamSize(Player p, PrivateSession session, boolean adminView) {
-        GuiHolder holder = new GuiHolder(GuiHolder.Type.TEAM_SIZE)
-                .sessionId(session.getSessionId()).adminView(adminView);
-        Inventory inv = create(holder, GuiStyle.size("team-size", 27),
-                GuiStyle.title("team-size", "%arena%", session.getArenaName()));
+    public void openTeamSize(Player p, SettingsHolder holder, boolean adminView) {
+        UUID sessionId = holder instanceof PrivateSession ps ? ps.getSessionId() : null;
+        GuiHolder gh = new GuiHolder(GuiHolder.Type.TEAM_SIZE)
+                .sessionId(sessionId).adminView(adminView);
+        Inventory inv = create(gh, GuiStyle.size("team-size", 27),
+                GuiStyle.title("team-size", "%arena%", holder.getArenaName()));
         frame(inv);
-        accentDividers(inv, 12, 14);
+        // Fill both interior rows, not just the gaps between buttons — minus-one/plus-one/reset
+        // are all conditionally hidden once locked, and without this those slots would be left
+        // as bare holes instead of reading as an intentional, evenly-filled layout.
+        fillInteriorRow(inv, 9, accentMaterial());
+        fillInteriorRow(inv, 18, accentMaterial());
 
-        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(holder.getArenaName());
         if (arena == null || !arena.exists()) {
             GuiStyle.place(inv, "team-size.buttons.unavailable",
                     "%reason%", "&7This arena isn't loaded on this server.");
@@ -312,11 +339,14 @@ public final class GuiManager {
             return;
         }
 
-        Integer original = session.getOriginalPlayersPerTeam();
+        // A not-yet-created draft has no "arena's original value" to remember (nothing has
+        // touched the live arena yet) and no lock — nobody could have joined a match that
+        // doesn't exist. Both only apply to a live session.
+        Integer original = holder instanceof PrivateSession ps ? ps.getOriginalPlayersPerTeam() : null;
         int fallback = original != null ? original : arena.getPlayersPerTeam();
-        Integer override = session.getSettings().getPlayersPerTeam();
+        Integer override = holder.getSettings().getPlayersPerTeam();
         int amount = override != null ? override : fallback;
-        boolean locked = !plugin.canChangeTeamSize(arena);
+        boolean locked = holder instanceof PrivateSession && !plugin.canChangeTeamSize(arena);
 
         GuiStyle.place(inv, "team-size.buttons.display", "%amount%", String.valueOf(amount),
                 "%locked%", locked ? "&cLocked — a player has already joined." : "");
@@ -410,9 +440,9 @@ public final class GuiManager {
 
     // ── Event timeline editor ─────────────────────────────────────────────────────
 
-    public void openTimeline(Player p, PrivateSession session, boolean adminView, String selectedEventId) {
+    public void openTimeline(Player p, SettingsHolder holder, boolean adminView, String selectedEventId) {
         TimelineService timelines = plugin.getTimelineService();
-        List<SessionSettings.TimelineEntry> timeline = timelines.effectiveTimeline(session);
+        List<SessionSettings.TimelineEntry> timeline = timelines.effectiveTimeline(holder.getSettings());
 
         // A selection that no longer exists (deleted, reset) silently clears.
         String wanted = selectedEventId;
@@ -420,10 +450,11 @@ public final class GuiManager {
             selectedEventId = null;
         }
 
-        GuiHolder holder = new GuiHolder(GuiHolder.Type.TIMELINE)
-                .sessionId(session.getSessionId()).adminView(adminView).selectedEvent(selectedEventId);
-        Inventory inv = create(holder, GuiStyle.size("timeline", 54),
-                GuiStyle.title("timeline", "%arena%", session.getArenaName()));
+        UUID sessionId = holder instanceof PrivateSession ps ? ps.getSessionId() : null;
+        GuiHolder gh = new GuiHolder(GuiHolder.Type.TIMELINE)
+                .sessionId(sessionId).adminView(adminView).selectedEvent(selectedEventId);
+        Inventory inv = create(gh, GuiStyle.size("timeline", 54),
+                GuiStyle.title("timeline", "%arena%", holder.getArenaName()));
         frame(inv);
 
         GuiStyle.place(inv, "timeline.buttons.info");
@@ -449,7 +480,7 @@ public final class GuiManager {
 
             int slot = STRIP_SLOTS[i];
             inv.setItem(slot, item);
-            holder.mapKeySlot(slot, entry.id());
+            gh.mapKeySlot(slot, entry.id());
         }
 
         if (selectedEventId != null) {
@@ -472,11 +503,12 @@ public final class GuiManager {
 
     // ── Shop configuration ────────────────────────────────────────────────────────
 
-    public void openShopPages(Player p, PrivateSession session, boolean adminView) {
-        GuiHolder holder = new GuiHolder(GuiHolder.Type.SHOP_PAGES)
-                .sessionId(session.getSessionId()).adminView(adminView);
-        Inventory inv = create(holder, GuiStyle.size("shop-pages", 36),
-                GuiStyle.title("shop-pages", "%arena%", session.getArenaName()));
+    public void openShopPages(Player p, SettingsHolder holder, boolean adminView) {
+        UUID sessionId = holder instanceof PrivateSession ps ? ps.getSessionId() : null;
+        GuiHolder gh = new GuiHolder(GuiHolder.Type.SHOP_PAGES)
+                .sessionId(sessionId).adminView(adminView);
+        Inventory inv = create(gh, GuiStyle.size("shop-pages", 36),
+                GuiStyle.title("shop-pages", "%arena%", holder.getArenaName()));
         frame(inv);
 
         GuiStyle.place(inv, "shop-pages.buttons.info");
@@ -485,7 +517,7 @@ public final class GuiManager {
         for (int i = 0; i < pages.size() && i < STRIP_SLOTS.length; i++) {
             ShopPage page = pages.get(i);
             List<String> itemIds = page.getItems().stream().map(ShopItem::getId).toList();
-            long disabled = session.getSettings().countDisabled(itemIds);
+            long disabled = holder.getSettings().countDisabled(itemIds);
 
             ItemStack icon = ItemUtil.icon(page.getIcon(), Material.CHEST,
                     GuiStyle.name("shop-pages.items.page", "%page%", plainName(page.getDisplayName())),
@@ -496,7 +528,7 @@ public final class GuiManager {
 
             int slot = STRIP_SLOTS[i];
             inv.setItem(slot, icon);
-            holder.mapKeySlot(slot, page.getName());
+            gh.mapKeySlot(slot, page.getName());
         }
 
         GuiStyle.place(inv, "shop-pages.buttons.reset");
@@ -504,10 +536,10 @@ public final class GuiManager {
         p.openInventory(inv);
     }
 
-    public void openShopItems(Player p, PrivateSession session, boolean adminView, String pageName, int page) {
+    public void openShopItems(Player p, SettingsHolder holder, boolean adminView, String pageName, int page) {
         ShopPage shopPage = findShopPage(pageName);
         if (shopPage == null) {
-            openShopPages(p, session, adminView);
+            openShopPages(p, holder, adminView);
             return;
         }
 
@@ -516,12 +548,13 @@ public final class GuiManager {
         int pages = Math.max(1, (int) Math.ceil(items.size() / (double) perPage));
         int pg = Math.max(0, Math.min(page, pages - 1));
 
-        GuiHolder holder = new GuiHolder(GuiHolder.Type.SHOP_ITEMS)
-                .sessionId(session.getSessionId()).adminView(adminView)
+        UUID sessionId = holder instanceof PrivateSession ps ? ps.getSessionId() : null;
+        GuiHolder gh = new GuiHolder(GuiHolder.Type.SHOP_ITEMS)
+                .sessionId(sessionId).adminView(adminView)
                 .shopPage(pageName).page(pg);
-        Inventory inv = create(holder, GuiStyle.size("shop-items", 54),
+        Inventory inv = create(gh, GuiStyle.size("shop-items", 54),
                 GuiStyle.title("shop-items",
-                        "%arena%", session.getArenaName(),
+                        "%arena%", holder.getArenaName(),
                         "%page%", plainName(shopPage.getDisplayName()),
                         "%pagenum%", String.valueOf(pg + 1),
                         "%pages%", String.valueOf(pages)));
@@ -532,8 +565,8 @@ public final class GuiManager {
         for (int i = start; i < end; i++) {
             ShopItem item = items.get(i);
             int slot = LIST_SLOTS[i - start];
-            inv.setItem(slot, shopItemEntry(session, item));
-            holder.mapKeySlot(slot, item.getId());
+            inv.setItem(slot, shopItemEntry(holder, item));
+            gh.mapKeySlot(slot, item.getId());
         }
 
         if (pg > 0) GuiStyle.place(inv, "shop-items.buttons.previous-page", "%target%", String.valueOf(pg));
@@ -542,15 +575,15 @@ public final class GuiManager {
         p.openInventory(inv);
     }
 
-    public void openShopPrice(Player p, PrivateSession session, boolean adminView,
+    public void openShopPrice(Player p, SettingsHolder holder, boolean adminView,
                               String pageName, String itemId) {
         ShopItem item = BedwarsAPI.getGameAPI().getShopItemById(itemId);
         if (item == null) {
-            openShopItems(p, session, adminView, pageName, 0);
+            openShopItems(p, holder, adminView, pageName, 0);
             return;
         }
 
-        SessionSettings.ShopOverride override = session.getSettings().getShopOverride(itemId);
+        SessionSettings.ShopOverride override = holder.getSettings().getShopOverride(itemId);
         int amount;
         String currencyId;
         if (override != null && override.hasPriceOverride()) {
@@ -562,10 +595,11 @@ public final class GuiManager {
         }
         String currencyName = currencyLabel(currencyId);
 
-        GuiHolder holder = new GuiHolder(GuiHolder.Type.SHOP_PRICE)
-                .sessionId(session.getSessionId()).adminView(adminView)
+        UUID sessionId = holder instanceof PrivateSession ps ? ps.getSessionId() : null;
+        GuiHolder gh = new GuiHolder(GuiHolder.Type.SHOP_PRICE)
+                .sessionId(sessionId).adminView(adminView)
                 .shopPage(pageName).shopItem(itemId);
-        Inventory inv = create(holder, GuiStyle.size("shop-price", 45),
+        Inventory inv = create(gh, GuiStyle.size("shop-price", 45),
                 GuiStyle.title("shop-price", "%item%", plainName(item.getDisplayName())));
         frame(inv);
 
@@ -594,8 +628,8 @@ public final class GuiManager {
     }
 
     /** The item entry shown in the shop-items grid, styled by its enabled/disabled state. */
-    private ItemStack shopItemEntry(PrivateSession session, ShopItem item) {
-        SessionSettings.ShopOverride override = session.getSettings().getShopOverride(item.getId());
+    private ItemStack shopItemEntry(SettingsHolder holder, ShopItem item) {
+        SessionSettings.ShopOverride override = holder.getSettings().getShopOverride(item.getId());
         boolean disabled = override != null && override.isDisabled();
         boolean customPrice = override != null && override.hasPriceOverride();
 
@@ -830,6 +864,10 @@ public final class GuiManager {
         GuiStyle.place(inv, ready ? "builder.buttons.create-ready" : "builder.buttons.create-not-ready",
                 "%map%", d.getArenaName() == null ? "?" : d.getArenaName());
 
+        if (d.getArenaName() != null) {
+            GuiStyle.place(inv, "builder.buttons.arena-settings");
+        }
+
         GuiStyle.place(inv, "builder.buttons.back");
         GuiStyle.place(inv, "builder.buttons.close");
         p.openInventory(inv);
@@ -871,7 +909,7 @@ public final class GuiManager {
         for (int i = start; i < end; i++) {
             ArenaEntry entry = entries.get(i);
             int slot = LIST_SLOTS[i - start];
-            boolean reserved = sessions.isArenaReserved(entry.name());
+            boolean reserved = sessions.isArenaReserved(entry.name(), p.getUniqueId());
             String template = "arena-select.items." + (reserved ? "arena-reserved" : "arena");
             Material fallback = reserved ? Material.GRAY_CONCRETE : Material.GRASS_BLOCK;
 

@@ -78,7 +78,7 @@ public final class EventTimelineEngine implements Listener {
                     if (!arena.exists() || arena.getStatus() != ArenaStatus.RUNNING) return;
                     TweaksTimelineBridge bridge = plugin.getTweaksBridge();
                     if (bridge != null && bridge.isHandling(arena)) return;
-                    pinMatchEnd(arena, timelines.effectiveTimeline(session));
+                    pinMatchEnd(arena, timelines.effectiveTimeline(session.getSettings()));
                     plugin.getLogger().warning("MBedwarsTweaks is installed but its gen tiers never "
                             + "scheduled for '" + arena.getName() + "' — is gen-tiers enabled in the "
                             + "Tweaks config? Only this match's end time could be applied.");
@@ -87,7 +87,7 @@ public final class EventTimelineEngine implements Listener {
             return;
         }
 
-        List<SessionSettings.TimelineEntry> timeline = timelines.effectiveTimeline(session);
+        List<SessionSettings.TimelineEntry> timeline = timelines.effectiveTimeline(session.getSettings());
 
         List<SessionSettings.TimelineEntry> pending = new ArrayList<>();
         for (SessionSettings.TimelineEntry entry : timeline) {

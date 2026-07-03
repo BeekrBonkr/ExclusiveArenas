@@ -30,6 +30,14 @@ public final class PrivateSessionService {
     // never reconcile-removed, so a fresh local create can't be evicted by an early poll.
     private final Set<UUID> pendingWrite = ConcurrentHashMap.newKeySet();
 
+    // Soft "someone's got this picked in their builder" lock — local to this server only
+    // (the builder itself is local), so two hosts on it can't both select the same free
+    // arena before either actually finishes creating. Self-expires so an abandoned draft
+    // (closed the menu, disconnected, crashed, …) can't lock an arena forever.
+    private final Map<String, UUID> draftReservations = new ConcurrentHashMap<>();
+    private final Map<String, Long> draftReservedAt = new ConcurrentHashMap<>();
+    private static final long DRAFT_RESERVATION_TTL_MS = 10 * 60_000L;
+
     private int codeLength = 6;
     private Database db; // null when running single-server (database.enabled = false)
 
@@ -42,8 +50,51 @@ public final class PrivateSessionService {
     }
 
     public boolean isArenaReserved(String arenaName) {
+        return isArenaReserved(arenaName, null);
+    }
+
+    /**
+     * @param excludingOwner a draft reservation held by this player doesn't count as
+     *                       "reserved" for them — so re-viewing/re-confirming their own pick
+     *                       in the arena selector doesn't self-block.
+     */
+    public boolean isArenaReserved(String arenaName, UUID excludingOwner) {
         if (arenaName == null) return false;
-        return byArena.containsKey(ArenaNames.canonical(arenaName).toLowerCase(Locale.ROOT));
+        String key = ArenaNames.canonical(arenaName).toLowerCase(Locale.ROOT);
+        if (byArena.containsKey(key)) return true;
+
+        UUID draftOwner = draftReservations.get(key);
+        if (draftOwner == null) return false;
+        Long at = draftReservedAt.get(key);
+        if (at == null || System.currentTimeMillis() - at > DRAFT_RESERVATION_TTL_MS) {
+            draftReservations.remove(key);
+            draftReservedAt.remove(key);
+            return false;
+        }
+        return excludingOwner == null || !draftOwner.equals(excludingOwner);
+    }
+
+    /**
+     * Soft-reserves {@code arenaName} for {@code owner}'s in-progress builder draft — released
+     * by {@link #releaseDraftArena} once they pick a different map, back out, or actually
+     * create the match. Returns false (and reserves nothing) if someone else already has it,
+     * whether via a real session or another player's draft.
+     */
+    public boolean reserveDraftArena(String arenaName, UUID owner) {
+        if (arenaName == null || owner == null || isArenaReserved(arenaName, owner)) return false;
+        String key = ArenaNames.canonical(arenaName).toLowerCase(Locale.ROOT);
+        draftReservations.put(key, owner);
+        draftReservedAt.put(key, System.currentTimeMillis());
+        return true;
+    }
+
+    /** Releases {@code owner}'s draft reservation on {@code arenaName}, if they still hold it. */
+    public void releaseDraftArena(String arenaName, UUID owner) {
+        if (arenaName == null || owner == null) return;
+        String key = ArenaNames.canonical(arenaName).toLowerCase(Locale.ROOT);
+        if (draftReservations.remove(key, owner)) {
+            draftReservedAt.remove(key);
+        }
     }
 
     public PrivateSession getByArena(Arena arena) {

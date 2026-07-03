@@ -691,7 +691,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             host.sendMessage(Lang.msg("create.limit-reached", "%limit%", String.valueOf(limit)));
             return;
         }
-        if (sessionService.isArenaReserved(arenaName)) {
+        if (sessionService.isArenaReserved(arenaName, host.getUniqueId())) {
             host.sendMessage(Lang.msg("create.arena-reserved"));
             return;
         }
@@ -701,6 +701,8 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         }
 
         PrivateSession session = sessionService.createSession(draft);
+        session.setSettings(draft.getSettings()); // carries over any Arena Settings chosen pre-creation
+        sessionService.releaseDraftArena(arenaName, host.getUniqueId()); // now reserved for real
         draftService.clear(host.getUniqueId());
 
         // Use the canonical name the session stored (not the raw draft name, which may carry
