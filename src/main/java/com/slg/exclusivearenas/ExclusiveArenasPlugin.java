@@ -15,6 +15,10 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -222,24 +226,39 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
     /** Loads lang.yml and guis.yml (versioned, self-healing) and points the static accessors at them. */
     private void loadLangAndGuis() {
-        this.langYaml = new VersionedYaml(this, addon.getDataFolder(), "lang.yml", 2, (config, fromVersion) -> {
-            if (fromVersion >= 2) return false;
-            // v2 retired the toggle-spectate item's two-state (on/off) rendering — it's now a
-            // single static "spectate" icon, and the "rejoin as a player" half of its job moved
-            // to the new dedicated spectator-rejoin.* item/messages. These keys are dead; their
-            // replacements are added automatically below since they're plain new keys.
-            for (String dead : new String[] {
-                    "spectate.item-name-on", "spectate.item-name-off",
-                    "spectate.item-desc-on", "spectate.item-desc-off",
-                    "spectate.rejoin-failed", "spectate.now-playing"}) {
-                config.set(dead, null);
+        this.langYaml = new VersionedYaml(this, addon.getDataFolder(), "lang.yml", 3, (config, fromVersion) -> {
+            boolean changed = false;
+            if (fromVersion < 2) {
+                // v2 retired the toggle-spectate item's two-state (on/off) rendering — it's now
+                // a single static "spectate" icon, and the "rejoin as a player" half of its job
+                // moved to the new dedicated spectator-rejoin.* item/messages. These keys are
+                // dead; their replacements are added automatically below since they're plain new
+                // keys.
+                for (String dead : new String[] {
+                        "spectate.item-name-on", "spectate.item-name-off",
+                        "spectate.item-desc-on", "spectate.item-desc-off",
+                        "spectate.rejoin-failed", "spectate.now-playing"}) {
+                    config.set(dead, null);
+                }
+                changed = true;
             }
-            return true;
+            if (fromVersion < 3) {
+                // v3: rejoin-as-player now dispatches MBedwars' own "/bw join" command instead
+                // of reimplementing the spectator→player transition, which reports its own
+                // feedback — these three messages are dead.
+                for (String dead : new String[] {
+                        "spectator-rejoin.lobby-only", "spectator-rejoin.rejoin-failed",
+                        "spectator-rejoin.now-playing"}) {
+                    config.set(dead, null);
+                }
+                changed = true;
+            }
+            return changed;
         });
         this.langYaml.load();
         Lang.init(langYaml);
 
-        this.guisYaml = new VersionedYaml(this, addon.getDataFolder(), "guis.yml", 3, (config, fromVersion) -> {
+        this.guisYaml = new VersionedYaml(this, addon.getDataFolder(), "guis.yml", 4, (config, fromVersion) -> {
             boolean changed = false;
             if (fromVersion < 2) {
                 // v2 grew the Help menu a row (command reference cards for the new /ea
@@ -274,6 +293,12 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                 changed |= moveIfDefault(config, "controls.buttons.kick-all.slot", 31, 30);
                 changed |= moveIfDefault(config, "quick-actions.buttons.clear-items.slot", 20, 21);
                 changed |= moveIfDefault(config, "quick-actions.buttons.skip-event.slot", 24, 23);
+            }
+            if (fromVersion < 4) {
+                // v4 removed the "Cosmetics (Unavailable)" stub — MBedwars exposes no cosmetics
+                // API to hook into, so there was nothing an admin could ever configure there.
+                config.set("arena-config.buttons.cosmetics-unavailable", null);
+                changed = true;
             }
             return changed;
         });
@@ -984,6 +1009,49 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         if (skipped > 0) {
             actor.sendMessage(Lang.msg("teams.move-skipped", "%count%", String.valueOf(skipped)));
         }
+    }
+
+    /**
+     * Evenly spreads every player currently in the arena's lobby across its enabled teams —
+     * shuffled first, then handed out round-robin, so it's not always alphabetical/join-order —
+     * respecting each team's capacity. Re-shuffles everyone, including players already on a
+     * team, for a clean, fully-balanced result every time it's clicked.
+     */
+    public void distributePlayersToTeams(Player actor, PrivateSession session) {
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        if (arena == null || !arena.exists()) {
+            actor.sendMessage(Lang.msg("general.arena-other-server"));
+            return;
+        }
+        if (!arena.getStatus().isLobby()) {
+            actor.sendMessage(Lang.msg("teams.move-lobby-only"));
+            return;
+        }
+
+        List<Team> teams = new ArrayList<>(arena.getEnabledTeams());
+        if (teams.isEmpty()) return;
+        teams.sort(Comparator.comparing(Team::name));
+
+        List<Player> players = new ArrayList<>(arena.getPlayers());
+        Collections.shuffle(players);
+
+        int cap = arena.getPlayersPerTeam();
+        int moved = 0, idx = 0;
+        for (Player target : players) {
+            Team assigned = null;
+            for (int i = 0; i < teams.size(); i++) {
+                Team candidate = teams.get((idx + i) % teams.size());
+                if (arena.getPlayersInTeam(candidate).size() < cap) {
+                    assigned = candidate;
+                    idx += i + 1;
+                    break;
+                }
+            }
+            if (assigned == null) break; // every team is at capacity
+            if (arena.moveToTeamDuringLobby(target, assigned)) moved++;
+        }
+
+        actor.sendMessage(Lang.msg("teams.distributed", "%count%", String.valueOf(moved)));
     }
 
     /**

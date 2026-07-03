@@ -4,8 +4,6 @@ import de.marcely.bedwars.api.arena.Arena;
 import de.marcely.bedwars.api.arena.ArenaStatus;
 import de.marcely.bedwars.api.game.lobby.LobbyItem;
 import de.marcely.bedwars.api.game.lobby.LobbyItemHandler;
-import de.marcely.bedwars.api.game.spectator.KickSpectatorReason;
-import de.marcely.bedwars.api.game.spectator.Spectator;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -17,6 +15,13 @@ import org.bukkit.plugin.Plugin;
  * spectating one of our private matches, letting them rejoin as a player without leaving and
  * re-entering the arena. Hidden once the round is running or the arena has no free player slot;
  * actually rejoining still requires the arena to be in its lobby.
+ *
+ * <p>Converting a spectator straight to a player via the {@code Arena} API
+ * ({@code getSpectateData(...).kick(...)} then {@code addPlayer(...)}) throws deep inside
+ * MBedwars' own (obfuscated) implementation — {@code addPlayer} is built for a fresh join, not
+ * for un-spectating someone. MBedwars' own {@code /bw join <arena>} command already handles this
+ * exact transition correctly (its own {@code mbedwars.cmd.join} permission is default-true), so
+ * this dispatches that instead of re-implementing the transition ourselves.
  */
 public final class SpectatorRejoinHandler extends LobbyItemHandler {
 
@@ -41,20 +46,9 @@ public final class SpectatorRejoinHandler extends LobbyItemHandler {
 
     @Override
     public void handleUse(Player player, Arena arena, LobbyItem item) {
-        if (!arena.getStatus().isLobby()) {
-            player.sendMessage(Lang.msg("spectator-rejoin.lobby-only"));
-            return;
-        }
-
-        Spectator spectator = arena.getSpectateData(player);
-        if (spectator != null && spectator.isPresent()) spectator.kick(KickSpectatorReason.JOIN_ARENA);
-
-        if (!arena.getPlayers().contains(player) && arena.addPlayer(player) != null) {
-            // MBedwars rejected the re-add (e.g. the arena filled up while spectating).
-            player.sendMessage(Lang.msg("spectator-rejoin.rejoin-failed"));
-            return;
-        }
-        player.sendMessage(Lang.msg("spectator-rejoin.now-playing"));
+        // MBedwars' own command reports success/failure (full, no longer in lobby, …) to the
+        // player itself, so there's nothing left for us to check or message here.
+        player.performCommand("bw join " + arena.getName());
     }
 
     private ItemStack buildIcon() {

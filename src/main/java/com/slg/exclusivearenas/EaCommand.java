@@ -508,7 +508,9 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                             "%max%", String.valueOf(PresetService.MAX_NAME_LENGTH)));
                     return;
                 }
-                plugin.getPresetService().list(p.getUniqueId(), presets -> {
+                // Presets belong to the arena's host, not whoever ran the command — matters
+                // when a privileged admin manages another player's session.
+                plugin.getPresetService().list(session.getOwner(), presets -> {
                     // Re-fetch by id: a DB sync may have replaced (or ended) the session
                     // while the preset list loaded off-thread.
                     PrivateSession live = sessions.getById(session.getSessionId());
@@ -527,8 +529,12 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                                 "%max%", String.valueOf(PresetService.MAX_PRESETS)));
                         return;
                     }
-                    plugin.getPresetService().save(p.getUniqueId(), name, live.getSettings().toJson());
-                    p.sendMessage(Lang.msg("presets.saved", "%name%", name));
+                    String savedName = name;
+                    plugin.getPresetService().save(live.getOwner(), savedName, live.getSettings().toJson(), ok -> {
+                        if (!p.isOnline()) return;
+                        p.sendMessage(ok ? Lang.msg("presets.saved", "%name%", savedName)
+                                : Lang.msg("presets.save-failed", "%name%", savedName));
+                    });
                 });
             }
 
@@ -537,7 +543,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                 if (session == null) return;
                 if (args.length < 3) { p.sendMessage(Lang.msg("cmd.preset-usage")); return; }
                 String requested = args[2];
-                plugin.getPresetService().list(p.getUniqueId(), presets -> {
+                plugin.getPresetService().list(session.getOwner(), presets -> {
                     String name = PresetService.existingName(presets, requested);
                     if (name == null) {
                         p.sendMessage(Lang.msg("cmd.preset-unknown", "%name%", requested));

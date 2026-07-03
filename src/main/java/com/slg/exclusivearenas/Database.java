@@ -250,8 +250,20 @@ public final class Database {
     }
 
     public void upsertPreset(UUID owner, String name, String settingsJson) {
-        submit("upsert preset " + name, c -> {
-            try (PreparedStatement ps = c.prepareStatement(
+        upsertPreset(owner, name, settingsJson, null);
+    }
+
+    /**
+     * Saves a preset, then reports whether it actually succeeded — on the writer thread, not
+     * the main thread; callers touching Bukkit API from {@code callback} must hop back
+     * themselves. Lets a save that silently failed (bad connection, schema issue, …) tell the
+     * player honestly instead of claiming success while nothing was actually persisted.
+     */
+    public void upsertPreset(UUID owner, String name, String settingsJson, java.util.function.Consumer<Boolean> callback) {
+        writer.execute(() -> {
+            boolean ok = true;
+            try (Connection c = dataSource.getConnection();
+                 PreparedStatement ps = c.prepareStatement(
                     "INSERT INTO `" + presetsTable + "` (owner, name, settings, updated_at) "
                             + "VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE settings=VALUES(settings), "
                             + "updated_at=VALUES(updated_at)")) {
@@ -260,7 +272,12 @@ public final class Database {
                 ps.setString(3, settingsJson);
                 ps.setLong(4, System.currentTimeMillis());
                 ps.executeUpdate();
+                verbose("write ok: upsert preset " + name);
+            } catch (Throwable t) {
+                ok = false;
+                logger.log(Level.WARNING, "ExclusiveArenas DB write failed (upsert preset " + name + "): " + t.getMessage());
             }
+            if (callback != null) callback.accept(ok);
         });
     }
 

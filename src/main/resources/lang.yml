@@ -11,7 +11,7 @@
 # Do not change 'config-version': the plugin uses it to upgrade this file
 # in place when you install a newer version (your edits are preserved).
 # ─────────────────────────────────────────────────────────────────────────────
-config-version: 2
+config-version: 3
 
 general:
   # Sent when the console tries to run /ea.
@@ -114,6 +114,8 @@ teams:
   moved: "&aMoved &f%count%&a player(s) to %team%&a."
   # %count%
   move-skipped: "&c%count% player(s) could not be moved (team full)."
+  # %count%
+  distributed: "&aDistributed &f%count%&a player(s) evenly across teams."
 
 spectate:
   # The toggle-spectate lobby hotbar item (see config.yml's lobby-hotbar notes). Hidden once
@@ -128,12 +130,11 @@ spectate:
 # The rejoin-as-player lobby hotbar item — visible only to spectators (see config.yml's
 # lobby-hotbar notes). Hidden once the round is running or the arena has no free player slot.
 spectator-rejoin:
+  # Clicking dispatches MBedwars' own "/bw join" command, which reports its own
+  # success/failure feedback to the player — there are no messages of our own to send.
   item-name: "&aRejoin as Player"
   item-desc: "&7Switch back to playing this match."
   item-hint: "&8▶ Click to rejoin"
-  lobby-only: "&cYou can only rejoin while the match is in its lobby."
-  rejoin-failed: "&cCouldn't rejoin as a player — the match may be full."
-  now-playing: "&aYou'll play in this match — pick a team to join in."
 
 # The summon-party lobby hotbar item — visible only to the host of a party-gated match (see
 # config.yml's lobby-hotbar notes). Same action as Match Controls' Summon Party button.
@@ -305,6 +306,8 @@ shop:
 presets:
   # %name%
   saved: "&aSaved the current setup as &f%name%&a."
+  # %name% — the write itself failed (database unreachable, disk full, …); see console.
+  save-failed: "&cCouldn't save &f%name%&c — see the console for details. Nothing was saved."
   # %name%, %arena%
   applied: "&aApplied &f%name%&a to &f%arena%&a."
   # %name%

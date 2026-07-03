@@ -278,15 +278,24 @@ public final class GuiListener implements Listener {
 
     // ── Saved configurations (presets) ───────────────────────────────────────────────
 
-    /** Loads the player's presets off-thread, then opens the menu with them. */
+    /**
+     * Loads the session host's presets off-thread, then opens the menu with them. Always keyed
+     * by the session's owner — not whichever player is clicking — so an admin managing someone
+     * else's match sees (and saves into) that host's own presets, not their own.
+     */
     private void openPresetsFor(Player p, GuiHolder gh) {
-        plugin.getPresetService().list(p.getUniqueId(), presets -> {
-            PrivateSession session = sessions.getById(gh.sessionId());
-            if (session == null) {
+        PrivateSession session = sessions.getById(gh.sessionId());
+        if (session == null) {
+            p.sendMessage(Lang.msg("general.match-gone"));
+            return;
+        }
+        plugin.getPresetService().list(session.getOwner(), presets -> {
+            PrivateSession live = sessions.getById(gh.sessionId());
+            if (live == null) {
                 p.sendMessage(Lang.msg("general.match-gone"));
                 return;
             }
-            gui.openPresets(p, session, gh.adminView(), presets);
+            gui.openPresets(p, live, gh.adminView(), presets);
         });
     }
 
@@ -316,7 +325,7 @@ public final class GuiListener implements Listener {
         if (name == null || !presets.containsKey(name)) return;
 
         if (shiftClick) {
-            plugin.getPresetService().delete(p.getUniqueId(), name);
+            plugin.getPresetService().delete(session.getOwner(), name);
             presets.remove(name);
             p.sendMessage(Lang.msg("presets.deleted", "%name%", name));
             gui.openPresets(p, session, gh.adminView(), presets);
@@ -359,10 +368,17 @@ public final class GuiListener implements Listener {
         }
 
         String json = session.getSettings().toJson();
-        plugin.getPresetService().save(p.getUniqueId(), name, json);
-        p.sendMessage(Lang.msg("presets.saved", "%name%", name));
-        presets.put(name, json);
-        gui.openPresets(p, session, gh.adminView(), presets);
+        plugin.getPresetService().save(session.getOwner(), name, json, ok -> {
+            if (!p.isOnline()) return;
+            if (!ok) {
+                p.sendMessage(Lang.msg("presets.save-failed", "%name%", name));
+                gui.openPresets(p, session, gh.adminView(), presets); // unchanged — nothing was persisted
+                return;
+            }
+            p.sendMessage(Lang.msg("presets.saved", "%name%", name));
+            presets.put(name, json);
+            gui.openPresets(p, session, gh.adminView(), presets);
+        });
     }
 
     // ── Quick actions ───────────────────────────────────────────────────────────────
@@ -617,6 +633,11 @@ public final class GuiListener implements Listener {
 
         if (slot == GuiStyle.slot("team-select.buttons.back")) {
             gui.openControls(p, session, gh.adminView());
+            return;
+        }
+        if (slot == GuiStyle.slot("team-select.buttons.distribute")) {
+            plugin.distributePlayersToTeams(p, session);
+            gui.openTeamSelect(p, session, gh.adminView());
             return;
         }
 
