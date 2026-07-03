@@ -193,7 +193,7 @@ public final class EventTimelineEngine implements Listener {
         try {
             switch (def.type()) {
                 case SPAWNER_SPEED -> applySpawnerSpeed(arena, def);
-                case DESTROY_BEDS -> destroyAllBeds(arena);
+                case DESTROY_BEDS, SUDDEN_DEATH -> destroyAllBeds(arena);
                 case MATCH_END -> { /* handled at round start via the ingame timer */ }
             }
             arena.broadcast(Lang.msg("timeline.event-fired", "%event%", def.name()));

@@ -45,6 +45,8 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     private ArenaBossBarTask bossBarTask;
     private org.bukkit.scheduler.BukkitTask bossBarSchedulerTask;
     private SpectateOnStartHandler spectateOnStartHandler;
+    private SpectatorRejoinHandler spectatorRejoinHandler;
+    private PartySummonLobbyItemHandler partySummonLobbyItemHandler;
     private MatchControlsLobbyItemHandler matchControlsLobbyItemHandler;
 
     @Override
@@ -122,8 +124,10 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
      * Registers our custom MBedwars lobby hotbar items. Registering only makes the handler
      * available by id — an admin still has to add an entry referencing it to MBedwars' own
      * lobby-hotbar.yml (slot/icon/name are entirely up to them):
-     *   - "exclusivearenas:open_controls"  → visible only to the match's host; opens Match Controls.
-     *   - "exclusivearenas:toggle_spectate" → any player; opts out of playing, spectates at round start.
+     *   - "exclusivearenas:open_controls"    → visible only to the match's host; opens Match Controls.
+     *   - "exclusivearenas:toggle_spectate"  → any active player; opts out of playing.
+     *   - "exclusivearenas:rejoin_as_player" → any spectator; rejoins as a player (lobby only).
+     *   - "exclusivearenas:summon_party"     → host only, party-gated matches; summons the party.
      */
     private void registerLobbyItemHandlers() {
         try {
@@ -132,7 +136,12 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
             this.spectateOnStartHandler = new SpectateOnStartHandler(this, sessionService);
             BedwarsAPI.getGameAPI().registerLobbyItemHandler(spectateOnStartHandler);
-            Bukkit.getPluginManager().registerEvents(spectateOnStartHandler, this);
+
+            this.spectatorRejoinHandler = new SpectatorRejoinHandler(this, sessionService);
+            BedwarsAPI.getGameAPI().registerLobbyItemHandler(spectatorRejoinHandler);
+
+            this.partySummonLobbyItemHandler = new PartySummonLobbyItemHandler(this, sessionService);
+            BedwarsAPI.getGameAPI().registerLobbyItemHandler(partySummonLobbyItemHandler);
         } catch (Throwable t) {
             getLogger().warning("Could not register lobby item handlers: " + t.getMessage());
         }
@@ -146,11 +155,19 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             if (spectateOnStartHandler != null) {
                 BedwarsAPI.getGameAPI().unregisterLobbyItemHandler(spectateOnStartHandler);
             }
+            if (spectatorRejoinHandler != null) {
+                BedwarsAPI.getGameAPI().unregisterLobbyItemHandler(spectatorRejoinHandler);
+            }
+            if (partySummonLobbyItemHandler != null) {
+                BedwarsAPI.getGameAPI().unregisterLobbyItemHandler(partySummonLobbyItemHandler);
+            }
         } catch (Throwable ignored) {
             // best effort on shutdown
         }
         matchControlsLobbyItemHandler = null;
         spectateOnStartHandler = null;
+        spectatorRejoinHandler = null;
+        partySummonLobbyItemHandler = null;
     }
 
     /**
@@ -205,11 +222,24 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
     /** Loads lang.yml and guis.yml (versioned, self-healing) and points the static accessors at them. */
     private void loadLangAndGuis() {
-        this.langYaml = new VersionedYaml(this, addon.getDataFolder(), "lang.yml", 1, null);
+        this.langYaml = new VersionedYaml(this, addon.getDataFolder(), "lang.yml", 2, (config, fromVersion) -> {
+            if (fromVersion >= 2) return false;
+            // v2 retired the toggle-spectate item's two-state (on/off) rendering — it's now a
+            // single static "spectate" icon, and the "rejoin as a player" half of its job moved
+            // to the new dedicated spectator-rejoin.* item/messages. These keys are dead; their
+            // replacements are added automatically below since they're plain new keys.
+            for (String dead : new String[] {
+                    "spectate.item-name-on", "spectate.item-name-off",
+                    "spectate.item-desc-on", "spectate.item-desc-off",
+                    "spectate.rejoin-failed", "spectate.now-playing"}) {
+                config.set(dead, null);
+            }
+            return true;
+        });
         this.langYaml.load();
         Lang.init(langYaml);
 
-        this.guisYaml = new VersionedYaml(this, addon.getDataFolder(), "guis.yml", 2, (config, fromVersion) -> {
+        this.guisYaml = new VersionedYaml(this, addon.getDataFolder(), "guis.yml", 3, (config, fromVersion) -> {
             boolean changed = false;
             if (fromVersion < 2) {
                 // v2 grew the Help menu a row (command reference cards for the new /ea
@@ -225,10 +255,38 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                     changed = true;
                 }
             }
+            if (fromVersion < 3) {
+                // v3 reorganized Match Controls into clean 4/4-column rows plus a Kick All /
+                // End Match "danger zone", and centered Quick Actions' bottom pair. Same rule
+                // as above: only move values still sitting at their old (v2 and earlier)
+                // defaults — a server that re-laid-out these menus keeps its own arrangement.
+                changed |= moveIfDefault(config, "controls.buttons.settings.slot", 13, 10);
+                changed |= moveIfDefault(config, "controls.buttons.manage-teams.slot", 15, 12);
+                changed |= moveIfDefault(config, "controls.buttons.policy.slot", 19, 14);
+                changed |= moveIfDefault(config, "controls.buttons.quick-actions.slot", 34, 16);
+                changed |= moveIfDefault(config, "controls.buttons.start-lobby.slot", 20, 19);
+                changed |= moveIfDefault(config, "controls.buttons.start-running.slot", 20, 19);
+                changed |= moveIfDefault(config, "controls.buttons.public-on.slot", 22, 21);
+                changed |= moveIfDefault(config, "controls.buttons.public-off.slot", 22, 21);
+                changed |= moveIfDefault(config, "controls.buttons.summon-party.slot", 22, 21);
+                changed |= moveIfDefault(config, "controls.buttons.regenerate-code.slot", 24, 23);
+                changed |= moveIfDefault(config, "controls.buttons.go-to-arena.slot", 30, 25);
+                changed |= moveIfDefault(config, "controls.buttons.kick-all.slot", 31, 30);
+                changed |= moveIfDefault(config, "quick-actions.buttons.clear-items.slot", 20, 21);
+                changed |= moveIfDefault(config, "quick-actions.buttons.skip-event.slot", 24, 23);
+            }
             return changed;
         });
         this.guisYaml.load();
         GuiStyle.init(guisYaml);
+    }
+
+    /** Moves {@code path} from {@code oldSlot} to {@code newSlot}, but only if it's still there. */
+    private static boolean moveIfDefault(org.bukkit.configuration.file.YamlConfiguration config,
+                                         String path, int oldSlot, int newSlot) {
+        if (config.getInt(path, oldSlot) != oldSlot) return false;
+        config.set(path, newSlot);
+        return true;
     }
 
     /**

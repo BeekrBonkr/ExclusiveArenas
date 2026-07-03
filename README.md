@@ -1,8 +1,9 @@
 # ExclusiveArenas
 
 An MBedwars add-on that lets players host **private, gated BedWars matches** — restricted to
-party members or to players holding a join code — with a full in-game GUI for managing them,
-optional cross-server control, and a couple of extra lobby hotbar items.
+party members or to players holding a join code — with a full in-game GUI for managing them:
+a customizable event timeline, per-match shop overrides, saved configurations, one-click quick
+actions, optional cross-server control, and a handful of extra lobby hotbar items.
 
 ---
 
@@ -12,6 +13,7 @@ optional cross-server control, and a couple of extra lobby hotbar items.
 |---|---|
 | Paper 1.21.x | Earlier versions may work but are untested |
 | MBedwars | Must be installed and configured; ExclusiveArenas registers as a real MBedwars add-on |
+| MBedwars Tweaks (optional) | If installed, the event timeline edits Tweaks' own gen-tier schedule directly so the scoreboard's next-event timer stays accurate — see [Event Timeline](#event-timeline) |
 | Party plugin (optional) | Any plugin with an MBedwars `PartiesHook` implementation — required for Party-policy matches |
 | MySQL / MariaDB (optional) | Only needed for multi-server networks — see [Network Setup](#network-multi-server-setup) |
 
@@ -92,12 +94,12 @@ server actually hosts the arena; see [Remote Control](#remote-control)).
 3. Click **Select Map** and choose an arena from the list. Each entry shows the arena's own
    MBedwars icon, and can be filtered by **team count** and **players per team** — the filter
    buttons cycle through values discovered from your actual arena roster, not a fixed list.
-4. **Auto-Summon** (Party policy only) — keeps your party continuously synced with the match:
-   members not currently in it get pulled in (with a chat message explaining why), and anyone
-   who leaves your party gets removed from the match.
-5. Click **Create & Join** to create the match and be sent straight in, locally or across
+4. Click **Create & Join** to create the match and be sent straight in, locally or across
    servers — or **shift-click** to create it without joining (grants you a ticket, so **Go to
-   Arena** in Match Controls still works whenever you're ready).
+   Arena** in Match Controls still works whenever you're ready). Use **Summon Party** in Match
+   Controls (or the [party-summon lobby item](#custom-lobby-hotbar-items)) afterwards to pull
+   your party in — there's no automatic continuous sync; that machinery exists internally
+   (`private.auto_summon_enabled`) but is currently retired from every menu pending a future pass.
 
 You also can't open the builder at all while already inside one of your own private matches —
 leave it first.
@@ -116,11 +118,23 @@ Open via the arena's entry in **Arena Management**, `/ea lobby`, or the host-onl
 - **Regenerate Code** (Code policy) — invalidates the old code and issues a new one.
 - **Manage Teams** — move players between teams while in the lobby (see below). Requires being
   on the arena's own server (MBedwars doesn't expose per-player team data remotely).
-- **Auto-Summon** toggle (Party policy only).
 - **Go to Arena** — teleport/connect to the match yourself.
-- **Arena Settings** / **Quick Actions** — placeholder menus reserved for planned features
-  (event timing, shop restrictions, cosmetics, one-click shortcuts); nothing in them does
-  anything yet.
+- **Kick All Players** — clears the arena; shift-click keeps you (the host) in it.
+- **Arena Settings** — opens [Event Timeline](#event-timeline), [Shop Items](#shop-overrides),
+  and [Saved Configurations](#saved-configurations-presets) for this match. Cosmetics is a stub —
+  MBedwars exposes no cosmetics API to hook into yet.
+- **Quick Actions** — one-click shortcuts for a *live* (running) match, recreated through the
+  stable MBedwars API so they can't silently break with an update:
+  - **Regenerate Map** — rebuilds the arena to a pristine state without anyone leaving. Everyone
+    is switched to a spectator (teams snapshotted first) so the round ends and MBedwars
+    regenerates the map on its own; the moment the arena is back in its lobby, everyone is
+    re-added on their original team, and the round restarts automatically if
+    `quick_actions.restart_after_regen` is enabled (default on).
+  - **Heal Everyone** — full health, hunger, and extinguishes fire for every player.
+  - **Trigger All Generators** — every resource generator drops immediately.
+  - **Sudden Death** — destroys every remaining bed.
+  - **Clear Ground Items** — removes every dropped item in the arena (lag cleanup).
+  - **Skip to Next Event** — fires the next timeline event immediately instead of waiting for it.
 - **End Match** — closes the session and kicks everyone, players and spectators alike.
 
 #### Manage Teams
@@ -132,46 +146,106 @@ multiple players — shown with an enchant glint — for a batch move via the **
 Player(s)** button. Clicking an already-staged head un-stages it. Trying to select more than
 the team has room for flips the menu's title into a warning until you free up a slot.
 
+### Event Timeline
+
+Each event fires this many minutes into the match, left to right; click one to select it, then
+use the buttons below to nudge it ±1 minute / ±5 seconds, or delete it (Match End can be moved
+but never deleted — shortening it proportionally rescales every other event to still fit inside
+the shorter match). **Match End**'s lore shows the *total* match time, not a delta.
+
+- **Without MBedwarsTweaks**: events come from `timeline.events` in `config.yml` — spawner
+  speed-ups (tied to a resource type and a drop-duration multiplier), a bed-destruction event,
+  and exactly one `match_end` event. An internal engine runs the schedule at match start.
+- **With MBedwarsTweaks installed**: the editor's defaults are read straight from Tweaks' own
+  gen-tier chain instead, and a host's custom timings are applied by rewriting Tweaks'
+  scheduling live — so Tweaks still runs the actual schedule (and its scoreboard placeholders
+  stay accurate) while showing the host's edits. Tweaks' Sudden Death tier spawns dragons that
+  threaten players but never register a bed as destroyed with MBedwars; if a host's customized
+  timeline could let Sudden Death fire without a preceding real bed-break, ExclusiveArenas forces
+  one itself at the moment Sudden Death actually triggers.
+- **Match length is capped** at `timeline.max_match_time` (default `60:00`/1 hour) — however
+  Match End is edited (the GUI, `/ea timeline set`, or `/ea timeline move`), it can never be
+  pushed past this.
+- Also editable via `/ea timeline list|move|set|delete|reset` (see [Commands](#commands)).
+
+### Shop Overrides
+
+Disable individual shop items for just this match, or change what they cost (amount + currency),
+from Arena Settings → **Shop Items**. Click an item to toggle it on/off; shift-click to open the
+price editor (±1/±10 buttons, cycle currency, reset to default). Also editable via
+`/ea shop list|disable|enable|price|resetprice|reset`.
+
+### Saved Configurations (Presets)
+
+Snapshot a match's event timeline and shop overrides as a named preset from Arena Settings →
+**Saved Configurations**, then apply it to any later match (click), or delete it (shift-click).
+Clicking **Save Current Setup** opens an anvil where you type the name — take the result item to
+confirm, or press Escape to cancel; nothing is spent, the level-cost UI is cosmetic only. Also
+editable via `/ea preset list|save|apply|delete`. Capped at 20 saved presets per player; names
+are 1–24 characters of letters, numbers, `-`, and `_`.
+
 ### Spectating
 
 - Joining a Join Code match that's already `RUNNING` automatically spectates you instead of
   failing.
-- The [spectate lobby item](#custom-lobby-hotbar-items) lets any player opt out of playing —
-  immediately, not just at round start — freeing their slot for someone else.
+- The [spectate lobby item](#custom-lobby-hotbar-items) lets any active player opt out of
+  playing — immediately, not just at round start — freeing their slot for someone else. It
+  disappears once they're actually spectating.
+- The [rejoin lobby item](#custom-lobby-hotbar-items) lets any spectator switch back to playing,
+  as long as the arena is still in its lobby and has a free player slot — however they ended up
+  spectating (opted out, died and got moved to spectator, joined a running match, …).
 
 ---
 
 ## Custom Lobby Hotbar Items
 
-ExclusiveArenas registers two MBedwars lobby hotbar item **handlers**. Registering only makes a
+ExclusiveArenas registers four MBedwars lobby hotbar item **handlers**. Registering only makes a
 handler available by id — it won't appear anywhere until you add an entry referencing it to
 your live `lobby-hotbar.yml` (under `plugins/MBedwars/configs/.../lobby-hotbar.yml`; see
 MBedwars' own docs for the exact versioned path). Slot is yours to choose; name/item are just
-placeholders for `toggle-spectate`, which overrides its own icon and name at render time. Both
+placeholders — every handler below overrides its own icon/name/lore at render time. All four
 items only ever appear inside an ExclusiveArenas private match — never on a regular public arena.
+`toggle-spectate` and `rejoin-as-player` are mutually exclusive (only an active player can opt
+out; only a spectator can rejoin), so they conventionally share a slot.
 
 ```yaml
 open-controls:
   name: '&eMatch Controls'
   slot: 2
-  handler: 'exclusivearenas:open_controls'   # visible only to the match's host
+  handler: 'exclusivearenas:open_controls'    # visible only to the match's host
   item: 'command_block'
 
 toggle-spectate:
   name: '&7Spectate This Match'
   slot: 3
-  handler: 'exclusivearenas:toggle_spectate'  # visible to any player in a private match
-  item: 'gray_dye'
+  handler: 'exclusivearenas:toggle_spectate'   # visible to any active player
+  item: 'gray_dye'                             # hidden once they're actually spectating
+
+rejoin-as-player:
+  name: '&aRejoin as Player'
+  slot: 3
+  handler: 'exclusivearenas:rejoin_as_player'  # visible to any spectator
+  item: 'lime_dye'                             # hidden once the round is running or full
+
+summon-party:
+  name: '&eSummon Party'
+  slot: 4
+  handler: 'exclusivearenas:summon_party'      # host only, and only on party-gated matches
+  item: 'ender_pearl'
 ```
 
 - **`exclusivearenas:open_controls`** — opens Match Controls for the host, without needing
   `/ea lobby`.
-- **`exclusivearenas:toggle_spectate`** — lets a player opt out of playing. Using it immediately
-  converts them to a spectator — leaving their team and freeing their player slot right away,
-  rather than waiting until the round starts — and turns the item **green** (gray = joining as
-  a player). Using it again converts them back to a player and turns it gray. Being moved onto
-  a real team by any other means also clears the opt-out. A defensive check at round start
-  catches anyone still marked opted-out who somehow isn't already spectating.
+- **`exclusivearenas:toggle_spectate`** — lets an active player opt out of playing. Using it
+  immediately converts them to a spectator — leaving their team and freeing their player slot
+  right away, rather than waiting until the round starts. Hidden once they're spectating; from
+  there, `rejoin_as_player` is the way back.
+- **`exclusivearenas:rejoin_as_player`** — lets a spectator switch back to playing. Only visible
+  while the round isn't `RUNNING` and the arena has a free player slot; actually rejoining still
+  requires the arena to be in its lobby (a friendly error otherwise).
+- **`exclusivearenas:summon_party`** — visible only to the host, and only when the match is
+  Party-policy; pulls their online party members straight into the lobby (same action as Match
+  Controls' **Summon Party** button).
 
 ---
 
@@ -182,6 +256,25 @@ join policy (the join code itself is hidden while the match is locked), and — 
 running — whether MBedwars' in-game timer is currently paused. Bukkit has no true "orange" boss
 bar color, so it renders as the closest built-in (yellow) with gold-colored text. Toggle with
 `private.bossbar_enabled` in `config.yml`.
+
+---
+
+## Session Cleanup
+
+A background task (every 30 seconds) ends sessions that have been abandoned, gone stale, or sat
+inactive, so forgotten private matches don't pile up:
+
+- **Abandoned** — the host left the lobby and hasn't returned within
+  `private.host_abandon_timeout_minutes` (default 5). Ends immediately, with an in-arena
+  broadcast.
+- **Stale** — the session was created more than `private.stale_session_hours` ago (default 12)
+  and the arena isn't actively running. A last-resort safety net for stuck state.
+- **Inactive** — the lobby has had zero active players (everyone spectating, or nobody ever
+  joined) for `private.inactivity_warning_minutes` (default 10). Everyone online — anyone
+  actually in the arena, plus the host if they're online elsewhere — gets warned that it'll
+  close soon; if it's still empty of active players after a further
+  `private.inactivity_close_grace_minutes` (default 5), the session ends. Set
+  `inactivity_warning_minutes` to `0` to disable this check.
 
 ---
 
@@ -238,8 +331,8 @@ itself:
 
 - **Start Match** / **End Match** relay through the shared database to whichever server actually
   hosts the arena if you aren't standing on it.
-- **Join Policy**, **Summon Party**, **Auto-Summon**, and **Regenerate Code** never needed the
-  arena to be local in the first place.
+- **Join Policy**, **Summon Party**, and **Regenerate Code** never needed the arena to be local
+  in the first place.
 - **Manage Teams** is the one exception — it requires being on the arena's own server, since
   MBedwars' RemoteAPI doesn't expose per-player team assignments for a remote arena.
 
@@ -258,8 +351,11 @@ as one party — this is a property of the party plugin, not something Exclusive
 - **`server_id` uniqueness isn't validated.** Cloning one server's data folder to spin up
   another without editing `server_id` won't break session logic, but does corrupt
   debug/attribution info.
-- **Arena Settings / Quick Actions are stub menus.** Reserved navigation for planned features —
-  nothing in them is functional yet.
+- **Cosmetics is a stub menu.** MBedwars exposes no cosmetics API to hook into yet, so per-match
+  cosmetic control isn't possible.
+- **Auto-summon isn't exposed anywhere.** The continuous party-sync machinery
+  (`private.auto_summon_enabled`) still exists internally but has no command or menu right now —
+  use **Summon Party** for a one-time pull instead.
 
 ---
 
@@ -272,5 +368,9 @@ See `config.yml` — every key is commented inline, including the setup snippets
 ## Versioning
 
 - Plugin version follows [Semantic Versioning](https://semver.org/).
-- `config-version` in `config.yml` is bumped when the config schema changes. Migration runs
-  automatically on startup; you do not need to delete your config when updating.
+- `config.yml`, `lang.yml`, and `guis.yml` are each versioned independently via their own
+  `config-version` key. Each migrates and self-heals on startup — any key missing from your copy
+  (new install or after an update) is restored with its bundled default value automatically, and
+  values that still match an old default are moved forward to the new one where it makes sense
+  (e.g. a moved menu button). You do not need to delete any of the three when updating; edits to
+  values you've actually changed are always preserved.

@@ -517,7 +517,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                         return;
                     }
                     String name = requested != null
-                            ? existingName(presets, requested) : PresetService.nextFreeName(presets);
+                            ? PresetService.existingName(presets, requested) : PresetService.nextFreeName(presets);
                     // Overwriting an existing preset is fine; only NEW names count toward the cap.
                     if (name == null && requested != null && presets.size() < PresetService.MAX_PRESETS) {
                         name = requested;
@@ -538,7 +538,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                 if (args.length < 3) { p.sendMessage(Lang.msg("cmd.preset-usage")); return; }
                 String requested = args[2];
                 plugin.getPresetService().list(p.getUniqueId(), presets -> {
-                    String name = existingName(presets, requested);
+                    String name = PresetService.existingName(presets, requested);
                     if (name == null) {
                         p.sendMessage(Lang.msg("cmd.preset-unknown", "%name%", requested));
                         return;
@@ -559,7 +559,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                 if (args.length < 3) { p.sendMessage(Lang.msg("cmd.preset-usage")); return; }
                 String requested = args[2];
                 plugin.getPresetService().list(p.getUniqueId(), presets -> {
-                    String name = existingName(presets, requested);
+                    String name = PresetService.existingName(presets, requested);
                     if (name == null) {
                         p.sendMessage(Lang.msg("cmd.preset-unknown", "%name%", requested));
                         return;
@@ -571,14 +571,6 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
 
             default -> p.sendMessage(Lang.msg("cmd.preset-usage"));
         }
-    }
-
-    /** The stored preset name matching {@code raw} case-insensitively, or null. */
-    private static String existingName(LinkedHashMap<String, String> presets, String raw) {
-        for (String name : presets.keySet()) {
-            if (name.equalsIgnoreCase(raw)) return name;
-        }
-        return null;
     }
 
     // ── Time parsing ─────────────────────────────────────────────────────────────

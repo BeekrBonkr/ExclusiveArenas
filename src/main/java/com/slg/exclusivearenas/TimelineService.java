@@ -28,7 +28,7 @@ public final class TimelineService {
     /** Editing granularity; rescaled times snap to this. */
     private static final int SNAP_SECONDS = 5;
 
-    public enum Type { SPAWNER_SPEED, DESTROY_BEDS, MATCH_END }
+    public enum Type { SPAWNER_SPEED, DESTROY_BEDS, SUDDEN_DEATH, MATCH_END }
 
     /** A configured event definition (the "what"); sessions store only id + time. */
     public record Definition(String id, String name, Material icon, int defaultSeconds,
@@ -40,6 +40,8 @@ public final class TimelineService {
     private boolean enabled = true;
     /** True when the definitions come from MBedwarsTweaks' gen tiers (see TweaksTimelineBridge). */
     private boolean tweaksBackend = false;
+    /** Match End can never be edited past this many seconds — timeline.max_match_time. */
+    private int maxMatchSeconds = 60 * 60;
 
     public TimelineService(Logger logger) {
         this.logger = logger;
@@ -50,6 +52,7 @@ public final class TimelineService {
     public void load(EaConfig config) {
         Map<String, Definition> defs = new LinkedHashMap<>();
         this.enabled = config.bool("timeline.enabled", true);
+        this.maxMatchSeconds = Math.max(60, parseTime(config.str("timeline.max_match_time", "60:00")));
 
         ConfigurationSection events = config.section("timeline.events");
         if (events != null) {
@@ -180,8 +183,9 @@ public final class TimelineService {
             int latestOther = timeline.stream()
                     .filter(e -> !e.id().equals(matchEndId))
                     .mapToInt(SessionSettings.TimelineEntry::seconds).max().orElse(0);
-            // The match must stay at least a minute long, and never grows past 2 hours.
-            int newEnd = clamp(oldTime + deltaSeconds, Math.max(60, MIN_EVENT_SECONDS + SNAP_SECONDS), 2 * 60 * 60);
+            // The match must stay at least a minute long, and never grows past the
+            // configured cap (timeline.max_match_time — 1 hour by default).
+            int newEnd = clamp(oldTime + deltaSeconds, Math.max(60, MIN_EVENT_SECONDS + SNAP_SECONDS), maxMatchSeconds);
             if (newEnd == oldTime) return oldTime;
 
             // oldTime is normally >= 60 (every prior edit clamps it there), but a hand-edited
