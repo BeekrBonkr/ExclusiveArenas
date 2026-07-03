@@ -11,9 +11,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Builds human-readable live-status lore for a private session's arena. Prefers the rich
- * local {@link Arena} view; falls back to a best-effort {@link RemoteArena} snapshot when
- * the arena is hosted on another backend, and to session-only info if neither is reachable.
+ * Builds human-readable live-status lore for a private session's arena (text from lang.yml's
+ * {@code status.*} keys). Prefers the rich local {@link Arena} view; falls back to a
+ * best-effort {@link RemoteArena} snapshot when the arena is hosted on another backend, and
+ * to session-only info if neither is reachable.
  */
 public final class ArenaStatusView {
 
@@ -25,20 +26,25 @@ public final class ArenaStatusView {
 
         Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
         if (local != null && local.exists()) {
-            lines.add("&7State: " + statusLabel(local.getStatus()));
+            lines.add(Lang.raw("status.state", "%state%", statusLabel(local.getStatus())));
             lines.add(timingLine(local));
-            lines.add("&7Players: &f" + local.getPlayers().size() + "&7/&f" + local.getMaxPlayers());
+            lines.add(Lang.raw("status.players",
+                    "%current%", String.valueOf(local.getPlayers().size()),
+                    "%max%", String.valueOf(local.getMaxPlayers())));
             if (local.getStatus() == ArenaStatus.RUNNING) {
-                lines.add("&7Teams alive: &f" + local.getAliveTeams().size()
-                        + " &7• Players alive: &f" + countAlivePlayers(local));
+                lines.add(Lang.raw("status.teams-alive",
+                        "%alive%", String.valueOf(local.getAliveTeams().size()),
+                        "%total%", String.valueOf(countAlivePlayers(local))));
             }
         } else {
             RemoteArena remote = remote(session.getArenaName());
             if (remote != null) {
-                lines.add("&7State: " + statusLabel(remote.getStatus()) + " &8[remote]");
-                lines.add("&7Players: &f" + remote.getPlayersCount() + "&7/&f" + remote.getMaxPlayers());
+                lines.add(Lang.raw("status.state-remote", "%state%", statusLabel(remote.getStatus())));
+                lines.add(Lang.raw("status.players",
+                        "%current%", String.valueOf(remote.getPlayersCount()),
+                        "%max%", String.valueOf(remote.getMaxPlayers())));
             } else {
-                lines.add("&7State: &8unavailable");
+                lines.add(Lang.raw("status.state-unavailable"));
             }
         }
 
@@ -50,39 +56,41 @@ public final class ArenaStatusView {
     /** Fuller status block for the controls menu info item. */
     public static List<String> detail(PrivateSession session) {
         List<String> lines = new ArrayList<>();
-        lines.add("&7Arena: &f" + session.getArenaName());
+        lines.add(Lang.raw("status.arena", "%arena%", session.getArenaName()));
         lines.addAll(lore(session));
         return lines;
     }
 
     public static String statusLabel(ArenaStatus status) {
-        if (status == null) return "&8Unknown";
+        if (status == null) return Lang.raw("status.label-unknown");
         return switch (status) {
-            case LOBBY -> "&aLobby";
-            case RUNNING -> "&2Running";
-            case END_LOBBY -> "&eEnding";
-            case RESETTING -> "&6Resetting";
-            case STOPPED -> "&cStopped";
+            case LOBBY -> Lang.raw("status.label-lobby");
+            case RUNNING -> Lang.raw("status.label-running");
+            case END_LOBBY -> Lang.raw("status.label-ending");
+            case RESETTING -> Lang.raw("status.label-resetting");
+            case STOPPED -> Lang.raw("status.label-stopped");
         };
     }
 
     public static String policyLine(PrivateSession session) {
         if (session.getJoinPolicy() == JoinPolicy.CODE) {
-            String state = session.isPublic() ? "&aPublic" : "&cLocked";
-            return "&7Access: &dCode &8(" + state + "&8) &7• &f" + safeCode(session);
+            return Lang.raw("status.access-code",
+                    "%state%", Lang.raw(session.isPublic() ? "status.label-public" : "status.label-locked"),
+                    "%code%", safeCode(session));
         }
-        return "&7Access: &bParty only";
+        return Lang.raw("status.access-party");
     }
 
     private static String timingLine(Arena arena) {
         if (arena.getStatus() == ArenaStatus.RUNNING) {
-            return "&7Running: &f" + formatDuration(arena.getRunningTime());
+            return Lang.raw("status.running", "%time%", formatDuration(arena.getRunningTime()));
         }
         if (arena.getStatus() == ArenaStatus.LOBBY) {
             double remaining = arena.getLobbyTimeRemaining();
-            return "&7Lobby: &f" + (remaining > 0 ? (int) Math.ceil(remaining) + "s" : "waiting");
+            return Lang.raw("status.lobby", "%time%", remaining > 0
+                    ? (int) Math.ceil(remaining) + "s" : Lang.raw("status.label-waiting"));
         }
-        return "&7Elapsed: &f" + formatDuration(arena.getRunningTime());
+        return Lang.raw("status.elapsed", "%time%", formatDuration(arena.getRunningTime()));
     }
 
     private static int countAlivePlayers(Arena arena) {

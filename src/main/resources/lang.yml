@@ -1,0 +1,295 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ExclusiveArenas — lang.yml
+#
+# Every chat message the plugin sends lives in this file. Edit freely:
+#   • Color codes use '&' (e.g. &a = green, &f = white, &l = bold).
+#   • Placeholders like %arena% are replaced at runtime — keep them in your
+#     text wherever you want that value to appear. Each message lists the
+#     placeholders it supports in the comment above it.
+#   • Menu button names/lore are NOT here — those live in guis.yml.
+#
+# Do not change 'config-version': the plugin uses it to upgrade this file
+# in place when you install a newer version (your edits are preserved).
+# ─────────────────────────────────────────────────────────────────────────────
+config-version: 1
+
+general:
+  # Sent when the console tries to run /ea.
+  players-only: "&cPlayers only."
+  # Missing the exclusivearenas.command permission.
+  no-permission: "&cYou don't have permission to use ExclusiveArenas."
+  # Missing the exclusivearenas.admin permission.
+  no-permission-admin: "&cYou don't have permission for that."
+  unknown-subcommand: "&cUnknown subcommand. Use &f/ea help &cfor available commands."
+  reloaded: "&aExclusiveArenas configuration reloaded."
+  # Shown when a menu action targets a match that has ended meanwhile.
+  match-gone: "&cThat match no longer exists."
+  # Generic "you can't do this from this server" notice.
+  arena-other-server: "&cThe arena is on another server."
+  not-in-arena: "&cYou are not in an arena."
+  not-private-match: "&cThis is not a private match."
+
+join:
+  usage: "&cUsage: /ea join <code>"
+  invalid-code: "&cInvalid or expired join code."
+  not-accepting: "&cThat arena is currently private and not accepting joins."
+  # Sent after the plugin pulls a player back in after MBedwars' kick-right-after-join bug. %arena%
+  rejoined-after-kick: "&eYou were sent back to &f%arena% &e— you were kicked right after joining."
+
+# Messages players see when the join gate turns them away.
+locked:
+  private: "&cThat arena is currently private and is not accepting joins."
+  # %owner% = host's name
+  hint-party: "&cThat arena is private. Join &f%owner%&c's party to enter."
+  # %code% = the join code (only shown where the code is meant to be visible)
+  hint-code: "&cThat arena is private. Use &f/ea join <code>&c to enter."
+
+host:
+  not-hosting: "&cYou aren't hosting a private match."
+  only-host: "&cOnly the host can do that."
+  only-host-menu: "&cOnly the host can manage this match."
+  summon-party-only: "&c/ea summon only works for Party-policy matches."
+
+create:
+  select-map-first: "&cSelect a map first."
+  leave-current-first: "&cLeave your current private match before creating another one."
+  code-while-in-party: "&cYou can't host a Join Code match while you're in a party — use Party policy instead, or leave your party first."
+  must-be-leader: "&cYou must be the leader of a party to host a Party-policy match."
+  # %limit% = the player's arena limit
+  limit-reached: "&cYou already host the maximum of &f%limit%&c private matches."
+  arena-reserved: "&cThat arena is already reserved by another private match."
+  # %arena%
+  arena-unavailable: "&f%arena%&c is not available right now (it must be empty and in its lobby)."
+  # %arena%
+  created: "&aCreated your private match on &f%arena%&a!"
+  created-joining: "&aCreated your private match on &f%arena%&a! Sending you in…"
+  # %code%
+  code-line: "&7Join code: &f%code% &7— share with &f/ea join %code%"
+  party-line: "&7Gating: &aParty members only."
+  created-not-joining: "&7Use &fGo to Arena&7 in Match Controls whenever you're ready."
+  # Player is in someone else's party and can't host.
+  party-blocked: "&cYou're in someone else's party — leave it to host your own private match, or use &f/ea join&c to join your leader's match."
+  party-blocked-menu: "&cLeave your party before you can host your own private match."
+
+route:
+  # %arena% — the join command failed to dispatch.
+  arena-unavailable: "&cArena &f%arena% &cis unavailable."
+
+match:
+  already-begun: "&cThe match has already begun."
+  need-more-players: "&cYou need at least one other player in the arena before you can start."
+  start-failed: "&cFailed to start the match — see console."
+  host-started: "&aThe host started the match!"
+  # %arena%
+  start-sent: "&aSent the start request to &f%arena%&a."
+  # %arena%
+  ended: "&aEnded the private match on &f%arena%&a."
+  # %arena%
+  end-sent: "&aSent the request to end the match on &f%arena%&a."
+  ended-broadcast: "&cThe private match has been ended."
+  # %code%
+  code-regenerated: "&eJoin code regenerated: &f%code% &e— use &f/ea join %code%"
+  public-opened: "&aMatch opened — anyone with the code may join."
+  public-locked: "&cMatch locked — joining is disabled."
+
+summon:
+  not-in-party: "&cYou are not in a party."
+  # %count%
+  summoning: "&aSummoning &f%count% &aparty member(s)…"
+  no-members: "&7You have no other party members to summon."
+
+autosummon:
+  enabled: "&aAuto-summon enabled — your party will be kept synced with the match."
+  disabled: "&7Auto-summon disabled."
+  # %arena%, %owner%
+  pulled-in: "&eYou were sent to &f%arena%&e because you're in &f%owner%&e's party."
+  # %owner%
+  removed: "&cYou were removed from the match because you left &f%owner%&c's party."
+
+teams:
+  requires-local: "&cTeam management requires being on the arena's server."
+  lobby-only: "&cTeams can only be managed while the arena is in its lobby."
+  move-lobby-only: "&cTeams can only be changed while the arena is in its lobby."
+  # %count%, %team%
+  moved: "&aMoved &f%count%&a player(s) to %team%&a."
+  # %count%
+  move-skipped: "&c%count% player(s) could not be moved (team full)."
+
+spectate:
+  # The toggle-spectate lobby hotbar item (see config.yml's lobby-hotbar notes).
+  item-name-on: "&aJoining as Spectator"
+  item-name-off: "&7Joining as Player"
+  item-desc-on: "&7You will not play this match."
+  item-desc-off: "&7You will play this match."
+  item-hint: "&8▶ Click to toggle"
+  lobby-only: "&cYou can only do that while the match is in its lobby."
+  switch-failed: "&cCouldn't switch you to spectating — try again."
+  now-spectating: "&eYou're now spectating — you won't play this match."
+  rejoin-failed: "&cCouldn't rejoin as a player — the match may be full."
+  now-playing: "&aYou'll play in this match — pick a team to join in."
+
+cleanup:
+  host-abandoned: "&cPrivate match ended: the host did not return in time."
+
+bossbar:
+  # %policy% is one of the three policy labels below.
+  title: "&6&lPRIVATE MATCH &8• &e%policy%"
+  # %code%
+  policy-code: "Code: %code%"
+  policy-locked: "Locked"
+  policy-party: "Party Only"
+  # Appended to the title while the in-game timer is paused.
+  timer-paused: " &8• &c⏸ Timer Paused"
+
+# Labels used inside the live status card lore (Match Controls / arena lists).
+status:
+  # %state%
+  state: "&7State: %state%"
+  state-remote: "&7State: %state% &8[remote]"
+  state-unavailable: "&7State: &8unavailable"
+  # %current%, %max%
+  players: "&7Players: &f%current%&7/&f%max%"
+  # %alive%, %total%
+  teams-alive: "&7Teams alive: &f%alive%&7/&f%total%"
+  # %arena%
+  arena: "&7Arena: &f%arena%"
+  # %time%
+  running: "&7Running: &f%time%"
+  # %time% (or "waiting")
+  lobby: "&7Lobby: &f%time%"
+  elapsed: "&7Elapsed: &f%time%"
+  # %state% (Public/Locked), %code%
+  access-code: "&7Access: &dCode &8(%state%&8) &7• &f%code%"
+  access-party: "&7Access: &bParty only"
+  label-lobby: "&aLobby"
+  label-running: "&2Running"
+  label-ending: "&eEnding"
+  label-resetting: "&6Resetting"
+  label-stopped: "&cStopped"
+  label-unknown: "&8Unknown"
+  label-public: "&aPublic"
+  label-locked: "&cLocked"
+  label-waiting: "waiting"
+
+kickall:
+  # %count%
+  kicked: "&aKicked &f%count%&a player(s) from the arena."
+  none: "&7There was nobody to kick."
+  # %arena%
+  sent: "&aSent the kick-all request to &f%arena%&a."
+  broadcast: "&cThe host cleared the arena."
+
+quick:
+  # Shown above every quick action result when relayed. %arena%
+  sent: "&aSent the request to &f%arena%&a."
+  lobby-only: "&cThis action only works while the arena is in its lobby."
+  running-only: "&cThis action only works while the match is running."
+  regen-started: "&eRegenerating the map — players are kept in the match…"
+  regen-done: "&aMap regenerated."
+  regen-failed: "&cMap regeneration failed — see console."
+  regen-broadcast: "&eThe host regenerated the map — back to the lobby!"
+  healed: "&aHealed &f%count%&a player(s)."
+  heal-broadcast: "&aThe host healed everyone!"
+  dropped: "&aTriggered &f%count%&a spawner drop(s)."
+  drop-broadcast: "&6The host made it rain — all generators just dropped!"
+  beds-destroyed: "&aDestroyed &f%count%&a bed(s)."
+  beds-broadcast: "&c&lSUDDEN DEATH! &cAll beds have been destroyed by the host!"
+  items-cleared: "&aCleared &f%count%&a dropped item(s) off the ground."
+  nothing-to-skip: "&7There is no upcoming timeline event to skip to."
+
+timeline:
+  lobby-only: "&cEvent timings can only be changed while the arena is in its lobby."
+  # %event%, %time%
+  moved: "&aMoved &f%event%&a to &f%time%&a."
+  # %event%
+  deleted: "&cRemoved &f%event%&c from this match's timeline."
+  cannot-delete-end: "&cMatch End can't be removed — move it instead."
+  # %time%
+  end-moved: "&aMatch length set to &f%time%&a. Other events were rescaled to fit."
+  reset: "&aEvent timeline restored to the defaults."
+  # Broadcast in the arena when a timeline event fires. %event%
+  event-fired: "&6&l⚡ &e%event%&6 is now active!"
+  # Broadcast when the match-end timer is applied at round start. %time%
+  end-applied: "&7This match ends after &f%time%&7."
+  # Editor descriptions for events imported from MBedwarsTweaks' custom
+  # timeline (only used when that plugin is installed).
+  # %type% — the generator drop type being upgraded (e.g. diamond).
+  tweaks-gen-upgrade: "&7Upgrades every &f%type%&7 generator on the map."
+  tweaks-bed-destroy: "&7Destroys every remaining bed."
+  tweaks-sudden-death: "&7Sudden death — every remaining bed is destroyed."
+  tweaks-game-over: "&7The match ends when the timer runs out."
+  tweaks-plugin: "&7A custom event from MBedwarsTweaks' config."
+
+# Messages specific to the /ea subcommands that mirror menu actions.
+cmd:
+  # A subcommand that needs the match's join policy to be Join Code (/ea code, /ea public).
+  code-only: "&cThat only works for Join Code matches."
+  public-usage: "&cUsage: /ea public [on|off] — no argument toggles."
+  team-usage: "&cUsage: /ea team <player> <team>"
+  # %player%
+  team-player-not-found: "&cPlayer &f%player%&c is not in your arena."
+  # %team%
+  team-unknown: "&cUnknown team &f%team%&c."
+  timeline-disabled: "&cThe event timeline is disabled on this server."
+  timeline-usage: "&cUsage: /ea timeline <list|move|set|delete|reset> [event] [time]"
+  # %arena%
+  timeline-header: "&6Event timeline for &f%arena%&6:"
+  # %time%, %event%, %id% — one line per event in /ea timeline list
+  timeline-line: "&8 • &f%time% &7— %event% &8(%id%)"
+  # %id%
+  timeline-unknown-event: "&cUnknown event &f%id%&c — see &f/ea timeline list&c."
+  # %value% — an absolute time that couldn't be parsed
+  bad-time: "&cInvalid time &f%value%&c — use m:ss (e.g. 7:30) or plain seconds."
+  # %value% — a relative offset that couldn't be parsed
+  bad-delta: "&cInvalid offset &f%value%&c — use e.g. +30, -1:00."
+  shop-usage: "&cUsage: /ea shop <list|disable|enable|price|resetprice|reset> [item] [amount] [currency]"
+  # %item%
+  shop-unknown-item: "&cUnknown shop item &f%item%&c."
+  # %arena%
+  shop-header: "&6Shop overrides for &f%arena%&6:"
+  shop-none: "&7No shop overrides — everything is at its default."
+  # %item%, %id%
+  shop-line-disabled: "&8 • &f%item% &8(%id%) &7— &cdisabled"
+  # %item%, %id%, %amount%, %currency%
+  shop-line-price: "&8 • &f%item% &8(%id%) &7— &e%amount% %currency%"
+  # %value%
+  bad-amount: "&cInvalid amount &f%value%&c — use 1 to 64."
+  # %currency%
+  unknown-currency: "&cUnknown currency &f%currency%&c."
+  preset-usage: "&cUsage: /ea preset <list|save|apply|delete> [name]"
+  preset-none: "&7You have no saved configurations yet — &f/ea preset save&7 creates one."
+  preset-header: "&6Your saved configurations:"
+  # %name%
+  preset-line: "&8 • &f%name%"
+  # %name%
+  preset-unknown: "&cNo saved configuration named &f%name%&c."
+  # %max%
+  preset-bad-name: "&cNames may only use letters, numbers, - and _ (max %max% characters)."
+
+shop:
+  # %item%
+  item-disabled: "&aDisabled &f%item%&a in this match's shop."
+  # %item%
+  item-enabled: "&aRe-enabled &f%item%&a in this match's shop."
+  # Sent to a buyer who clicks a disabled item.
+  blocked: "&cThe host disabled this item for this match."
+  # %item%, %amount%, %currency%
+  price-set: "&aPrice of &f%item%&a set to &f%amount% %currency%&a."
+  # %item%
+  price-reset: "&aPrice of &f%item%&a restored to its default."
+  reset-all: "&aAll shop customizations cleared for this match."
+  # How a disabled item looks in the shop when shop.disabled_display is
+  # 'dye' in config.yml (with 'remove' the item is hidden instead). %item%
+  disabled-name: "&c&m%item%"
+  disabled-lore: "&cDisabled by the host for this match."
+
+# Saved configurations (/ea preset and the Saved Configurations menu).
+presets:
+  # %name%
+  saved: "&aSaved the current setup as &f%name%&a."
+  # %name%, %arena%
+  applied: "&aApplied &f%name%&a to &f%arena%&a."
+  # %name%
+  deleted: "&cDeleted the saved configuration &f%name%&c."
+  # %max%
+  limit: "&cYou already have %max% saved configurations — delete one first."

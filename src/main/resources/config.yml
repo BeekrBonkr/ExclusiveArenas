@@ -1,6 +1,10 @@
 # ExclusiveArenas Configuration
 # Plugin version this config was generated for. Do not change — used for automatic migration.
-config-version: 4
+#
+# Related files (same folder):
+#   lang.yml — every chat message the plugin sends.
+#   guis.yml — every menu's layout, button materials, names, lore and glints.
+config-version: 6
 
 # Verbose debug logging. When true, ExclusiveArenas logs detailed database and sync activity
 # to the console. Leave false for normal operation — errors are always logged regardless.
@@ -52,9 +56,13 @@ private:
   # Length of generated join codes, in characters (minimum 4).
   join_code_length: 6
 
-  # How often (seconds) each server checks its online players and pulls new party members
-  # into a match whose host enabled "Auto-summon". MBedwars already moves the host's existing
-  # party members; this handles people who join the party after the match has started.
+  # Auto-summon (continuously syncing the host's party with the match) is currently retired
+  # from the menus. The machinery is still here for a future release — flip this to true to
+  # re-enable the background sync task for sessions that have the flag set.
+  auto_summon_enabled: false
+
+  # How often (seconds) the auto-summon task (when enabled above) checks online players and
+  # pulls new party members into a match whose host enabled "Auto-summon".
   auto_summon_poll_seconds: 5
 
   # Shows everyone inside a private match's arena an orange-ish boss bar stating that it's
@@ -94,18 +102,101 @@ private:
 #     handler: 'exclusivearenas:toggle_spectate'  # any player; opts out of playing
 #     item: 'gray_dye'
 
-messages:
-  # Shown when a player tries to join a private arena gated by party membership.
-  # Placeholders: %arena% = arena name, %owner% = host's username
-  locked_hint_party: "&cThat arena is private. Join &f%owner%&c's party to enter."
+# ── Event timeline ────────────────────────────────────────────────────────────
+# The default in-match event schedule for every private match. Hosts can move or
+# delete these per match via Arena Settings → Event Timeline; this section only
+# defines what a fresh match starts with.
+#
+# Each event needs:
+#   name        — shown in menus and the in-arena broadcast when it fires.
+#   icon        — Bukkit material for its timeline item.
+#   time        — "m:ss" (or plain seconds) after round start.
+#   type        — one of:
+#       spawner_speed — speeds up generators of one resource. Needs drop_type
+#                       (the MBedwars drop type id from its spawners config —
+#                       check yours; common ids are iron/gold/diamond/emerald)
+#                       and multiplier (0.5 = drops twice as fast). Multipliers
+#                       stack with earlier events of the same drop type.
+#       destroy_beds  — destroys every remaining bed (sudden death).
+#       match_end     — sets MBedwars' in-game time limit so the match ends
+#                       here. EXACTLY ONE event must have this type, and it
+#                       can't be deleted in the editor — only moved.
+#   description — one line explaining the effect (shown as menu lore).
+#
+# Events whose drop_type doesn't exist on this server are skipped with a log
+# message, so a shared config works across differently-configured backends.
+timeline:
+  # Master switch: when false, private matches run with MBedwars' plain
+  # behaviour and the timeline editor is hidden.
+  enabled: true
+  # Which engine runs the schedule:
+  #   auto     — use MBedwarsTweaks' gen tiers when that plugin is installed (the editor's
+  #              defaults then come from the Tweaks config, custom timings are applied by
+  #              rewriting Tweaks' own scheduling, and the scoreboard's next-event timer
+  #              shows them correctly). Falls back to the internal engine without Tweaks.
+  #   internal — always use the built-in engine below, even with Tweaks installed.
+  backend: "auto"
+  events:
+    diamond2:
+      name: "Diamond II"
+      icon: DIAMOND
+      time: "6:00"
+      type: spawner_speed
+      drop_type: diamond
+      multiplier: 0.75
+      description: "&bDiamond&7 generators drop 25% faster."
+    emerald2:
+      name: "Emerald II"
+      icon: EMERALD
+      time: "9:00"
+      type: spawner_speed
+      drop_type: emerald
+      multiplier: 0.75
+      description: "&aEmerald&7 generators drop 25% faster."
+    diamond3:
+      name: "Diamond III"
+      icon: DIAMOND_BLOCK
+      time: "12:00"
+      type: spawner_speed
+      drop_type: diamond
+      multiplier: 0.66
+      description: "&bDiamond&7 generators speed up again."
+    emerald3:
+      name: "Emerald III"
+      icon: EMERALD_BLOCK
+      time: "15:00"
+      type: spawner_speed
+      drop_type: emerald
+      multiplier: 0.66
+      description: "&aEmerald&7 generators speed up again."
+    bed_destruction:
+      name: "Bed Destruction"
+      icon: RED_BED
+      time: "20:00"
+      type: destroy_beds
+      description: "&cAll beds are destroyed &7— no more respawns."
+    match_end:
+      name: "Match End"
+      icon: CLOCK
+      time: "30:00"
+      type: match_end
+      description: "&7The match ends (draw if no winner)."
 
-  # Shown when a player tries to join a private arena gated by join code.
-  # Placeholders: %arena% = arena name, %code% = the join code
-  locked_hint_code: "&cThat arena is private. Use &f/ea join <code>&c to enter."
+# ── Quick actions ─────────────────────────────────────────────────────────────
+quick_actions:
+  # The Regenerate Map quick action snapshots everyone's team, switches all players to
+  # spectators (so the round winds down and MBedwars regenerates the map on its own),
+  # then puts everyone back on their old team in the fresh lobby.
+  # How long (seconds) to wait for that regeneration before giving up and telling the host.
+  regenerate_timeout_seconds: 60
+  # Immediately restart the round once everyone is back in the regenerated lobby.
+  # When false the arena stays in its lobby and the host starts it manually.
+  restart_after_regen: true
 
-  # Shown when a player tries to join a private arena that has been set to Private (locked).
-  # Placeholders: %arena% = arena name
-  locked_private: "&cThat arena is currently set to private and is not accepting joins."
-
-  # Shown when the host's arena session is ended due to the abandon timeout.
-  session_abandoned: "&cPrivate match ended: the host did not return in time."
+# ── Shop overrides ────────────────────────────────────────────────────────────
+shop:
+  # How items the host disabled appear in the in-game shop:
+  #   dye    — shown as red dye with a "disabled" name/lore (players see WHAT was disabled).
+  #   remove — hidden from the shop entirely.
+  # Buying is blocked either way.
+  disabled_display: "dye"
