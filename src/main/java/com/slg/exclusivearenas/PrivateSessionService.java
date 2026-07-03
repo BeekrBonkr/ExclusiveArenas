@@ -154,32 +154,6 @@ public final class PrivateSessionService {
         return fresh;
     }
 
-    /**
-     * Switches a live session between Party and Code gating (host-triggered, lobby only —
-     * enforced by the caller). Regenerates a fresh code when switching to Code, drops the old
-     * one when switching away, and persists the change network-wide.
-     */
-    public void setSessionJoinPolicy(PrivateSession session, JoinPolicy policy) {
-        if (session == null || policy == null || session.getJoinPolicy() == policy) return;
-
-        String oldCode = session.getJoinCode();
-        if (oldCode != null) byCode.remove(oldCode.toLowerCase(Locale.ROOT));
-
-        session.setJoinPolicy(policy);
-        if (policy == JoinPolicy.CODE) {
-            String fresh = generateCode();
-            session.setJoinCode(fresh);
-            byCode.put(fresh.toLowerCase(Locale.ROOT), session.getSessionId());
-            session.setPublic(true);
-            session.setAutoSummon(false); // auto-summon only applies to Party-policy matches
-        } else {
-            session.setJoinCode(null);
-            session.setPublic(false);
-        }
-
-        if (db != null) db.upsertSession(toRow(session));
-    }
-
     /** Toggles the public flag and persists it so join-by-code resolves correctly network-wide. */
     public void setSessionPublic(PrivateSession session, boolean isPublic) {
         if (session == null) return;
@@ -191,6 +165,15 @@ public final class PrivateSessionService {
     public void setSessionAutoSummon(PrivateSession session, boolean autoSummon) {
         if (session == null) return;
         session.setAutoSummon(autoSummon);
+        if (db != null) db.upsertSession(toRow(session));
+    }
+
+    /**
+     * Persists the session's current {@link SessionSettings} (timeline + shop overrides)
+     * network-wide. Call after mutating them via the Arena Settings menus.
+     */
+    public void saveSettings(PrivateSession session) {
+        if (session == null) return;
         if (db != null) db.upsertSession(toRow(session));
     }
 
@@ -259,6 +242,11 @@ public final class PrivateSessionService {
         if (fresh != null) byCode.put(fresh.toLowerCase(Locale.ROOT), session.getSessionId());
         session.setPublic(row.isPublic());
         session.setAutoSummon(row.autoSummon());
+        // Only rebuild the settings object when the blob actually changed, so an in-flight
+        // local edit isn't churned by every poll.
+        if (!session.getSettings().sameAs(row.settings())) {
+            session.setSettings(SessionSettings.fromJson(row.settings()));
+        }
     }
 
     private PrivateSession fromRow(Database.SessionRow row) {
@@ -271,13 +259,14 @@ public final class PrivateSessionService {
         PrivateSession session = new PrivateSession(
                 row.sessionId(), row.owner(), row.arenaName(), policy, row.joinCode(), row.isPublic());
         session.setAutoSummon(row.autoSummon());
+        session.setSettings(SessionSettings.fromJson(row.settings()));
         return session;
     }
 
     private Database.SessionRow toRow(PrivateSession s) {
         return new Database.SessionRow(
                 s.getSessionId(), s.getOwner(), s.getArenaName(), s.getJoinPolicy().name(),
-                s.getJoinCode(), s.isPublic(), s.isAutoSummon(),
+                s.getJoinCode(), s.isPublic(), s.isAutoSummon(), s.getSettings().toJson(),
                 db != null ? db.serverId() : null, s.getCreatedAt().toEpochMilli());
     }
 

@@ -47,6 +47,7 @@ with its default value automatically on startup, and every key is commented inli
 |---|---|
 | `/ea` or `/ea menu` | Open the main menu |
 | `/ea arena` (or `create`, `builder`) | Jump straight to the match builder |
+| `/ea arena <map> [nojoin]` | Skip the builder and create + join a match on `<map>` immediately; `nojoin` creates without joining |
 | `/ea list` (or `arenas`) | Open Arena Management — the matches you host |
 | `/ea help` | In-game help panel |
 | `/ea join [code]` | Join a private match by its join code — or with no code at all, or any code, if your party's leader hosts an active match (that always takes priority) |
@@ -54,10 +55,25 @@ with its default value automatically on startup, and every key is commented inli
 | `/ea start` | Start the match right now (host only) — also works when controlling remotely |
 | `/ea end` | End the match (host only) — also works when controlling remotely |
 | `/ea summon` | Summon your whole party into the match (Party policy, host only) |
+| `/ea goto` | Go to your arena (grants yourself a join ticket first) |
+| `/ea kick [keephost]` | Kick every player and spectator; `keephost` leaves you in the match |
+| `/ea code` | Regenerate the join code (Join Code policy) |
+| `/ea public [on\|off]` | Open or lock joining by code (Join Code policy) |
+| `/ea team <player> <team>` | Move a lobby player onto a team (arena's server only) |
+| `/ea regen` | Regenerate the map, keeping everyone in the match on their teams |
+| `/ea heal` | Heal every player in the match |
+| `/ea drop` | Make every generator drop immediately |
+| `/ea beds` | Sudden death — destroy every remaining bed |
+| `/ea clearitems` | Clear all dropped items off the ground |
+| `/ea skipevent` | Fire the next timeline event right now |
+| `/ea timeline list\|move\|set\|delete\|reset` | Edit this match's event timings, e.g. `/ea timeline set diamond2 7:30`, `/ea timeline move match_end -5:00` |
+| `/ea shop list\|disable\|enable\|price\|resetprice\|reset` | Customize this match's shop, e.g. `/ea shop disable blocks-wool`, `/ea shop price blocks-wool 8 iron` |
+| `/ea preset list\|save\|apply\|delete` | Saved arena configurations, e.g. `/ea preset save sweats`, `/ea preset apply sweats` |
 | `/ea admin` | Admin Panel — every active match on the network (`exclusivearenas.admin`) |
 | `/ea reload` | Reload config, reconnect the database, resync sessions (`exclusivearenas.admin`) |
 
-`start`/`end`/`summon` work even when you aren't physically standing in your arena — they fall
+Every host command (`start`, `end`, `summon`, `kick`, the quick actions, the editors, …)
+works even when you aren't physically standing in your arena — they fall
 back to whichever match you host (or, in a database setup, relay the request to whichever
 server actually hosts the arena; see [Remote Control](#remote-control)).
 

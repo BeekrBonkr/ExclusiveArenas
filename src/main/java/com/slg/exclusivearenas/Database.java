@@ -39,10 +39,10 @@ public final class Database {
     public record Settings(String host, int port, String database, String user, String password,
                            String tablePrefix, boolean useSsl, String serverId) {}
 
-    /** A row of {@code <prefix>sessions}. */
+    /** A row of {@code <prefix>sessions}. {@code settings} is the JSON blob of host customizations. */
     public record SessionRow(UUID sessionId, UUID owner, String arenaName, String policy,
                              String joinCode, boolean isPublic, boolean autoSummon,
-                             String serverId, long createdAt) {}
+                             String settings, String serverId, long createdAt) {}
 
     /** A row of {@code <prefix>tickets}. */
     public record TicketRow(UUID player, UUID sessionId, String arenaName, long expiresAt) {}
@@ -61,6 +61,7 @@ public final class Database {
     private final String sessionsTable;
     private final String ticketsTable;
     private final String commandsTable;
+    private final String presetsTable;
     private final HikariDataSource dataSource;
     private final ExecutorService writer = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "ExclusiveArenas-DB-Writer");
@@ -75,6 +76,7 @@ public final class Database {
         this.sessionsTable = settings.tablePrefix() + "sessions";
         this.ticketsTable = settings.tablePrefix() + "tickets";
         this.commandsTable = settings.tablePrefix() + "commands";
+        this.presetsTable = settings.tablePrefix() + "presets";
 
         HikariConfig cfg = new HikariConfig();
         cfg.setPoolName("ExclusiveArenas-Hikari");
@@ -124,6 +126,7 @@ public final class Database {
             // supports IF NOT EXISTS so this is a safe no-op when the column already exists.
             addColumnIfMissing(c, sessionsTable, "is_public", "TINYINT(1) NOT NULL DEFAULT 0");
             addColumnIfMissing(c, sessionsTable, "auto_summon", "TINYINT(1) NOT NULL DEFAULT 0");
+            addColumnIfMissing(c, sessionsTable, "settings", "TEXT NULL");
             try (PreparedStatement ps = c.prepareStatement(
                     "CREATE TABLE IF NOT EXISTS `" + ticketsTable + "` ("
                             + "player CHAR(36) NOT NULL PRIMARY KEY,"
@@ -141,6 +144,16 @@ public final class Database {
                             + "type VARCHAR(32) NOT NULL,"
                             + "payload TEXT NULL,"
                             + "created_at BIGINT NOT NULL"
+                            + ")")) {
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = c.prepareStatement(
+                    "CREATE TABLE IF NOT EXISTS `" + presetsTable + "` ("
+                            + "owner CHAR(36) NOT NULL,"
+                            + "name VARCHAR(32) NOT NULL,"
+                            + "settings TEXT NULL,"
+                            + "updated_at BIGINT NOT NULL,"
+                            + "PRIMARY KEY (owner, name)"
                             + ")")) {
                 ps.executeUpdate();
             }
@@ -165,10 +178,10 @@ public final class Database {
             try (PreparedStatement ps = c.prepareStatement(
                     "INSERT INTO `" + sessionsTable + "` "
                             + "(session_id, owner, arena_name, policy, join_code, is_public, auto_summon, "
-                            + "server_id, created_at) VALUES (?,?,?,?,?,?,?,?,?) "
+                            + "settings, server_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?) "
                             + "ON DUPLICATE KEY UPDATE owner=VALUES(owner), arena_name=VALUES(arena_name), "
                             + "policy=VALUES(policy), join_code=VALUES(join_code), is_public=VALUES(is_public), "
-                            + "auto_summon=VALUES(auto_summon), "
+                            + "auto_summon=VALUES(auto_summon), settings=VALUES(settings), "
                             + "server_id=VALUES(server_id)")) {
                 ps.setString(1, row.sessionId().toString());
                 ps.setString(2, row.owner() == null ? null : row.owner().toString());
@@ -177,8 +190,9 @@ public final class Database {
                 ps.setString(5, row.joinCode());
                 ps.setBoolean(6, row.isPublic());
                 ps.setBoolean(7, row.autoSummon());
-                ps.setString(8, settings.serverId()); // this server owns/stamps the write
-                ps.setLong(9, row.createdAt());
+                ps.setString(8, row.settings());
+                ps.setString(9, settings.serverId()); // this server owns/stamps the write
+                ps.setLong(10, row.createdAt());
                 ps.executeUpdate();
             }
         });
@@ -235,6 +249,46 @@ public final class Database {
         });
     }
 
+    public void upsertPreset(UUID owner, String name, String settingsJson) {
+        submit("upsert preset " + name, c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "INSERT INTO `" + presetsTable + "` (owner, name, settings, updated_at) "
+                            + "VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE settings=VALUES(settings), "
+                            + "updated_at=VALUES(updated_at)")) {
+                ps.setString(1, owner.toString());
+                ps.setString(2, name);
+                ps.setString(3, settingsJson);
+                ps.setLong(4, System.currentTimeMillis());
+                ps.executeUpdate();
+            }
+        });
+    }
+
+    public void deletePreset(UUID owner, String name) {
+        submit("delete preset " + name, c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "DELETE FROM `" + presetsTable + "` WHERE owner=? AND name=?")) {
+                ps.setString(1, owner.toString());
+                ps.setString(2, name);
+                ps.executeUpdate();
+            }
+        });
+    }
+
+    /** A player's saved presets, name → settings JSON, ordered by name. Call off-thread. */
+    public java.util.LinkedHashMap<String, String> loadPresets(UUID owner) throws SQLException {
+        java.util.LinkedHashMap<String, String> out = new java.util.LinkedHashMap<>();
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT name, settings FROM `" + presetsTable + "` WHERE owner=? ORDER BY name")) {
+            ps.setString(1, owner.toString());
+            try (var rs = ps.executeQuery()) {
+                while (rs.next()) out.put(rs.getString(1), rs.getString(2));
+            }
+        }
+        return out;
+    }
+
     public void deleteCommand(UUID id) {
         submit("delete command " + id, c -> {
             try (PreparedStatement ps = c.prepareStatement(
@@ -252,7 +306,7 @@ public final class Database {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
                      "SELECT session_id, owner, arena_name, policy, join_code, is_public, auto_summon, "
-                             + "server_id, created_at FROM `" + sessionsTable + "`");
+                             + "settings, server_id, created_at FROM `" + sessionsTable + "`");
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 String owner = rs.getString("owner");
@@ -264,6 +318,7 @@ public final class Database {
                         rs.getString("join_code"),
                         rs.getBoolean("is_public"),
                         rs.getBoolean("auto_summon"),
+                        rs.getString("settings"),
                         rs.getString("server_id"),
                         rs.getLong("created_at")));
             }
