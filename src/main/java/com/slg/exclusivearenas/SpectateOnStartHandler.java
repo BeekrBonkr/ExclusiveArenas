@@ -51,7 +51,7 @@ public final class SpectateOnStartHandler extends LobbyItemHandler implements Li
     @Override
     public void handleUse(Player player, Arena arena, LobbyItem item) {
         if (!arena.getStatus().isLobby()) {
-            player.sendMessage(ItemUtil.color("&cYou can only do that while the match is in its lobby."));
+            player.sendMessage(Lang.msg("spectate.lobby-only"));
             return;
         }
 
@@ -77,11 +77,11 @@ public final class SpectateOnStartHandler extends LobbyItemHandler implements Li
         }
         Spectator spectator = arena.addSpectator(player, SpectateReason.PLUGIN);
         if (spectator == null) {
-            player.sendMessage(ItemUtil.color("&cCouldn't switch you to spectating — try again."));
+            player.sendMessage(Lang.msg("spectate.switch-failed"));
             return;
         }
         opted.add(id);
-        player.sendMessage(ItemUtil.color("&eYou're now spectating — you won't play this match."));
+        player.sendMessage(Lang.msg("spectate.now-spectating"));
     }
 
     private void switchToPlaying(Player player, Arena arena, UUID id) {
@@ -94,11 +94,11 @@ public final class SpectateOnStartHandler extends LobbyItemHandler implements Li
                 // MBedwars rejected the re-add (e.g. the arena filled up while spectating) —
                 // leave them spectating rather than stranding them in limbo.
                 opted.add(id);
-                player.sendMessage(ItemUtil.color("&cCouldn't rejoin as a player — the match may be full."));
+                player.sendMessage(Lang.msg("spectate.rejoin-failed"));
                 return;
             }
         }
-        player.sendMessage(ItemUtil.color("&aYou'll play in this match — pick a team to join in."));
+        player.sendMessage(Lang.msg("spectate.now-playing"));
     }
 
     /**
@@ -133,8 +133,8 @@ public final class SpectateOnStartHandler extends LobbyItemHandler implements Li
 
     private ItemStack buildIcon(boolean spectating) {
         return ItemUtil.button(spectating ? Material.GREEN_DYE : Material.GRAY_DYE,
-                spectating ? "&aJoining as Spectator" : "&7Joining as Player",
-                spectating ? "&7You will not play this match." : "&7You will play this match.",
-                "&8▶ Click to toggle");
+                Lang.raw(spectating ? "spectate.item-name-on" : "spectate.item-name-off"),
+                Lang.raw(spectating ? "spectate.item-desc-on" : "spectate.item-desc-off"),
+                Lang.raw("spectate.item-hint"));
     }
 }

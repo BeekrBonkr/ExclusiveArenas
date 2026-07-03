@@ -79,9 +79,9 @@ public final class AutoSummonTask extends BukkitRunnable {
             // poll hasn't caught up): only summon into an arena that's genuinely still active.
             if (!ArenaNames.isActiveStatus(session.getArenaName())) continue;
 
-            plugin.forceSummon(session, memberId, () -> member.sendMessage(ItemUtil.color(
-                    "&eYou were sent to &f" + session.getArenaName()
-                            + "&e because you're in &f" + ownerName(session) + "&e's party.")));
+            plugin.forceSummon(session, memberId, () -> member.sendMessage(Lang.msg(
+                    "autosummon.pulled-in",
+                    "%arena%", session.getArenaName(), "%owner%", ownerName(session))));
         }
     }
 
@@ -100,8 +100,7 @@ public final class AutoSummonTask extends BukkitRunnable {
             if (partyIds.contains(id)) continue;
 
             arena.kickPlayer(member);
-            member.sendMessage(ItemUtil.color("&cYou were removed from the match because you left &f"
-                    + ownerName(session) + "&c's party."));
+            member.sendMessage(Lang.msg("autosummon.removed", "%owner%", ownerName(session)));
         }
     }
 

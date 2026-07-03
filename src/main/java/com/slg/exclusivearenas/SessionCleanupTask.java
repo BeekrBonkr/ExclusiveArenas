@@ -41,9 +41,7 @@ public final class SessionCleanupTask extends BukkitRunnable {
             Instant leftAt = session.getHostLeftAt();
             if (leftAt != null && Duration.between(leftAt, now).toMillis() > abandonMs) {
                 if (arena != null) {
-                    arena.broadcast(ItemUtil.color(plugin.getEaConfig().str(
-                            "messages.session_abandoned",
-                            "&cPrivate match ended: the host did not return in time.")));
+                    arena.broadcast(Lang.msg("cleanup.host-abandoned"));
                 }
                 sessions.endSession(session);
                 continue;

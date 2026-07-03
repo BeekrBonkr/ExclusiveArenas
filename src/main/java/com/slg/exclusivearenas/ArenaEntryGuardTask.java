@@ -19,9 +19,11 @@ import org.bukkit.scheduler.BukkitRunnable;
 public final class ArenaEntryGuardTask extends BukkitRunnable {
 
     private final PrivateSessionService sessions;
+    private final JoinTicketService tickets;
 
-    public ArenaEntryGuardTask(PrivateSessionService sessions) {
+    public ArenaEntryGuardTask(PrivateSessionService sessions, JoinTicketService tickets) {
         this.sessions = sessions;
+        this.tickets = tickets;
     }
 
     @Override
@@ -37,6 +39,12 @@ public final class ArenaEntryGuardTask extends BukkitRunnable {
                 if (!arena.isInside(player.getLocation())) continue;
                 if (arena.getPlayers().contains(player) || arena.isSpectating(player)) continue;
                 if (BedwarsAPI.getGameAPI().getArenaByPlayer(player) != null) continue; // registered elsewhere
+
+                // The join gate (JoinListener) requires a valid ticket for Code-policy sessions,
+                // and the original ticket was already consumed by whichever attempt got them
+                // physically in here without registering — without a fresh one this add is
+                // gated right back out as an unauthorised join, every sweep, forever.
+                tickets.grant(player.getUniqueId(), session.getSessionId(), session.getArenaName());
 
                 if (arena.getStatus() == ArenaStatus.RUNNING) {
                     arena.addSpectator(player, SpectateReason.ENTER);
