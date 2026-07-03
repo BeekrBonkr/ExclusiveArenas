@@ -464,11 +464,74 @@ arena-config:
         - "&8"
         - "&8▶ Click to manage"
       glint: false
+    team-size:
+      slot: 16
+      material: WHITE_BANNER
+      name: "&d&lTeam Size"
+      lore:
+        - "&7Change how many players fit on"
+        - "&7each team for this match."
+        - "&8"
+        - "&8▶ Click to configure"
+      glint: false
     back:
       slot: 22
       material: ARROW
       name: "&7◀ Back"
       lore: ["&8Return to match controls."]
+      glint: false
+
+# ── Team size editor ─────────────────────────────────────────────────────────
+# Title placeholders: %arena%
+# Only editable while nobody but the host has joined the lobby yet — safe to
+# change freely up to that point, disruptive to reshuffle after.
+team-size:
+  title: "&1&lTeam Size &8· %arena%"
+  size: 27
+  buttons:
+    # %amount% (current players-per-team), %locked% (empty unless locked)
+    display:
+      slot: 13
+      material: WHITE_BANNER
+      name: "&d&lPlayers Per Team: &f%amount%"
+      lore:
+        - "&7How many players fit on each"
+        - "&7team in this match."
+        - "&8"
+        - "%locked%"
+      glint: false
+    minus-one:
+      slot: 11
+      material: RED_CONCRETE
+      name: "&c&l-1"
+      lore: ["&7Lower the per-team limit by one."]
+      glint: false
+    plus-one:
+      slot: 15
+      material: LIME_CONCRETE
+      name: "&a&l+1"
+      lore: ["&7Raise the per-team limit by one."]
+      glint: false
+    reset:
+      slot: 20
+      material: TNT_MINECART
+      name: "&e&lReset to Default"
+      lore:
+        - "&7Restore the arena's own"
+        - "&7players-per-team value."
+        - "&8▶ Click to reset"
+      glint: false
+    unavailable:
+      slot: 13
+      material: BARRIER
+      name: "&cUnavailable"
+      lore: ["%reason%"]
+      glint: false
+    back:
+      slot: 22
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to arena settings."]
       glint: false
 
 # ── Saved configurations (presets) ──────────────────────────────────────────

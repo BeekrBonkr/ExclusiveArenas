@@ -117,6 +117,12 @@ teams:
   # %count%
   distributed: "&aDistributed &f%count%&a player(s) evenly across teams."
 
+# Arena Settings → Team Size.
+teamsize:
+  locked: "&cTeam size can only be changed before anyone else has joined the lobby."
+  # %amount%
+  changed: "&aPlayers per team set to &f%amount%&a."
+
 spectate:
   # The toggle-spectate lobby hotbar item (see config.yml's lobby-hotbar notes). Hidden once
   # the player is actually spectating — spectator-rejoin.* takes over from there.

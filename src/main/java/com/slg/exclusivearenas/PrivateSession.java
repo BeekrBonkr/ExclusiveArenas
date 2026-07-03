@@ -31,6 +31,10 @@ public final class PrivateSession {
     // restored once the match ends. Null while untouched (local-only, never persisted).
     private volatile Integer originalMinPlayers = null;
 
+    // The arena's own players-per-team value before any host override was applied; restored
+    // once the match ends. Null while untouched (local-only, never persisted).
+    private volatile Integer originalPlayersPerTeam = null;
+
     // Timestamp of each player's last authorised join, kept only long enough to recognise
     // MBedwars' "kicked right back out immediately after joining" bug (local-only, never persisted).
     private final Map<UUID, Instant> recentJoins = new ConcurrentHashMap<>();
@@ -81,6 +85,9 @@ public final class PrivateSession {
 
     public Integer getOriginalMinPlayers() { return originalMinPlayers; }
     public void setOriginalMinPlayers(Integer originalMinPlayers) { this.originalMinPlayers = originalMinPlayers; }
+
+    public Integer getOriginalPlayersPerTeam() { return originalPlayersPerTeam; }
+    public void setOriginalPlayersPerTeam(Integer originalPlayersPerTeam) { this.originalPlayersPerTeam = originalPlayersPerTeam; }
 
     /** Records that this player was just authorised into the arena (owner, ticket, or party). */
     public void markRecentJoin(UUID playerId) {

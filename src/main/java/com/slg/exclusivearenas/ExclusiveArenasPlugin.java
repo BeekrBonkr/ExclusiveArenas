@@ -841,6 +841,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         if (session == null) return;
         Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
         restoreArenaMinPlayers(session, arena);
+        restoreArenaPlayersPerTeam(session, arena);
         sessionService.endSession(session);
         if (arena != null && arena.exists()) {
             arena.broadcast(Lang.msg("match.ended-broadcast"));
@@ -867,6 +868,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         if (arena == null || session == null) return;
         if (!arena.getStatus().isLobby()) return;
         relaxMinPlayers(arena, session);
+        applyPlayersPerTeamOverride(arena, session);
         try {
             arena.setLobbyTimeRemaining(3600, false);
         } catch (Throwable ignored) {
@@ -935,6 +937,44 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         if (original == null || arena == null || !arena.exists()) return;
         try {
             arena.setMinPlayers(original);
+        } catch (Throwable ignored) {
+            // best effort — the arena will pick its configured value back up on the next reset anyway
+        }
+    }
+
+    /** Only the host is in the arena so far — the one point a team-size change can't disrupt anyone. */
+    public boolean canChangeTeamSize(Arena arena) {
+        return arena == null || !arena.exists() || arena.getPlayers().size() <= 1;
+    }
+
+    /**
+     * Applies the session's players-per-team override (Arena Settings → Team Size) to the live
+     * arena, snapshotting its original value on first use so it can be restored once the match
+     * ends via {@link #restoreArenaPlayersPerTeam}. A no-op override just keeps the arena at its
+     * original value — mirrors {@link #relaxMinPlayers}, including being safe to call repeatedly.
+     */
+    public void applyPlayersPerTeamOverride(Arena arena, PrivateSession session) {
+        if (session.getOriginalPlayersPerTeam() == null) {
+            session.setOriginalPlayersPerTeam(arena.getPlayersPerTeam());
+        }
+        Integer override = session.getSettings().getPlayersPerTeam();
+        int target = override != null ? override : session.getOriginalPlayersPerTeam();
+        if (arena.getPlayersPerTeam() != target) {
+            try {
+                arena.setPlayersPerTeam(target);
+            } catch (Throwable ignored) {
+                // best effort
+            }
+        }
+    }
+
+    /** Restores an arena's original players-per-team value once its private match ends. */
+    public void restoreArenaPlayersPerTeam(PrivateSession session, Arena arena) {
+        if (session == null) return;
+        Integer original = session.getOriginalPlayersPerTeam();
+        if (original == null || arena == null || !arena.exists()) return;
+        try {
+            arena.setPlayersPerTeam(original);
         } catch (Throwable ignored) {
             // best effort — the arena will pick its configured value back up on the next reset anyway
         }

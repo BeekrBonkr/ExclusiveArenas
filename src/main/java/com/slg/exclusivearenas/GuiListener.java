@@ -81,6 +81,7 @@ public final class GuiListener implements Listener {
             case TEAM_PLAYERS-> handleTeamPlayers(p, gh, slot, e.isShiftClick());
             case HELP        -> { if (slot == GuiStyle.slot("help.buttons.back")) gui.openMainMenu(p); }
             case PRESET_NAME -> handlePresetName(p, gh, slot, e.getView());
+            case TEAM_SIZE   -> handleTeamSize(p, gh, slot);
         }
     }
 
@@ -271,9 +272,61 @@ public final class GuiListener implements Listener {
             gui.openShopPages(p, session, gh.adminView());
         } else if (slot == GuiStyle.slot("arena-config.buttons.presets")) {
             openPresetsFor(p, gh);
+        } else if (slot == GuiStyle.slot("arena-config.buttons.team-size")) {
+            gui.openTeamSize(p, session, gh.adminView());
         } else if (slot == GuiStyle.slot("arena-config.buttons.back")) {
             gui.openControls(p, session, gh.adminView());
         }
+    }
+
+    // ── Team size editor ──────────────────────────────────────────────────────────────
+
+    private void handleTeamSize(Player p, GuiHolder gh, int slot) {
+        PrivateSession session = requireManageable(p, gh);
+        if (session == null) return;
+
+        if (slot == GuiStyle.slot("team-size.buttons.back")) {
+            gui.openArenaConfig(p, session, gh.adminView());
+            return;
+        }
+
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        if (arena == null || !arena.exists()) return; // only "back" works on the unavailable view
+
+        if (!plugin.canChangeTeamSize(arena)) {
+            if (slot == GuiStyle.slot("team-size.buttons.minus-one")
+                    || slot == GuiStyle.slot("team-size.buttons.plus-one")
+                    || slot == GuiStyle.slot("team-size.buttons.reset")) {
+                p.sendMessage(Lang.msg("teamsize.locked"));
+            }
+            return;
+        }
+
+        Integer original = session.getOriginalPlayersPerTeam();
+        int fallback = original != null ? original : arena.getPlayersPerTeam();
+        Integer override = session.getSettings().getPlayersPerTeam();
+        int current = override != null ? override : fallback;
+
+        Integer next = null;
+        boolean changed = false;
+        if (slot == GuiStyle.slot("team-size.buttons.minus-one")) {
+            next = Math.max(GuiManager.MIN_PLAYERS_PER_TEAM, current - 1);
+            changed = true;
+        } else if (slot == GuiStyle.slot("team-size.buttons.plus-one")) {
+            next = Math.min(GuiManager.MAX_PLAYERS_PER_TEAM, current + 1);
+            changed = true;
+        } else if (slot == GuiStyle.slot("team-size.buttons.reset")) {
+            next = null; // back to the arena's own default
+            changed = true;
+        }
+        if (!changed) return;
+
+        session.getSettings().setPlayersPerTeam(next != null && next != fallback ? next : null);
+        sessions.saveSettings(session);
+        plugin.applyPlayersPerTeamOverride(arena, session);
+        p.sendMessage(Lang.msg("teamsize.changed",
+                "%amount%", String.valueOf(next != null ? next : fallback)));
+        gui.openTeamSize(p, session, gh.adminView());
     }
 
     // ── Saved configurations (presets) ───────────────────────────────────────────────

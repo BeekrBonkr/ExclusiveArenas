@@ -121,9 +121,9 @@ Open via the arena's entry in **Arena Management**, `/ea lobby`, or the host-onl
 - **Go to Arena** — teleport/connect to the match yourself.
 - **Kick All Players** — clears the arena; shift-click keeps you (the host) in it.
 - **Arena Settings** — opens [Event Timeline](#event-timeline), [Shop Items](#shop-overrides),
-  and [Saved Configurations](#saved-configurations-presets) for this match. All three are
-  editable any time the match hasn't started yet (and Event Timeline/Shop Items again once it
-  has, taking effect from the next round).
+  [Team Size](#team-size), and [Saved Configurations](#saved-configurations-presets) for this
+  match. All are editable any time the match hasn't started yet (and Event Timeline/Shop Items
+  again once it has, taking effect from the next round).
 - **Quick Actions** — one-click shortcuts for a *live* (running) match, recreated through the
   stable MBedwars API so they can't silently break with an update:
   - **Regenerate Map** — rebuilds the arena to a pristine state without anyone leaving. Everyone
@@ -179,6 +179,15 @@ Disable individual shop items for just this match, or change what they cost (amo
 from Arena Settings → **Shop Items**. Click an item to toggle it on/off; shift-click to open the
 price editor (±1/±10 buttons, cycle currency, reset to default). Also editable via
 `/ea shop list|disable|enable|price|resetprice|reset`.
+
+### Team Size
+
+Change how many players fit on each team for this match from Arena Settings → **Team Size**
+(±1 buttons, 1–8, reset to the arena's own default). **Only editable before anyone but the host
+has joined the lobby** — once a second player is in, the controls disappear and any attempt to
+change it is refused, since reshuffling capacity out from under players already sorted onto
+teams would be disruptive. The override is temporary to this match; the arena's own value is
+restored once it ends.
 
 ### Saved Configurations (Presets)
 

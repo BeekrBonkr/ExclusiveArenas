@@ -51,6 +51,7 @@ public final class PrivacyLifecycleListener implements Listener {
         // over — the session survives and everyone is put back once the lobby is fresh.
         if (plugin.getQuickActions().isRegenPending(event.getArena())) return;
         plugin.restoreArenaMinPlayers(s, event.getArena());
+        plugin.restoreArenaPlayersPerTeam(s, event.getArena());
         sessions.endSession(s);
     }
 

@@ -50,6 +50,18 @@ public final class SessionSettings {
 
     private List<TimelineEntry> timeline; // null = defaults from config
     private final Map<String, ShopOverride> shop = new LinkedHashMap<>();
+    private Integer playersPerTeam; // null = the arena's own default
+
+    // ── Team size ────────────────────────────────────────────────────────────────
+
+    /** The host's players-per-team override, or null when the arena's own default applies. */
+    public Integer getPlayersPerTeam() {
+        return playersPerTeam;
+    }
+
+    public void setPlayersPerTeam(Integer playersPerTeam) {
+        this.playersPerTeam = playersPerTeam;
+    }
 
     // ── Timeline ─────────────────────────────────────────────────────────────────
 
@@ -99,9 +111,12 @@ public final class SessionSettings {
 
     /** Serializes to the JSON blob stored in the sessions table; null when nothing is set. */
     public String toJson() {
-        if (timeline == null && shop.isEmpty()) return null;
+        if (timeline == null && shop.isEmpty() && playersPerTeam == null) return null;
 
         JsonObject root = new JsonObject();
+        if (playersPerTeam != null) {
+            root.addProperty("ppt", playersPerTeam);
+        }
         if (timeline != null) {
             JsonArray arr = new JsonArray();
             for (TimelineEntry e : timeline) {
@@ -136,6 +151,9 @@ public final class SessionSettings {
         try {
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
 
+            if (root.has("ppt")) {
+                s.playersPerTeam = root.get("ppt").getAsInt();
+            }
             if (root.has("timeline")) {
                 List<TimelineEntry> entries = new ArrayList<>();
                 for (JsonElement el : root.getAsJsonArray("timeline")) {

@@ -279,14 +279,53 @@ public final class GuiManager {
         Inventory inv = create(holder, GuiStyle.size("arena-config", 27),
                 GuiStyle.title("arena-config", "%arena%", session.getArenaName()));
         frame(inv);
-        accentDividers(inv, 11, 13, 15, 16);
+        accentDividers(inv, 11, 13, 15);
 
         if (plugin.getTimelineService().isEnabled()) {
             GuiStyle.place(inv, "arena-config.buttons.event-timeline");
         }
         GuiStyle.place(inv, "arena-config.buttons.shop-config");
         GuiStyle.place(inv, "arena-config.buttons.presets");
+        GuiStyle.place(inv, "arena-config.buttons.team-size");
         GuiStyle.place(inv, "arena-config.buttons.back");
+        p.openInventory(inv);
+    }
+
+    /** Bounds on the players-per-team override — generous for every real BedWars team format. */
+    static final int MIN_PLAYERS_PER_TEAM = 1;
+    static final int MAX_PLAYERS_PER_TEAM = 8;
+
+    public void openTeamSize(Player p, PrivateSession session, boolean adminView) {
+        GuiHolder holder = new GuiHolder(GuiHolder.Type.TEAM_SIZE)
+                .sessionId(session.getSessionId()).adminView(adminView);
+        Inventory inv = create(holder, GuiStyle.size("team-size", 27),
+                GuiStyle.title("team-size", "%arena%", session.getArenaName()));
+        frame(inv);
+        accentDividers(inv, 12, 14);
+
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        if (arena == null || !arena.exists()) {
+            GuiStyle.place(inv, "team-size.buttons.unavailable",
+                    "%reason%", "&7This arena isn't loaded on this server.");
+            GuiStyle.place(inv, "team-size.buttons.back");
+            p.openInventory(inv);
+            return;
+        }
+
+        Integer original = session.getOriginalPlayersPerTeam();
+        int fallback = original != null ? original : arena.getPlayersPerTeam();
+        Integer override = session.getSettings().getPlayersPerTeam();
+        int amount = override != null ? override : fallback;
+        boolean locked = !plugin.canChangeTeamSize(arena);
+
+        GuiStyle.place(inv, "team-size.buttons.display", "%amount%", String.valueOf(amount),
+                "%locked%", locked ? "&cLocked — a player has already joined." : "");
+        if (!locked) {
+            GuiStyle.place(inv, "team-size.buttons.minus-one");
+            GuiStyle.place(inv, "team-size.buttons.plus-one");
+            GuiStyle.place(inv, "team-size.buttons.reset");
+        }
+        GuiStyle.place(inv, "team-size.buttons.back");
         p.openInventory(inv);
     }
 
