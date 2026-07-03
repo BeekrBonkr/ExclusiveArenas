@@ -279,14 +279,13 @@ public final class GuiManager {
         Inventory inv = create(holder, GuiStyle.size("arena-config", 27),
                 GuiStyle.title("arena-config", "%arena%", session.getArenaName()));
         frame(inv);
-        accentDividers(inv, 11, 13, 15);
+        accentDividers(inv, 11, 13, 15, 16);
 
         if (plugin.getTimelineService().isEnabled()) {
             GuiStyle.place(inv, "arena-config.buttons.event-timeline");
         }
         GuiStyle.place(inv, "arena-config.buttons.shop-config");
         GuiStyle.place(inv, "arena-config.buttons.presets");
-        GuiStyle.place(inv, "arena-config.buttons.cosmetics-unavailable");
         GuiStyle.place(inv, "arena-config.buttons.back");
         p.openInventory(inv);
     }
@@ -679,6 +678,7 @@ public final class GuiManager {
         }
 
         if (teams.isEmpty()) GuiStyle.place(inv, "team-select.buttons.empty");
+        else GuiStyle.place(inv, "team-select.buttons.distribute");
 
         GuiStyle.place(inv, "team-select.buttons.back");
         p.openInventory(inv);

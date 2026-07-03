@@ -73,6 +73,23 @@ public final class PresetService {
         saveFile(store);
     }
 
+    /**
+     * Saves (or overwrites) a preset and reports back on the main thread whether it actually
+     * persisted — so a caller can message the player honestly instead of optimistically
+     * claiming success before the write (async in database mode) has even happened.
+     */
+    public void save(UUID owner, String name, String settingsJson, Consumer<Boolean> callback) {
+        Database db = plugin.getDatabase();
+        if (db != null) {
+            db.upsertPreset(owner, name, settingsJson,
+                    ok -> Bukkit.getScheduler().runTask(plugin, () -> callback.accept(ok)));
+            return;
+        }
+        YamlConfiguration store = fileStore();
+        store.set(ownerPath(owner) + "." + name, settingsJson == null ? "" : settingsJson);
+        callback.accept(saveFile(store)); // file mode is synchronous — already on the caller's thread
+    }
+
     public void delete(UUID owner, String name) {
         Database db = plugin.getDatabase();
         if (db != null) {
@@ -123,11 +140,13 @@ public final class PresetService {
         return fileStore;
     }
 
-    private void saveFile(YamlConfiguration store) {
+    private boolean saveFile(YamlConfiguration store) {
         try {
             store.save(file);
+            return true;
         } catch (IOException e) {
             plugin.getLogger().warning("Could not save presets.yml: " + e.getMessage());
+            return false;
         }
     }
 

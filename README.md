@@ -121,8 +121,9 @@ Open via the arena's entry in **Arena Management**, `/ea lobby`, or the host-onl
 - **Go to Arena** — teleport/connect to the match yourself.
 - **Kick All Players** — clears the arena; shift-click keeps you (the host) in it.
 - **Arena Settings** — opens [Event Timeline](#event-timeline), [Shop Items](#shop-overrides),
-  and [Saved Configurations](#saved-configurations-presets) for this match. Cosmetics is a stub —
-  MBedwars exposes no cosmetics API to hook into yet.
+  and [Saved Configurations](#saved-configurations-presets) for this match. All three are
+  editable any time the match hasn't started yet (and Event Timeline/Shop Items again once it
+  has, taking effect from the next round).
 - **Quick Actions** — one-click shortcuts for a *live* (running) match, recreated through the
   stable MBedwars API so they can't silently break with an update:
   - **Regenerate Map** — rebuilds the arena to a pristine state without anyone leaving. Everyone
@@ -145,6 +146,10 @@ to team selection; shift-click (or a plain click while others are already picked
 multiple players — shown with an enchant glint — for a batch move via the **Move N Selected
 Player(s)** button. Clicking an already-staged head un-stages it. Trying to select more than
 the team has room for flips the menu's title into a warning until you free up a slot.
+
+**Distribute Players** (bottom of the team list) shuffles and re-splits *everyone* currently in
+the lobby evenly across the enabled teams in one click, respecting each team's capacity —
+handy for quickly randomizing teams instead of moving people one at a time.
 
 ### Event Timeline
 
@@ -351,8 +356,7 @@ as one party — this is a property of the party plugin, not something Exclusive
 - **`server_id` uniqueness isn't validated.** Cloning one server's data folder to spin up
   another without editing `server_id` won't break session logic, but does corrupt
   debug/attribution info.
-- **Cosmetics is a stub menu.** MBedwars exposes no cosmetics API to hook into yet, so per-match
-  cosmetic control isn't possible.
+- **No per-match cosmetic control.** MBedwars exposes no cosmetics API to hook into.
 - **Auto-summon isn't exposed anywhere.** The continuous party-sync machinery
   (`private.auto_summon_enabled`) still exists internally but has no command or menu right now —
   use **Summon Party** for a one-time pull instead.

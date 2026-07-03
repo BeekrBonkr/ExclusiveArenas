@@ -23,7 +23,7 @@
 # Do not change 'config-version': the plugin uses it to upgrade this file in
 # place when you install a newer version (your edits are preserved).
 # ─────────────────────────────────────────────────────────────────────────────
-config-version: 3
+config-version: 4
 
 # Materials used to decorate every menu.
 global:
@@ -463,15 +463,6 @@ arena-config:
         - "&7saved earlier."
         - "&8"
         - "&8▶ Click to manage"
-      glint: false
-    cosmetics-unavailable:
-      slot: 16
-      material: ENDER_CHEST
-      name: "&8✦ &7Cosmetics &8(Unavailable)"
-      lore:
-        - "&8MBedwars exposes no cosmetics API,"
-        - "&8so per-match cosmetic control isn't"
-        - "&8possible yet."
       glint: false
     back:
       slot: 22
@@ -1016,6 +1007,16 @@ team-select:
       material: ARROW
       name: "&7◀ Back"
       lore: ["&8Return to match controls."]
+      glint: false
+    distribute:
+      slot: 51
+      material: HOPPER
+      name: "&e&lDistribute Players"
+      lore:
+        - "&7Evenly spread everyone currently in"
+        - "&7the lobby across the enabled teams."
+        - "&8"
+        - "&8▶ Click to distribute"
       glint: false
     unavailable:
       slot: 31
