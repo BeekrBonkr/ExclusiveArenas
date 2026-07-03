@@ -73,19 +73,17 @@ public final class ArenaBossBarTask extends BukkitRunnable {
     private String buildTitle(PrivateSession session, Arena arena) {
         String policy;
         if (session.getJoinPolicy() == JoinPolicy.CODE) {
-            if (session.isPublic()) {
-                String code = session.getJoinCode() != null ? session.getJoinCode() : "—";
-                policy = "Code: " + code;
-            } else {
-                policy = "Locked"; // hide the code entirely while the match isn't accepting joins
-            }
+            policy = session.isPublic()
+                    ? Lang.raw("bossbar.policy-code", "%code%",
+                            session.getJoinCode() != null ? session.getJoinCode() : "—")
+                    : Lang.raw("bossbar.policy-locked"); // hide the code while joins are disabled
         } else {
-            policy = "Party Only";
+            policy = Lang.raw("bossbar.policy-party");
         }
 
-        String title = "&6&lPRIVATE MATCH &8• &e" + policy;
+        String title = Lang.raw("bossbar.title", "%policy%", policy);
         if (arena.getStatus() == ArenaStatus.RUNNING && !arena.isIngameTimerTicking()) {
-            title += " &8• &c⏸ Timer Paused";
+            title += Lang.raw("bossbar.timer-paused");
         }
         return ItemUtil.color(title);
     }

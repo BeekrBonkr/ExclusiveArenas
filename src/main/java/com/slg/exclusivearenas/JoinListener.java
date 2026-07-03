@@ -52,18 +52,25 @@ public final class JoinListener implements Listener {
         // Owner is always allowed; clear any abandon timer
         if (playerId.equals(session.getOwner())) {
             session.setHostLeftAt(null);
+            session.markRecentJoin(playerId);
             return;
         }
 
         // Valid join ticket (granted by /ea join, party summon, or network message)
-        if (tickets.consumeIfValid(playerId, session.getSessionId(), arena.getName())) return;
+        if (tickets.consumeIfValid(playerId, session.getSessionId(), arena.getName())) {
+            session.markRecentJoin(playerId);
+            return;
+        }
 
         // Party policy: allow if player is in the owner's party (async callback)
         if (session.getJoinPolicy() == JoinPolicy.PARTY) {
             final PrivateSession finalSession = session;
             PartyResolver.isInLeadersParty(player, session.getOwner(), allowed -> {
-                if (allowed) return;
-                event.addIssue(buildIssue(finalSession, arena, "party"));
+                if (!allowed) {
+                    event.addIssue(buildIssue(finalSession, arena, "party"));
+                    return;
+                }
+                finalSession.markRecentJoin(playerId);
             });
             return;
         }
@@ -102,9 +109,7 @@ public final class JoinListener implements Listener {
             PartyResolver.isInLeadersParty(player, session.getOwner(), allowed -> {
                 if (allowed) return;
                 event.setCancelled(true);
-                player.sendMessage(ItemUtil.color(plugin.getEaConfig()
-                        .str("messages.locked_hint_party", "&cThat arena is private. Join &f%owner%&c's party to enter.")
-                        .replace("%owner%", ownerName(session))));
+                player.sendMessage(Lang.msg("locked.hint-party", "%owner%", ownerName(session)));
             });
             return;
         }
@@ -112,12 +117,10 @@ public final class JoinListener implements Listener {
         // Code policy: a ticket (checked above) is required — a bare spectate attempt has none.
         event.setCancelled(true);
         if (!session.isPublic()) {
-            player.sendMessage(ItemUtil.color(plugin.getEaConfig().str("messages.locked_private",
-                    "&cThat arena is currently private and is not accepting joins.")));
+            player.sendMessage(Lang.msg("locked.private"));
         } else {
-            player.sendMessage(ItemUtil.color(plugin.getEaConfig()
-                    .str("messages.locked_hint_code", "&cThat arena is private. Use &f/ea join <code>&c to enter.")
-                    .replace("%code%", session.getJoinCode() != null ? session.getJoinCode() : "")));
+            player.sendMessage(Lang.msg("locked.hint-code",
+                    "%code%", session.getJoinCode() != null ? session.getJoinCode() : ""));
         }
     }
 
@@ -183,13 +186,8 @@ public final class JoinListener implements Listener {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private AddPlayerIssue buildIssue(PrivateSession session, Arena arena, String type) {
-        String key = type.equals("party") ? "messages.locked_hint_party" : "messages.locked_hint_code";
-        String def = type.equals("party")
-                ? "&cThat arena is private. Join &f%owner%&c's party to enter."
-                : "&cThat arena is private. Use &f/ea join <code>&c to enter.";
-
-        String msg = plugin.getEaConfig().str(key, def)
-                .replace("%arena%", arena.getName());
+        String key = type.equals("party") ? "locked.hint-party" : "locked.hint-code";
+        String msg = Lang.raw(key, "%arena%", arena.getName());
 
         if (type.equals("party")) {
             OfflinePlayer off = Bukkit.getOfflinePlayer(session.getOwner());
@@ -207,9 +205,7 @@ public final class JoinListener implements Listener {
     }
 
     private AddPlayerIssue buildLockedIssue(Arena arena) {
-        String msg = plugin.getEaConfig().str("messages.locked_private",
-                "&cThat arena is currently private and is not accepting joins.")
-                .replace("%arena%", arena.getName());
+        String msg = Lang.raw("locked.private", "%arena%", arena.getName());
         return AddPlayerIssue.construct("exclusivearenas.private", ItemUtil.color(msg));
     }
 }

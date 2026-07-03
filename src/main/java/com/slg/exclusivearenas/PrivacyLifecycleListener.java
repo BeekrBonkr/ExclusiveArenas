@@ -12,6 +12,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumSet;
 import java.util.Set;
@@ -46,6 +47,9 @@ public final class PrivacyLifecycleListener implements Listener {
     public void onRoundEnd(RoundEndEvent event) {
         PrivateSession s = sessions.getByArena(event.getArena());
         if (s == null) return;
+        // A forced map regeneration (Quick Actions) stops the round without the match being
+        // over — the session survives and everyone is put back once the lobby is fresh.
+        if (plugin.getQuickActions().isRegenPending(event.getArena())) return;
         plugin.restoreArenaMinPlayers(s, event.getArena());
         sessions.endSession(s);
     }
@@ -75,7 +79,7 @@ public final class PrivacyLifecycleListener implements Listener {
         Arena arena = event.getArena();
         Player player = event.getPlayer();
         markHostLeftIfApplicable(arena, player.getUniqueId());
-        rejoinPartyMemberIfStillPartied(arena, player, event.getReason());
+        rejoinIfKickedRightAfterJoining(arena, player, event.getReason());
     }
 
     @EventHandler
@@ -94,33 +98,32 @@ public final class PrivacyLifecycleListener implements Listener {
         }
     }
 
+    // How soon after an authorised join a quit has to happen to be treated as MBedwars'
+    // kick-right-after-joining bug rather than a genuine, deliberate leave.
+    private static final Duration REJOIN_WINDOW = Duration.ofSeconds(5);
+
     /**
-     * MBedwars has an unrelated bug where a party member can get kicked out of the arena right
-     * after joining it. {@link PlayerQuitArenaEvent} can't be cancelled (it fires after the fact),
-     * so this patches around it: if the player is still in the host's party, send them straight
-     * back in — regardless of why they left — so leaving the match effectively isn't possible
-     * while they remain partied with the host.
+     * MBedwars has an unrelated bug where a player can get kicked out of the arena right after
+     * joining it. {@link PlayerQuitArenaEvent} can't be cancelled (it fires after the fact), so
+     * this patches around it: anyone whose quit follows one of our own authorised joins
+     * (owner, ticket, or party) within {@link #REJOIN_WINDOW} is sent straight back in,
+     * regardless of policy — this only ever fires within a few seconds of joining, so it can't
+     * be mistaken for a deliberate leave later in the match.
      */
-    private void rejoinPartyMemberIfStillPartied(Arena arena, Player player, KickReason reason) {
+    private void rejoinIfKickedRightAfterJoining(Arena arena, Player player, KickReason reason) {
         if (arena == null || IGNORED_QUIT_REASONS.contains(reason)) return;
 
         PrivateSession session = sessions.getByArena(arena);
         if (session == null) return;
-        if (session.getJoinPolicy() != JoinPolicy.PARTY) return;
-        if (player.getUniqueId().equals(session.getOwner())) return;
         if (player.hasPermission(BYPASS_PERM)) return;
+        if (!session.wasRecentJoin(player.getUniqueId(), REJOIN_WINDOW)) return;
 
-        PartyResolver.isInLeadersParty(player, session.getOwner(), allowed -> {
-            if (!allowed) return; // they left the party too — let them go
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            if (!player.isOnline()) return;
+            if (sessions.getById(session.getSessionId()) == null) return;
 
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                if (!player.isOnline()) return;
-                if (sessions.getById(session.getSessionId()) == null) return;
-
-                plugin.forceSummon(session, player.getUniqueId(), () -> player.sendMessage(ItemUtil.color(
-                        "&eYou were sent back to &f" + session.getArenaName()
-                                + "&e because you're in the host's party.")));
-            });
+            plugin.forceSummon(session, player.getUniqueId(), () -> player.sendMessage(
+                    Lang.msg("join.rejoined-after-kick", "%arena%", session.getArenaName())));
         });
     }
 }

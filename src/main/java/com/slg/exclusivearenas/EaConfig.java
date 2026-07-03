@@ -26,7 +26,7 @@ import java.nio.file.StandardCopyOption;
  */
 public final class EaConfig {
 
-    static final int CURRENT_VERSION = 4;
+    static final int CURRENT_VERSION = 6;
 
     private final JavaPlugin plugin;
     private final File dataFolder;
@@ -71,6 +71,10 @@ public final class EaConfig {
         return config != null ? config.getBoolean(path, def) : def;
     }
 
+    public org.bukkit.configuration.ConfigurationSection section(String path) {
+        return config != null ? config.getConfigurationSection(path) : null;
+    }
+
     private void ensureDefaultExists() {
         if (configFile.exists()) return;
 
@@ -105,6 +109,15 @@ public final class EaConfig {
 
         // v0 → v1: no renames.
         // v1 → v2: no renames (added the database/network/ticket keys — added by ensureComplete()).
+        // v4 → v5: chat messages moved to lang.yml; the old messages section is dropped.
+        if (version < 5) {
+            config.set("messages", null);
+        }
+        // v5 → v6: map regeneration no longer shells out to a console command — it cycles
+        // players through spectator mode and lets MBedwars' own reset regenerate the map.
+        if (version < 6) {
+            config.set("quick_actions.regenerate_command", null);
+        }
 
         config.set("config-version", CURRENT_VERSION);
         return true;

@@ -20,7 +20,8 @@ public final class GuiHolder implements InventoryHolder {
 
     public enum Type {
         MAIN, ARENA_LIST, ADMIN_LIST, BUILDER, ARENA_SELECT, CONTROLS, ARENA_CONFIG,
-        TEAM_SELECT, TEAM_PLAYERS, QUICK_ACTIONS, HELP
+        TEAM_SELECT, TEAM_PLAYERS, QUICK_ACTIONS, HELP,
+        TIMELINE, SHOP_PAGES, SHOP_ITEMS, SHOP_PRICE, PRESETS
     }
 
     private final Type type;
@@ -35,6 +36,12 @@ public final class GuiHolder implements InventoryHolder {
     private Set<UUID> selectedPlayers = Collections.emptySet(); // TEAM_PLAYERS: staged multi-select
     private final Map<Integer, UUID> slotToSession = new HashMap<>(); // list menus: slot -> session
     private final Map<Integer, Team> slotToTeam = new HashMap<>();    // TEAM_SELECT: slot -> team
+    private final Map<Integer, String> slotToKey = new HashMap<>();   // TIMELINE/SHOP_*: slot -> event/page/item id
+
+    private String selectedEvent;                 // TIMELINE: event id being edited (nullable)
+    private String shopPage;                      // SHOP_ITEMS/SHOP_PRICE: MBedwars page name
+    private String shopItem;                      // SHOP_PRICE: MBedwars shop item id
+    private java.util.LinkedHashMap<String, String> presets; // PRESETS: name -> settings JSON
 
     public GuiHolder(Type type) {
         this.type = type;
@@ -71,6 +78,28 @@ public final class GuiHolder implements InventoryHolder {
 
     public void mapTeamSlot(int slot, Team team) { slotToTeam.put(slot, team); }
     public Team teamAt(int slot) { return slotToTeam.get(slot); }
+
+    public void mapKeySlot(int slot, String key) { slotToKey.put(slot, key); }
+    public String keyAt(int slot) { return slotToKey.get(slot); }
+
+    /** Clears all slot mappings — used when a menu is re-rendered in place (live refresh). */
+    public void clearSlotMaps() {
+        slotToSession.clear();
+        slotToTeam.clear();
+        slotToKey.clear();
+    }
+
+    public String selectedEvent() { return selectedEvent; }
+    public GuiHolder selectedEvent(String selectedEvent) { this.selectedEvent = selectedEvent; return this; }
+
+    public String shopPage() { return shopPage; }
+    public GuiHolder shopPage(String shopPage) { this.shopPage = shopPage; return this; }
+
+    public String shopItem() { return shopItem; }
+    public GuiHolder shopItem(String shopItem) { this.shopItem = shopItem; return this; }
+
+    public java.util.LinkedHashMap<String, String> presets() { return presets; }
+    public GuiHolder presets(java.util.LinkedHashMap<String, String> presets) { this.presets = presets; return this; }
 
     void setInventory(Inventory inventory) { this.inventory = inventory; }
 

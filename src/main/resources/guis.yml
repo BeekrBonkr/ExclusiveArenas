@@ -1,0 +1,1202 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ExclusiveArenas — guis.yml
+#
+# Every menu the plugin opens is described here. For each menu you can change:
+#   • title  — supports & color codes and the placeholders noted per menu.
+#   • size   — inventory size in slots (multiple of 9, 9–54). Careful: buttons
+#              whose slot no longer fits are hidden.
+#   • Each button under 'buttons:':
+#       slot     — 0-based inventory slot. Set to -1 to hide the button
+#                  (its click handler is disabled too).
+#       material — any Bukkit material name (e.g. DIAMOND, LIME_CONCRETE).
+#       name     — display name (& colors + the placeholders noted per menu).
+#       lore     — list of lines. A line that becomes empty after its
+#                  placeholder is replaced is dropped, so optional lines work.
+#       glint    — true to give the button an enchantment shimmer.
+#   • Entries under 'items:' are TEMPLATES for dynamic content (arena icons,
+#     player heads, live status cards). Their material comes from the live
+#     object, so only name/lore/glint apply.
+#
+# Paired state buttons (e.g. public-on / public-off) should keep the
+# same slot — they are two looks of the same control.
+#
+# Do not change 'config-version': the plugin uses it to upgrade this file in
+# place when you install a newer version (your edits are preserved).
+# ─────────────────────────────────────────────────────────────────────────────
+config-version: 2
+
+# Materials used to decorate every menu.
+global:
+  border-material: GRAY_STAINED_GLASS_PANE
+  accent-material: CYAN_STAINED_GLASS_PANE
+
+# ── Main menu (/ea) ──────────────────────────────────────────────────────────
+# Placeholders: %hosting% (matches hosted), %limit% (max allowed)
+main:
+  title: "&1&lExclusiveArenas"
+  size: 27
+  buttons:
+    arena-management:
+      slot: 10
+      material: BEACON
+      name: "&b&lArena Management"
+      lore:
+        - "&7View, create and control your"
+        - "&7private matches."
+        - "&8"
+        - "&7Hosting: &f%hosting%&7/&f%limit%"
+        - "&8"
+        - "&8▶ Click to open"
+      glint: false
+    help:
+      slot: 12
+      material: KNOWLEDGE_BOOK
+      name: "&e&lHelp"
+      lore:
+        - "&7Learn how to use ExclusiveArenas."
+        - "&8"
+        - "&8▶ Click to view"
+      glint: false
+    tournaments-soon:
+      slot: 14
+      material: CLOCK
+      name: "&8✦ &7Tournaments &8(Soon)"
+      lore:
+        - "&8Organise bracket-based tournaments."
+        - "&8Not yet available."
+      glint: false
+    admin:
+      slot: 16
+      material: COMMAND_BLOCK
+      name: "&c&lAdmin Panel"
+      lore:
+        - "&7View and control &fevery&7 active"
+        - "&7private match on this server."
+        - "&8"
+        - "&8▶ Click to open"
+      glint: false
+    close:
+      slot: 22
+      material: BARRIER
+      name: "&c&lClose"
+      lore: []
+      glint: false
+
+# ── Your matches list ────────────────────────────────────────────────────────
+# Title placeholders: %page%, %pages%
+arena-list:
+  title: "&1&lYour Private Matches &8(%page%/%pages%)"
+  size: 54
+  buttons:
+    previous-page:
+      slot: 45
+      material: ARROW
+      name: "&e◀ Previous Page"
+      lore: ["&8Go to page %target%."]
+      glint: false
+    next-page:
+      slot: 53
+      material: ARROW
+      name: "&eNext Page ▶"
+      lore: ["&8Go to page %target%."]
+      glint: false
+    back:
+      slot: 48
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to the main menu."]
+      glint: false
+    create:
+      slot: 49
+      material: EMERALD
+      name: "&a&lCreate New Arena"
+      lore:
+        - "&7Set up a new private match."
+        - "&8"
+        - "&7Hosting: &f%hosting%&7/&f%limit%"
+        - "&8"
+        - "&8▶ Click to build"
+      glint: false
+    refresh:
+      slot: 50
+      material: SPYGLASS
+      name: "&b&lRefresh"
+      lore: ["&8Update live status."]
+      glint: false
+    empty:
+      slot: 22
+      material: LIGHT_GRAY_STAINED_GLASS_PANE
+      name: "&7No active matches"
+      lore:
+        - "&8You are not hosting anything yet."
+        - "&8Use &fCreate New Arena&8 below."
+      glint: false
+  items:
+    # One entry per hosted match. %arena%; the lore is followed by the live
+    # status lines and the footer below.
+    session:
+      name: "&f&l%arena%"
+      lore: []
+      glint: false
+    session-footer:
+      name: ""
+      lore:
+        - "&8"
+        - "&8▶ Click to manage"
+      glint: false
+
+# ── Admin list (all matches) ─────────────────────────────────────────────────
+# Title placeholders: %page%, %pages%
+admin-list:
+  title: "&4&lAdmin · All Matches &8(%page%/%pages%)"
+  size: 54
+  buttons:
+    previous-page:
+      slot: 45
+      material: ARROW
+      name: "&e◀ Previous Page"
+      lore: ["&8Go to page %target%."]
+      glint: false
+    next-page:
+      slot: 53
+      material: ARROW
+      name: "&eNext Page ▶"
+      lore: ["&8Go to page %target%."]
+      glint: false
+    back:
+      slot: 48
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to the main menu."]
+      glint: false
+    close:
+      slot: 49
+      material: BARRIER
+      name: "&c&lClose"
+      lore: []
+      glint: false
+    refresh:
+      slot: 50
+      material: SPYGLASS
+      name: "&b&lRefresh"
+      lore: ["&8Update live status."]
+      glint: false
+    empty:
+      slot: 22
+      material: LIGHT_GRAY_STAINED_GLASS_PANE
+      name: "&7No active matches"
+      lore: ["&8Nobody is hosting right now."]
+      glint: false
+  items:
+    # Shown as the host's player head. %arena%, %owner%
+    session:
+      name: "&f&l%arena%"
+      lore: ["&7Host: &f%owner%"]
+      glint: false
+
+# ── Match controls ───────────────────────────────────────────────────────────
+# Title placeholders: %arena%
+controls:
+  title: "&1&lMatch Controls &8· %arena%"
+  size: 45
+  buttons:
+    # Live status card. %arena%; status lines are appended from lang.yml.
+    status-card:
+      slot: 4
+      material: FILLED_MAP
+      name: "&b&l%arena%"
+      lore: []
+      glint: false
+    settings:
+      slot: 13
+      material: CRAFTING_TABLE
+      name: "&e&lArena Settings"
+      lore:
+        - "&7Configure event timings and"
+        - "&7the in-match shop."
+        - "&8"
+        - "&8▶ Click to open"
+      glint: false
+    manage-teams:
+      slot: 15
+      material: WHITE_BANNER
+      name: "&e&lManage Teams"
+      lore:
+        - "&7Move players between teams"
+        - "&7while the arena is in its lobby."
+        - "&8"
+        - "%availability%"
+      glint: false
+    # %policy% and %policy_desc% describe the fixed join policy.
+    policy:
+      slot: 19
+      material: NAME_TAG
+      name: "&e&lJoin Policy: %policy%"
+      lore:
+        - "%policy_desc%"
+        - "&8"
+        - "&8Set when the arena was created."
+      glint: false
+    start-lobby:
+      slot: 20
+      material: LIME_CONCRETE
+      name: "&a&lStart Match"
+      lore:
+        - "&7Begin the match right now."
+        - "%remote_note%"
+        - "&8▶ Click"
+      glint: false
+    start-running:
+      slot: 20
+      material: CLOCK
+      name: "&7&lStart Match"
+      lore:
+        - "&7The match has already begun."
+      glint: false
+    public-on:
+      slot: 22
+      material: LIME_DYE
+      name: "&a&lPublic"
+      lore:
+        - "&7Anyone with the code can join."
+        - "&7Code: &f%code%"
+        - "&8▶ Click to toggle"
+      glint: false
+    public-off:
+      slot: 22
+      material: RED_DYE
+      name: "&c&lLocked"
+      lore:
+        - "&7Joining is disabled."
+        - "&7Code: &f%code%"
+        - "&8▶ Click to toggle"
+      glint: false
+    summon-party:
+      slot: 22
+      material: ENDER_PEARL
+      name: "&e&lSummon Party"
+      lore:
+        - "&7Pull your online party members"
+        - "&7into this lobby."
+        - "&8▶ Click"
+      glint: false
+    regenerate-code:
+      slot: 24
+      material: TRIPWIRE_HOOK
+      name: "&e&lRegenerate Code"
+      lore:
+        - "&7Invalidate the current code and"
+        - "&7generate a fresh one."
+        - "&8▶ Click"
+      glint: false
+    go-to-arena:
+      slot: 30
+      material: COMPASS
+      name: "&b&lGo to Arena"
+      lore:
+        - "&7Teleport / connect to this match."
+        - "&8▶ Click"
+      glint: false
+    kick-all:
+      slot: 31
+      material: IRON_SWORD
+      name: "&c&lKick All Players"
+      lore:
+        - "&7Remove every player and spectator"
+        - "&7from the arena (except you)."
+        - "&7The match itself keeps running."
+        - "&8"
+        - "&8▶ Click to kick everyone"
+      glint: false
+    end-match:
+      slot: 32
+      material: TNT
+      name: "&c&lEnd Match"
+      lore:
+        - "&7Close this private match and"
+        - "&7release the arena."
+        - "&8▶ Click"
+      glint: false
+    quick-actions:
+      slot: 34
+      material: REDSTONE_TORCH
+      name: "&e&lQuick Actions"
+      lore:
+        - "&7Handy one-click shortcuts"
+        - "&7for managing this match."
+        - "&8"
+        - "&8▶ Click to open"
+      glint: false
+    back:
+      slot: 36
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["%back_hint%"]
+      glint: false
+    close:
+      slot: 44
+      material: BARRIER
+      name: "&c&lClose"
+      lore: []
+      glint: false
+
+# ── Quick actions ────────────────────────────────────────────────────────────
+# One-click shortcuts, mostly the powers MBedwars reserves for its debug
+# commands, driven safely through its API. Title placeholders: %arena%
+quick-actions:
+  title: "&1&lQuick Actions &8· %arena%"
+  size: 36
+  buttons:
+    regenerate-map:
+      slot: 10
+      material: GRASS_BLOCK
+      name: "&a&lRegenerate Map"
+      lore:
+        - "&7Rebuild the arena to a pristine state"
+        - "&7— placed blocks, broken blocks and"
+        - "&7ground items all reset."
+        - "&8"
+        - "&fPlayers are kept&7: everyone is put"
+        - "&7back into the fresh lobby, on the"
+        - "&7same teams."
+        - "&8"
+        - "&8▶ Click to regenerate"
+      glint: false
+    heal-all:
+      slot: 12
+      material: GOLDEN_APPLE
+      name: "&6&lHeal Everyone"
+      lore:
+        - "&7Fully restore the health, hunger"
+        - "&7and fire status of every player"
+        - "&7in the match."
+        - "&8"
+        - "&8▶ Click to heal"
+      glint: false
+    drop-spawners:
+      slot: 14
+      material: DIAMOND
+      name: "&b&lTrigger All Generators"
+      lore:
+        - "&7Make every resource generator in"
+        - "&7the arena drop immediately —"
+        - "&7one bonus round of resources."
+        - "&8"
+        - "&8▶ Click to drop"
+      glint: false
+    destroy-beds:
+      slot: 16
+      material: RED_BED
+      name: "&c&lSudden Death"
+      lore:
+        - "&7Destroy &fevery&7 remaining bed."
+        - "&7No more respawns for anyone —"
+        - "&7last team standing wins."
+        - "&8"
+        - "&8▶ Click to destroy all beds"
+      glint: true
+    clear-items:
+      slot: 20
+      material: HOPPER
+      name: "&e&lClear Ground Items"
+      lore:
+        - "&7Remove every dropped item lying"
+        - "&7in the arena (lag cleanup)."
+        - "&8"
+        - "&8▶ Click to clear"
+      glint: false
+    skip-event:
+      slot: 24
+      material: ENDER_EYE
+      name: "&d&lSkip to Next Event"
+      lore:
+        - "&7Fire the next timeline event"
+        - "&7(e.g. Diamond II) right now"
+        - "&7instead of waiting for it."
+        - "&8"
+        - "&8▶ Click to skip ahead"
+      glint: false
+    back:
+      slot: 31
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to match controls."]
+      glint: false
+
+# ── Arena settings hub ───────────────────────────────────────────────────────
+# Title placeholders: %arena%
+arena-config:
+  title: "&1&lArena Settings &8· %arena%"
+  size: 27
+  buttons:
+    event-timeline:
+      slot: 10
+      material: CLOCK
+      name: "&e&lEvent Timeline"
+      lore:
+        - "&7Control when generator upgrades"
+        - "&7(Diamond II, Emerald II, …) happen"
+        - "&7and how long the match lasts."
+        - "&8"
+        - "&8▶ Click to edit"
+      glint: false
+    shop-config:
+      slot: 12
+      material: EMERALD
+      name: "&a&lShop Items"
+      lore:
+        - "&7Disable specific shop items for"
+        - "&7this match, or change what they"
+        - "&7cost."
+        - "&8"
+        - "&8▶ Click to configure"
+      glint: false
+    presets:
+      slot: 14
+      material: BOOK
+      name: "&6&lSaved Configurations"
+      lore:
+        - "&7Save this match's timeline and"
+        - "&7shop setup, or apply one you"
+        - "&7saved earlier."
+        - "&8"
+        - "&8▶ Click to manage"
+      glint: false
+    cosmetics-unavailable:
+      slot: 16
+      material: ENDER_CHEST
+      name: "&8✦ &7Cosmetics &8(Unavailable)"
+      lore:
+        - "&8MBedwars exposes no cosmetics API,"
+        - "&8so per-match cosmetic control isn't"
+        - "&8possible yet."
+      glint: false
+    back:
+      slot: 22
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to match controls."]
+      glint: false
+
+# ── Saved configurations (presets) ──────────────────────────────────────────
+# Title placeholders: %arena%
+# The interior lists one item per saved configuration — click to apply it to
+# this match, shift-click to delete it. Save Current Setup snapshots the
+# match's timeline and shop settings; it hides once the preset cap is reached.
+presets:
+  title: "&1&lSaved Configurations &8· %arena%"
+  size: 54
+  buttons:
+    info:
+      slot: 4
+      material: BOOK
+      name: "&6&lSaved Configurations"
+      lore:
+        - "&7A saved configuration stores a match's"
+        - "&7event timeline and shop overrides so"
+        - "&7you can reuse them in later matches."
+        - "&8"
+        - "&8▶ Click a preset to apply it"
+        - "&8▶ Shift-click a preset to delete it"
+      glint: false
+    empty:
+      slot: 22
+      material: LIGHT_GRAY_STAINED_GLASS_PANE
+      name: "&7No saved configurations"
+      lore:
+        - "&8You haven't saved anything yet."
+        - "&8Use &fSave Current Setup&8 below."
+      glint: false
+    save-current:
+      slot: 49
+      material: EMERALD
+      name: "&a&lSave Current Setup"
+      lore:
+        - "&7Snapshot this match's timeline and"
+        - "&7shop settings as a new preset."
+        - "&8"
+        - "&8▶ Click to save"
+      glint: false
+    back:
+      slot: 48
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to arena settings."]
+      glint: false
+  items:
+    # One entry per saved configuration.
+    # %name%, %timeline% (summary line below), %disabled%, %priced%.
+    preset:
+      material: PAPER
+      name: "&f&l%name%"
+      lore:
+        - "&8"
+        - "%timeline%"
+        - "&7Disabled items: &f%disabled%"
+        - "&7Price overrides: &f%priced%"
+        - "&8"
+        - "&8▶ Click to apply"
+        - "&8▶ Shift-click to delete"
+      glint: false
+  # The %timeline% summary line on each preset item. Custom: %events%.
+  summary-default-timeline: "&8Default timeline"
+  summary-custom-timeline: "&7Custom timeline &8(%events% events)"
+
+# ── Event timeline editor ────────────────────────────────────────────────────
+# Title placeholders: %arena%
+# The interior top two rows show the events left→right in match order. Click
+# an event to select it; the editor controls appear on the bottom row.
+timeline:
+  title: "&1&lEvent Timeline &8· %arena%"
+  size: 54
+  buttons:
+    info:
+      slot: 4
+      material: KNOWLEDGE_BOOK
+      name: "&b&lHow this works"
+      lore:
+        - "&7Events fire this many minutes after"
+        - "&7the match starts, from left to right."
+        - "&8"
+        - "&7• &fClick&7 an event to select it, then"
+        - "&7  use the buttons below to move it."
+        - "&7• &fMatch End&7 can be moved but never"
+        - "&7  deleted — shortening the match"
+        - "&7  rescales the other events with it."
+        - "&8"
+        - "&7Changes apply when the match starts."
+      glint: false
+    minus-minute:
+      slot: 37
+      material: RED_CONCRETE
+      name: "&c&l-1 Minute"
+      lore: ["&7Move &f%event%&7 one minute earlier."]
+      glint: false
+    minus-seconds:
+      slot: 38
+      material: RED_TERRACOTTA
+      name: "&c-5 Seconds"
+      lore: ["&7Move &f%event%&7 five seconds earlier."]
+      glint: false
+    delete:
+      slot: 40
+      material: LAVA_BUCKET
+      name: "&4&lDelete Event"
+      lore:
+        - "&7Remove &f%event%&7 from this match"
+        - "&7entirely — it will never fire."
+      glint: false
+    plus-seconds:
+      slot: 42
+      material: LIME_TERRACOTTA
+      name: "&a+5 Seconds"
+      lore: ["&7Move &f%event%&7 five seconds later."]
+      glint: false
+    plus-minute:
+      slot: 43
+      material: LIME_CONCRETE
+      name: "&a&l+1 Minute"
+      lore: ["&7Move &f%event%&7 one minute later."]
+      glint: false
+    reset:
+      slot: 49
+      material: TNT_MINECART
+      name: "&e&lReset to Defaults"
+      lore:
+        - "&7Restore the default timings and"
+        - "&7bring back deleted events."
+        - "&8▶ Click to reset"
+      glint: false
+    back:
+      slot: 45
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to arena settings."]
+      glint: false
+    close:
+      slot: 53
+      material: BARRIER
+      name: "&c&lClose"
+      lore: []
+      glint: false
+  items:
+    # A regular timeline event. %event%, %time% (m:ss from match start),
+    # %effect% (what it does, from config.yml's description).
+    event:
+      name: "&e&l%event%"
+      lore:
+        - "&7Fires at: &f%time%&7 into the match"
+        - "&7Effect: %effect%"
+        - "&8"
+        - "&8▶ Click to select & edit"
+      glint: false
+    # The same event while selected in the editor.
+    event-selected:
+      name: "&a&l%event% &7(selected)"
+      lore:
+        - "&7Fires at: &f%time%&7 into the match"
+        - "&7Effect: %effect%"
+        - "&8"
+        - "&8Use the buttons below to move or"
+        - "&8delete it. Click again to deselect."
+      glint: true
+    # Match End — always the last item on the timeline. %time%, %effect%
+    match-end:
+      name: "&c&lMatch End"
+      lore:
+        - "&7The match ends at: &f%time%"
+        - "&7Effect: %effect%"
+        - "&8"
+        - "&7Moving this &fearlier&7 rescales every"
+        - "&7other event to fit the shorter match."
+        - "&8"
+        - "&8▶ Click to select & move (can't delete)"
+      glint: false
+    match-end-selected:
+      name: "&a&lMatch End &7(selected)"
+      lore:
+        - "&7The match ends at: &f%time%"
+        - "&7Effect: %effect%"
+        - "&8"
+        - "&7Moving this &fearlier&7 rescales every"
+        - "&7other event to fit the shorter match."
+        - "&8"
+        - "&8Use the buttons below to move it."
+      glint: true
+
+# ── Shop configuration: page list ────────────────────────────────────────────
+# Title placeholders: %arena%
+shop-pages:
+  title: "&1&lShop Config &8· %arena%"
+  size: 36
+  buttons:
+    info:
+      slot: 4
+      material: KNOWLEDGE_BOOK
+      name: "&b&lHow this works"
+      lore:
+        - "&7Pick a shop page to see its items."
+        - "&8"
+        - "&7• &fClick&7 an item to disable/enable it"
+        - "&7  for this match."
+        - "&7• &fShift-click&7 an item to change its"
+        - "&7  price and currency."
+      glint: false
+    reset:
+      slot: 31
+      material: TNT_MINECART
+      name: "&e&lReset All Shop Changes"
+      lore:
+        - "&7Re-enable every item and restore"
+        - "&7all default prices."
+        - "&8▶ Click to reset"
+      glint: false
+    back:
+      slot: 27
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to arena settings."]
+      glint: false
+  items:
+    # One entry per MBedwars shop page. %page%, %total% items, %disabled% of them disabled.
+    page:
+      name: "&e&l%page%"
+      lore:
+        - "&7Items: &f%total%"
+        - "&7Disabled here: &c%disabled%"
+        - "&8"
+        - "&8▶ Click to configure"
+      glint: false
+
+# ── Shop configuration: items of one page ────────────────────────────────────
+# Title placeholders: %arena%, %page%, plus %pagenum%/%pages% for pagination
+shop-items:
+  title: "&1&l%page% &8· %pagenum%/%pages%"
+  size: 54
+  buttons:
+    previous-page:
+      slot: 45
+      material: ARROW
+      name: "&e◀ Previous Page"
+      lore: ["&8Go to page %target%."]
+      glint: false
+    next-page:
+      slot: 53
+      material: ARROW
+      name: "&eNext Page ▶"
+      lore: ["&8Go to page %target%."]
+      glint: false
+    back:
+      slot: 49
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to the page list."]
+      glint: false
+  items:
+    # An enabled item. %item%, %price% (e.g. "4 Iron"), %default_price%
+    item-enabled:
+      name: "&a%item%"
+      lore:
+        - "&7Status: &aEnabled"
+        - "&7Price: &f%price%"
+        - "%custom_note%"
+        - "&8"
+        - "&8▶ Click to disable"
+        - "&8▶ Shift-click to change the price"
+      glint: false
+    # A disabled item — glints red-ish via the barrier lore emphasis.
+    item-disabled:
+      name: "&c%item% &7(disabled)"
+      lore:
+        - "&7Status: &cDisabled for this match"
+        - "&7Players cannot buy this item."
+        - "&8"
+        - "&8▶ Click to re-enable"
+      glint: true
+
+# ── Shop configuration: price editor for one item ────────────────────────────
+# Title placeholders: %item%
+shop-price:
+  title: "&1&lPrice &8· %item%"
+  size: 45
+  buttons:
+    # The item being edited is shown at this slot with its own icon.
+    display:
+      slot: 13
+      material: CHEST
+      name: "&f&l%item%"
+      lore:
+        - "&7Editing this item's price."
+        - "&7Default: &f%default_price%"
+      glint: true
+    currency:
+      slot: 21
+      material: SUNFLOWER
+      name: "&e&lCurrency: &f%currency%"
+      lore:
+        - "&7What players pay with."
+        - "&8"
+        - "&8▶ Click to cycle (iron, gold, …)"
+      glint: false
+    reset:
+      slot: 23
+      material: TNT_MINECART
+      name: "&e&lReset Price"
+      lore:
+        - "&7Restore this item's default price."
+        - "&8▶ Click to reset"
+      glint: false
+    minus-ten:
+      slot: 28
+      material: RED_CONCRETE
+      name: "&c&l-10"
+      lore: ["&7Lower the price by ten."]
+      glint: false
+    minus-one:
+      slot: 29
+      material: RED_TERRACOTTA
+      name: "&c-1"
+      lore: ["&7Lower the price by one."]
+      glint: false
+    # %amount%, %currency%
+    amount:
+      slot: 31
+      material: NAME_TAG
+      name: "&f&lPrice: &e%amount% %currency%"
+      lore:
+        - "&7This is what players will pay"
+        - "&7for one purchase."
+      glint: false
+    plus-one:
+      slot: 33
+      material: LIME_TERRACOTTA
+      name: "&a+1"
+      lore: ["&7Raise the price by one."]
+      glint: false
+    plus-ten:
+      slot: 34
+      material: LIME_CONCRETE
+      name: "&a&l+10"
+      lore: ["&7Raise the price by ten."]
+      glint: false
+    back:
+      slot: 36
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to the item list."]
+      glint: false
+
+# ── Match builder ────────────────────────────────────────────────────────────
+builder:
+  title: "&1&lNew Private Match"
+  size: 27
+  buttons:
+    party-blocked:
+      slot: 13
+      material: BARRIER
+      name: "&c&lLeave Your Party"
+      lore:
+        - "&7You're in someone else's party."
+        - "&8"
+        - "&7Only a party's &fleader&7 can host a"
+        - "&7Party-policy match, and members can't"
+        - "&7host a Join Code match either — join"
+        - "&7your leader's match instead, or leave"
+        - "&7the party to host your own."
+        - "&8"
+        - "&8▶ Try &f/ea join &8to join your leader's match"
+      glint: false
+    # %map% is the selected arena or the not-selected notice.
+    select-map:
+      slot: 10
+      material: FILLED_MAP
+      name: "&b&lSelect Map"
+      lore:
+        - "&7Current: %map%"
+        - "&8"
+        - "&8▶ Click to choose"
+      glint: false
+    # %policy%, %policy_desc%, %policy_reason%
+    policy:
+      slot: 12
+      material: NAME_TAG
+      name: "&e&lJoin Policy"
+      lore:
+        - "&7Mode: %policy%"
+        - "&8"
+        - "%policy_desc%"
+        - "&8"
+        - "%policy_reason%"
+        - "&8Automatic — based on your party leadership."
+      glint: false
+    # %code%
+    public-on:
+      slot: 14
+      material: LIME_DYE
+      name: "&a&lPublic"
+      lore:
+        - "&7Anyone with the code can join."
+        - "&7Code: &f%code%"
+        - "&8▶ Click to toggle"
+      glint: false
+    public-off:
+      slot: 14
+      material: RED_DYE
+      name: "&c&lPrivate"
+      lore:
+        - "&7Joining is disabled until you open it."
+        - "&7Code: &f%code%"
+        - "&8▶ Click to toggle"
+      glint: false
+    # %map%
+    create-ready:
+      slot: 16
+      material: LIME_CONCRETE
+      name: "&a&lCreate & Join"
+      lore:
+        - "&7Create your match on &f%map%"
+        - "&8"
+        - "&8▶ Click to create and join"
+        - "&8▶ Shift-click to create without joining"
+      glint: true
+    create-not-ready:
+      slot: 16
+      material: GRAY_CONCRETE
+      name: "&7&lCreate & Join"
+      lore:
+        - "&8Select a map first."
+      glint: false
+    back:
+      slot: 18
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to your matches."]
+      glint: false
+    close:
+      slot: 26
+      material: BARRIER
+      name: "&c&lClose"
+      lore: []
+      glint: false
+
+# ── Arena selector ───────────────────────────────────────────────────────────
+# Title placeholders: %page%, %pages%
+arena-select:
+  title: "&1&lSelect Map &8(%page%/%pages%)"
+  size: 54
+  buttons:
+    previous-page:
+      slot: 45
+      material: ARROW
+      name: "&e◀ Previous Page"
+      lore: ["&8Go to page %target%."]
+      glint: false
+    next-page:
+      slot: 53
+      material: ARROW
+      name: "&eNext Page ▶"
+      lore: ["&8Go to page %target%."]
+      glint: false
+    # %current% is the active filter value or "Any". %hint% explains the click.
+    team-filter:
+      slot: 46
+      material: IRON_SWORD
+      name: "&e&lTeams Filter"
+      lore:
+        - "&7Current: &f%current%"
+        - "&8"
+        - "%hint%"
+      glint: false
+    players-filter:
+      slot: 47
+      material: LEATHER_CHESTPLATE
+      name: "&e&lPlayers/Team Filter"
+      lore:
+        - "&7Current: &f%current%"
+        - "&8"
+        - "%hint%"
+      glint: false
+    back:
+      slot: 49
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to the builder."]
+      glint: false
+    empty:
+      slot: 22
+      material: LIGHT_GRAY_STAINED_GLASS_PANE
+      name: "&7No arenas match"
+      lore: ["%reason%"]
+      glint: false
+  items:
+    # Selectable arena. %arena%, %location% (Local/Remote), %teams%, %per_team%
+    arena:
+      name: "&a%arena%"
+      lore:
+        - "&8Location: %location%"
+        - "&7Teams: &f%teams% &8• &7Per team: &f%per_team%"
+        - "&8"
+        - "&8▶ Click to select"
+      glint: false
+    arena-reserved:
+      name: "&7%arena%"
+      lore:
+        - "&8Location: %location%"
+        - "&7Teams: &f%teams% &8• &7Per team: &f%per_team%"
+        - "&8"
+        - "&cAlready reserved."
+      glint: false
+
+# ── Team select ──────────────────────────────────────────────────────────────
+# Title placeholders: %arena%
+team-select:
+  title: "&1&lManage Teams &8· %arena%"
+  size: 54
+  buttons:
+    back:
+      slot: 49
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to match controls."]
+      glint: false
+    unavailable:
+      slot: 31
+      material: BARRIER
+      name: "&cUnavailable"
+      lore: ["%reason%"]
+      glint: false
+    empty:
+      slot: 31
+      material: LIGHT_GRAY_STAINED_GLASS_PANE
+      name: "&7No teams enabled"
+      lore: ["&8This arena has no enabled teams."]
+      glint: false
+  items:
+    # One entry per team (uses the team's own wool/icon). %team%, %current%, %cap%
+    team:
+      name: "%team%"
+      lore:
+        - "&7Players: &f%current%&7/&f%cap%"
+        - "&8"
+        - "%roster%"
+        - "&8"
+        - "%hint%"
+      glint: false
+
+# ── Team player picker ───────────────────────────────────────────────────────
+# Title placeholders: %team%, %current%, %cap%
+team-players:
+  title: "&1&lMove to %team% &8(%current%/%cap%)"
+  title-overflow: "&c&lUn-select a player first!"
+  size: 54
+  buttons:
+    remaining:
+      slot: 45
+      material: LIGHT_GRAY_STAINED_GLASS_PANE
+      name: "&7Remaining slots: &f%remaining%"
+      lore: ["&8%cap% players max per team."]
+      glint: false
+    confirm:
+      slot: 48
+      material: EMERALD_BLOCK
+      name: "&a&lMove %count% Selected Player(s)"
+      lore:
+        - "&7Move everyone selected onto"
+        - "&7%team%&7."
+        - "&8▶ Click to confirm"
+      glint: true
+    back:
+      slot: 49
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to team selection."]
+      glint: false
+    unavailable:
+      slot: 31
+      material: BARRIER
+      name: "&cArena unavailable"
+      lore: ["&7This arena isn't loaded on this server."]
+      glint: false
+    empty:
+      slot: 31
+      material: LIGHT_GRAY_STAINED_GLASS_PANE
+      name: "&7No players to move"
+      lore: ["&8Everyone eligible is already on this team."]
+      glint: false
+  items:
+    # A candidate player head. %player%, %team% (their current team or "None")
+    candidate:
+      name: "&f&l%player%"
+      lore:
+        - "&7Current team: %team%"
+        - "&8"
+        - "&8▶ Click to move here"
+        - "&8▶ Shift-click to select multiple"
+      glint: false
+    candidate-selected:
+      name: "&a&l%player%"
+      lore:
+        - "&7Current team: %team%"
+        - "&8"
+        - "&a✔ Selected"
+        - "&8▶ Click to un-select"
+      glint: true
+
+# ── Help ─────────────────────────────────────────────────────────────────────
+help:
+  title: "&1&lHelp"
+  size: 36
+  buttons:
+    cmd-menu:
+      slot: 10
+      material: BEACON
+      name: "&b/ea"
+      lore: ["&7Open the main menu."]
+      glint: false
+    cmd-create:
+      slot: 11
+      material: EMERALD
+      name: "&b/ea create"
+      lore:
+        - "&7Jump straight to the match builder."
+        - "&8"
+        - "&7Or skip it: &f/ea create <map> [nojoin]"
+      glint: false
+    cmd-list:
+      slot: 12
+      material: CHEST
+      name: "&b/ea list"
+      lore: ["&7Manage the matches you host."]
+      glint: false
+    cmd-join:
+      slot: 13
+      material: NAME_TAG
+      name: "&b/ea join &f<code>"
+      lore: ["&7Join a private match by its code."]
+      glint: false
+    cmd-start:
+      slot: 14
+      material: LIME_CONCRETE
+      name: "&b/ea start"
+      lore: ["&7Start the match right now (host)."]
+      glint: false
+    cmd-end:
+      slot: 15
+      material: TNT
+      name: "&b/ea end"
+      lore: ["&7End your private match (host)."]
+      glint: false
+    cmd-summon:
+      slot: 16
+      material: ENDER_PEARL
+      name: "&b/ea summon"
+      lore: ["&7Summon your party (Party policy)."]
+      glint: false
+    cmd-quick:
+      slot: 19
+      material: BLAZE_POWDER
+      name: "&b/ea &fregen&8/&fheal&8/&fdrop&8/&fbeds"
+      lore:
+        - "&7Quick actions for the live match (host):"
+        - "&8 • &f/ea regen &7— reset the map, keep everyone"
+        - "&8 • &f/ea heal &7— heal every player"
+        - "&8 • &f/ea drop &7— trigger every generator"
+        - "&8 • &f/ea beds &7— sudden death"
+        - "&8 • &f/ea clearitems &7— clear dropped items"
+        - "&8 • &f/ea skipevent &7— fire the next event now"
+      glint: false
+    cmd-timeline:
+      slot: 20
+      material: CLOCK
+      name: "&b/ea timeline"
+      lore:
+        - "&7Edit this match's event timings:"
+        - "&8 • &flist &7— show every event"
+        - "&8 • &fmove <event> <±time> &7— shift an event"
+        - "&8 • &fset <event> <time> &7— set an exact time"
+        - "&8 • &fdelete <event> &7• &freset"
+      glint: false
+    cmd-shop:
+      slot: 21
+      material: RED_DYE
+      name: "&b/ea shop"
+      lore:
+        - "&7Customize this match's shop:"
+        - "&8 • &flist &7— show your overrides"
+        - "&8 • &fdisable&8/&fenable <item>"
+        - "&8 • &fprice <item> <amount> [currency]"
+        - "&8 • &fresetprice <item> &7• &freset"
+      glint: false
+    cmd-preset:
+      slot: 22
+      material: PAPER
+      name: "&b/ea preset"
+      lore:
+        - "&7Saved arena configurations:"
+        - "&8 • &flist &7— show your saved setups"
+        - "&8 • &fsave [name] &7— snapshot this match"
+        - "&8 • &fapply <name> &7— load onto this match"
+        - "&8 • &fdelete <name>"
+      glint: false
+    cmd-team:
+      slot: 23
+      material: WHITE_BANNER
+      name: "&b/ea team &f<player> <team>"
+      lore: ["&7Move a lobby player onto a team (host)."]
+      glint: false
+    cmd-access:
+      slot: 24
+      material: TRIPWIRE_HOOK
+      name: "&b/ea &fcode&8/&fpublic&8/&fkick&8/&fgoto"
+      lore:
+        - "&8 • &f/ea code &7— regenerate the join code"
+        - "&8 • &f/ea public [on|off] &7— open/lock joining"
+        - "&8 • &f/ea kick [keephost] &7— clear the arena"
+        - "&8 • &f/ea goto &7— go to your arena"
+      glint: false
+    back:
+      slot: 31
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to the main menu."]
+      glint: false

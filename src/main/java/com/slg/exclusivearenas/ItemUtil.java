@@ -100,6 +100,23 @@ public final class ItemUtil {
         return button(mat, "&r");
     }
 
+    /**
+     * Forces an enchantment glint onto the item. The modern glint override should be enough
+     * on its own, but a real (hidden) enchant is the long-battle-tested fallback in case the
+     * override alone doesn't render for every client/version.
+     */
+    public static ItemStack glint(ItemStack item) {
+        if (item == null) return null;
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.addEnchant(Enchantment.UNBREAKING, 1, true);
+            meta.setEnchantmentGlintOverride(true);
+            meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+            item.setItemMeta(meta);
+        }
+        return item;
+    }
+
     /** Stub item for features planned but not yet implemented. */
     public static ItemStack stub(String name, String description) {
         return button(Material.CLOCK, "&8✦ &7" + name + " &8(Soon)",
