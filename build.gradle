@@ -14,6 +14,9 @@ repositories {
 dependencies {
     compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
     compileOnly files('libs/MBedwars.jar')
+    // Optional at runtime (softdepend) — only the TweaksTimelineBridge class touches it,
+    // and that class is never loaded unless the MBedwarsTweaks plugin is present.
+    compileOnly files('libs/MBedwarsTweaks-5.0.2.jar')
 
     // Shaded into the plugin jar — this is our own, standalone cross-server store.
     implementation 'org.mariadb.jdbc:mariadb-java-client:3.5.3'
