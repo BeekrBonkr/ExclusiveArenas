@@ -216,7 +216,7 @@ public final class TweaksTimelineBridge implements Listener {
         if (session == null) return; // public match — Tweaks runs untouched
 
         ArenaQueueState state = queues.computeIfAbsent(key(arena),
-                k -> new ArenaQueueState(new ArrayDeque<>(timelines.effectiveTimeline(session))));
+                k -> new ArenaQueueState(new ArrayDeque<>(timelines.effectiveTimeline(session.getSettings()))));
 
         // Only consume the next queued entry once Tweaks' own state shows a tier actually
         // completed since we last looked — a repeat call for the same upcoming tier (whatever

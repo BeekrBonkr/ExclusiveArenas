@@ -45,7 +45,10 @@ public final class PresetService {
     public void list(UUID owner, Consumer<LinkedHashMap<String, String>> callback) {
         Database db = plugin.getDatabase();
         if (db == null) {
-            callback.accept(loadFromFile(owner));
+            LinkedHashMap<String, String> fromFile = loadFromFile(owner);
+            plugin.debug("presets: list(" + owner + ") [file] -> " + fromFile.size()
+                    + " preset(s): " + fromFile.keySet());
+            callback.accept(fromFile);
             return;
         }
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
@@ -56,6 +59,8 @@ public final class PresetService {
                 plugin.getLogger().warning("Could not load presets for " + owner + ": " + e.getMessage());
                 presets = new LinkedHashMap<>();
             }
+            plugin.debug("presets: list(" + owner + ") [database] -> " + presets.size()
+                    + " preset(s): " + presets.keySet());
             LinkedHashMap<String, String> result = presets;
             Bukkit.getScheduler().runTask(plugin, () -> callback.accept(result));
         });
@@ -81,13 +86,18 @@ public final class PresetService {
     public void save(UUID owner, String name, String settingsJson, Consumer<Boolean> callback) {
         Database db = plugin.getDatabase();
         if (db != null) {
-            db.upsertPreset(owner, name, settingsJson,
-                    ok -> Bukkit.getScheduler().runTask(plugin, () -> callback.accept(ok)));
+            db.upsertPreset(owner, name, settingsJson, ok -> Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.debug("presets: save(" + owner + ", " + name + ") [database] -> " + ok);
+                callback.accept(ok);
+            }));
             return;
         }
         YamlConfiguration store = fileStore();
         store.set(ownerPath(owner) + "." + name, settingsJson == null ? "" : settingsJson);
-        callback.accept(saveFile(store)); // file mode is synchronous — already on the caller's thread
+        boolean ok = saveFile(store); // file mode is synchronous — already on the caller's thread
+        plugin.debug("presets: save(" + owner + ", " + name + ") [file] -> " + ok
+                + " (path: " + file.getAbsolutePath() + ")");
+        callback.accept(ok);
     }
 
     public void delete(UUID owner, String name) {

@@ -481,6 +481,53 @@ arena-config:
       lore: ["&8Return to match controls."]
       glint: false
 
+# ── Arena settings hub, during creation (before the match exists) ────────────
+# Title placeholders: %arena%
+# Same three editors as the live Arena Settings hub above, but they edit the
+# builder's draft — applied to the arena the moment it's actually created.
+builder-settings:
+  title: "&1&lArena Settings &8· %arena%"
+  size: 27
+  buttons:
+    event-timeline:
+      slot: 10
+      material: CLOCK
+      name: "&e&lEvent Timeline"
+      lore:
+        - "&7Control when generator upgrades"
+        - "&7(Diamond II, Emerald II, …) happen"
+        - "&7and how long the match lasts."
+        - "&8"
+        - "&8▶ Click to edit"
+      glint: false
+    shop-config:
+      slot: 12
+      material: EMERALD
+      name: "&a&lShop Items"
+      lore:
+        - "&7Disable specific shop items for"
+        - "&7this match, or change what they"
+        - "&7cost."
+        - "&8"
+        - "&8▶ Click to configure"
+      glint: false
+    team-size:
+      slot: 14
+      material: WHITE_BANNER
+      name: "&d&lTeam Size"
+      lore:
+        - "&7Change how many players fit on"
+        - "&7each team for this match."
+        - "&8"
+        - "&8▶ Click to configure"
+      glint: false
+    back:
+      slot: 22
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to the builder."]
+      glint: false
+
 # ── Team size editor ─────────────────────────────────────────────────────────
 # Title placeholders: %arena%
 # Only editable while nobody but the host has joined the lobby yet — safe to
@@ -977,6 +1024,17 @@ builder:
       name: "&7&lCreate & Join"
       lore:
         - "&8Select a map first."
+      glint: false
+    arena-settings:
+      slot: 22
+      material: CRAFTING_TABLE
+      name: "&d&lArena Settings"
+      lore:
+        - "&7Configure event timings, shop"
+        - "&7prices, and team size before"
+        - "&7you create the match."
+        - "&8"
+        - "&8▶ Click to configure"
       glint: false
     back:
       slot: 18

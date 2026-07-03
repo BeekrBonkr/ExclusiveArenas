@@ -136,8 +136,8 @@ public final class TimelineService {
      * The session's timeline sorted by time, Match End guaranteed present and last.
      * Custom entries whose definition no longer exists in config are dropped.
      */
-    public List<SessionSettings.TimelineEntry> effectiveTimeline(PrivateSession session) {
-        List<SessionSettings.TimelineEntry> custom = session.getSettings().getTimeline();
+    public List<SessionSettings.TimelineEntry> effectiveTimeline(SessionSettings settings) {
+        List<SessionSettings.TimelineEntry> custom = settings.getTimeline();
 
         List<SessionSettings.TimelineEntry> out = new ArrayList<>();
         if (custom == null) {
@@ -171,8 +171,8 @@ public final class TimelineService {
      *
      * @return the event's new time in seconds, or -1 if the event wasn't found.
      */
-    public int moveEvent(PrivateSession session, String eventId, int deltaSeconds) {
-        List<SessionSettings.TimelineEntry> timeline = effectiveTimeline(session);
+    public int moveEvent(SessionSettings settings, String eventId, int deltaSeconds) {
+        List<SessionSettings.TimelineEntry> timeline = effectiveTimeline(settings);
         int idx = indexOf(timeline, eventId);
         if (idx < 0) return -1;
 
@@ -207,29 +207,29 @@ public final class TimelineService {
                 }
             }
             sortWithEndLast(rescaled);
-            session.getSettings().setTimeline(rescaled);
+            settings.setTimeline(rescaled);
             return newEnd;
         }
 
         int newTime = clamp(oldTime + deltaSeconds, MIN_EVENT_SECONDS, endTime - SNAP_SECONDS);
         timeline.set(idx, new SessionSettings.TimelineEntry(eventId, newTime));
         sortWithEndLast(timeline);
-        session.getSettings().setTimeline(timeline);
+        settings.setTimeline(timeline);
         return newTime;
     }
 
-    /** Deletes an event from the session's timeline. Match End is refused. */
-    public boolean deleteEvent(PrivateSession session, String eventId) {
+    /** Deletes an event from the timeline. Match End is refused. */
+    public boolean deleteEvent(SessionSettings settings, String eventId) {
         if (eventId.equals(matchEndId)) return false;
-        List<SessionSettings.TimelineEntry> timeline = effectiveTimeline(session);
+        List<SessionSettings.TimelineEntry> timeline = effectiveTimeline(settings);
         if (!timeline.removeIf(e -> e.id().equals(eventId))) return false;
-        session.getSettings().setTimeline(timeline);
+        settings.setTimeline(timeline);
         return true;
     }
 
-    /** Reverts the session to the configured default timeline. */
-    public void resetTimeline(PrivateSession session) {
-        session.getSettings().setTimeline(null);
+    /** Reverts to the configured default timeline. */
+    public void resetTimeline(SessionSettings settings) {
+        settings.setTimeline(null);
     }
 
     // ── Formatting / parsing ───────────────────────────────────────────────────────
