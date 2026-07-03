@@ -22,10 +22,21 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
     private ExclusiveArenasAddon addon;
     private EaConfig eaConfig;
+    private VersionedYaml langYaml;
+    private VersionedYaml guisYaml;
     private DraftService draftService;
+    /** Players with a create-and-join in flight (past the async party check) — guards against a
+     *  double-click or double-command firing two overlapping creations for the same player. */
+    private final Set<UUID> creatingSessionFor = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private PrivateSessionService sessionService;
     private JoinTicketService ticketService;
     private GuiManager guiManager;
+    private TimelineService timelineService;
+    private EventTimelineEngine timelineEngine;
+    private QuickActionsService quickActions;
+    private TweaksTimelineBridge tweaksBridge; // null unless MBedwarsTweaks provides the timeline
+    private PresetService presetService;
+    private org.bukkit.scheduler.BukkitTask guiRefreshTask;
     private Database database;   // null when running single-server (database.enabled = false)
     private SyncService syncService;
     private RemoteCommandService remoteCommandService;
@@ -48,12 +59,19 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
         this.eaConfig = new EaConfig(this, addon.getDataFolder());
         this.eaConfig.load();
+        loadLangAndGuis();
 
         this.draftService   = new DraftService();
         this.sessionService = new PrivateSessionService();
         this.ticketService  = new JoinTicketService();
         this.remoteCommandService = new RemoteCommandService(this, sessionService);
+        this.timelineService = new TimelineService(getLogger());
+        this.timelineService.load(eaConfig);
         this.guiManager     = new GuiManager(this, draftService, sessionService);
+        this.quickActions   = new QuickActionsService(this);
+        this.timelineEngine = new EventTimelineEngine(this, sessionService, timelineService);
+        this.presetService  = new PresetService(this, addon.getDataFolder());
+        setupTweaksBridge();
 
         applyTunables();
 
@@ -73,16 +91,26 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                 new PrivacyLifecycleListener(this, sessionService), this);
         Bukkit.getPluginManager().registerEvents(
                 new GuiListener(this, draftService, sessionService, guiManager), this);
+        Bukkit.getPluginManager().registerEvents(timelineEngine, this);
+        Bukkit.getPluginManager().registerEvents(quickActions, this);
+        Bukkit.getPluginManager().registerEvents(
+                new ShopRulesListener(this, sessionService), this);
 
         // Periodic cleanup (every 30 seconds)
         new SessionCleanupTask(this, sessionService).runTaskTimer(this, 600L, 600L);
 
         // Finishes the join for anyone who ends up physically inside a private arena (e.g. after
         // a cross-server transfer) without MBedwars having actually registered them as playing.
-        new ArenaEntryGuardTask(sessionService).runTaskTimer(this, 60L, 60L);
+        // Runs at the same cadence as the ticket poller (database.ticket_poll_seconds, default
+        // 1s) — that poll is the dominant source of the race this recovers from, so sweeping
+        // any slower would just add avoidable extra delay on top of it. The sweep itself is a
+        // pure in-memory scan (no I/O), so the tighter interval costs nothing.
+        long entryGuardTicks = Math.max(20L, eaConfig.intNum("database.ticket_poll_seconds", 1) * 20L);
+        new ArenaEntryGuardTask(sessionService, ticketService).runTaskTimer(this, entryGuardTicks, entryGuardTicks);
 
         startAutoSummon();
         startBossBar();
+        startGuiRefresh();
         registerConditionVariable();
         registerLobbyItemHandlers();
 
@@ -175,8 +203,82 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         sessionService.setCodeLength(eaConfig.intNum("private.join_code_length", 6));
     }
 
+    /** Loads lang.yml and guis.yml (versioned, self-healing) and points the static accessors at them. */
+    private void loadLangAndGuis() {
+        this.langYaml = new VersionedYaml(this, addon.getDataFolder(), "lang.yml", 1, null);
+        this.langYaml.load();
+        Lang.init(langYaml);
+
+        this.guisYaml = new VersionedYaml(this, addon.getDataFolder(), "guis.yml", 2, (config, fromVersion) -> {
+            boolean changed = false;
+            if (fromVersion < 2) {
+                // v2 grew the Help menu a row (command reference cards for the new /ea
+                // subcommands). Only move values still at their v1 defaults — a server
+                // that re-laid-out its help menu keeps its layout (new cards land where
+                // the bundled default puts them; overlaps are theirs to arrange).
+                if (config.getInt("help.size", 27) == 27) {
+                    config.set("help.size", 36);
+                    changed = true;
+                }
+                if (config.getInt("help.buttons.back.slot", 22) == 22) {
+                    config.set("help.buttons.back.slot", 31);
+                    changed = true;
+                }
+            }
+            return changed;
+        });
+        this.guisYaml.load();
+        GuiStyle.init(guisYaml);
+    }
+
+    /**
+     * Hooks MBedwarsTweaks' gen tiers as the timeline backend when that plugin is present:
+     * the editor's defaults come from the Tweaks gen-tier config, and per-match custom
+     * timings are applied by rewriting Tweaks' own scheduling — which is what makes the
+     * scoreboard's next-event timer show them correctly. Set timeline.backend: internal
+     * to force the built-in engine even with Tweaks installed.
+     */
+    private void setupTweaksBridge() {
+        teardownTweaksBridge();
+        if ("internal".equalsIgnoreCase(eaConfig.str("timeline.backend", "auto"))) return;
+        if (Bukkit.getPluginManager().getPlugin("MBedwarsTweaks") == null) return;
+
+        this.tweaksBridge = TweaksTimelineBridge.tryCreate(this, sessionService, timelineService);
+        if (tweaksBridge != null) {
+            Bukkit.getPluginManager().registerEvents(tweaksBridge, this);
+            getLogger().info("MBedwarsTweaks detected — its gen tiers now provide the default "
+                    + "event timeline, and custom timings will show on the scoreboard.");
+        }
+    }
+
+    private void teardownTweaksBridge() {
+        if (tweaksBridge == null) return;
+        org.bukkit.event.HandlerList.unregisterAll(tweaksBridge);
+        tweaksBridge.shutdown();
+        tweaksBridge = null;
+    }
+
+    /** Re-renders open menus whose lore shows live data (status cards, timers) every second. */
+    private void startGuiRefresh() {
+        stopGuiRefresh();
+        this.guiRefreshTask = new GuiRefreshTask(this, sessionService, guiManager)
+                .runTaskTimer(this, 20L, 20L);
+    }
+
+    private void stopGuiRefresh() {
+        if (guiRefreshTask != null) {
+            guiRefreshTask.cancel();
+            guiRefreshTask = null;
+        }
+    }
+
+    /**
+     * Auto-summon is retired from the menus but kept in the code for a future release —
+     * the background sync task only runs when private.auto_summon_enabled is set.
+     */
     private void startAutoSummon() {
         stopAutoSummon();
+        if (!eaConfig.bool("private.auto_summon_enabled", false)) return;
         long period = Math.max(20L, eaConfig.intNum("private.auto_summon_poll_seconds", 5) * 20L);
         this.autoSummonTask = new AutoSummonTask(this, sessionService)
                 .runTaskTimer(this, period, period);
@@ -252,10 +354,14 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         teardownDatabase();
 
         eaConfig.load();
+        loadLangAndGuis();
+        timelineService.load(eaConfig);
+        setupTweaksBridge(); // re-applies Tweaks-derived defaults over the config ones
         applyTunables();
         setupDatabase();
         startAutoSummon(); // restart to pick up a changed poll interval
         startBossBar();    // restart to pick up a changed enabled/disabled setting
+        startGuiRefresh();
 
         // Push current in-memory state back to the (possibly reconnected) database so a poll
         // does not evict live matches that predate the reconnect.
@@ -275,6 +381,9 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     public void onDisable() {
         stopAutoSummon();
         stopBossBar();
+        stopGuiRefresh();
+        teardownTweaksBridge();
+        if (timelineEngine != null) timelineEngine.shutdown();
         unregisterConditionVariable();
         unregisterLobbyItemHandlers();
         teardownDatabase();
@@ -289,6 +398,47 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     public PrivateSessionService getSessionService(){ return sessionService; }
     public JoinTicketService getTicketService()     { return ticketService; }
     public GuiManager getGuiManager()               { return guiManager; }
+    public TimelineService getTimelineService()     { return timelineService; }
+    public EventTimelineEngine getTimelineEngine()  { return timelineEngine; }
+    public QuickActionsService getQuickActions()    { return quickActions; }
+    public TweaksTimelineBridge getTweaksBridge()   { return tweaksBridge; }
+    public PresetService getPresetService()         { return presetService; }
+    public Database getDatabase()                   { return database; }
+
+    /**
+     * Runs a host action against the session's arena: directly when the arena is on this
+     * server, otherwise relayed to whichever server hosts it via the shared database.
+     */
+    public void runArenaAction(Player actor, PrivateSession session, RemoteCommandService.Type type) {
+        runArenaAction(actor, session, type, null);
+    }
+
+    /** @param payload extra action detail, relayed verbatim cross-server (e.g. KICK_ALL "keep"). */
+    public void runArenaAction(Player actor, PrivateSession session, RemoteCommandService.Type type,
+                               String payload) {
+        Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        if (local != null && local.exists()) {
+            switch (type) {
+                case START_MATCH -> startMatchNow(actor, local, session);
+                case END_MATCH -> endMatch(session);
+                case KICK_ALL -> quickActions.kickAll(actor, session, local,
+                        RemoteCommandService.PAYLOAD_KEEP_HOST.equals(payload));
+                case QUICK_REGEN -> quickActions.regenerateKeepingPlayers(actor, session, local);
+                case QUICK_HEAL -> quickActions.healAll(actor, session, local);
+                case QUICK_DROP -> quickActions.dropAllSpawners(actor, session, local);
+                case QUICK_BEDS -> quickActions.destroyAllBeds(actor, session, local);
+                case QUICK_CLEAR -> quickActions.clearGroundItems(actor, session, local);
+                case QUICK_SKIP_EVENT -> quickActions.skipToNextEvent(actor, session, local);
+            }
+            return;
+        }
+        if (!remoteCommandService.isAvailable()) {
+            actor.sendMessage(Lang.msg("general.arena-other-server"));
+            return;
+        }
+        remoteCommandService.enqueue(type, session, payload);
+        actor.sendMessage(Lang.msg("quick.sent", "%arena%", session.getArenaName()));
+    }
 
     // ── Debug / limits ──────────────────────────────────────────────────────────
 
@@ -335,6 +485,23 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
      * at all (they should join their leader's match instead; see {@code /ea join}).
      */
     public void openBuilderMenu(Player p) {
+        resolveDraftPolicy(p, blocked -> {
+            guiManager.openBuilder(p);
+            if (blocked) {
+                p.sendMessage(Lang.msg("create.party-blocked"));
+            }
+        });
+    }
+
+    /**
+     * Resolves the host's join policy from their current party leadership and applies it to
+     * their draft — shared by the builder GUI and the headless {@code /ea create <map>}
+     * command so both derive the same Party/Join-Code/blocked outcome the same way.
+     *
+     * @param then receives {@code true} if the player is a non-leader party member (creation
+     *             blocked; they should join their leader's match instead), run on the main thread
+     */
+    private void resolveDraftPolicy(Player p, java.util.function.Consumer<Boolean> then) {
         PartyResolver.getPartyMember(p, opt -> {
             boolean inParty = opt.isPresent();
             boolean isLeader = inParty && opt.get().getParty().getLeaders().stream()
@@ -353,12 +520,25 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                         }
                     }
                 }
-                guiManager.openBuilder(p);
-                if (blocked) {
-                    p.sendMessage(ItemUtil.color("&cYou're in someone else's party — leave it to host "
-                            + "your own private match, or use &f/ea join&c to join your leader's match."));
-                }
+                then.accept(blocked);
             });
+        });
+    }
+
+    /**
+     * Headless equivalent of the builder GUI's "select map" + "Create & Join": resolves the
+     * host's join policy exactly as the builder menu does, points a fresh draft at
+     * {@code mapName}, and creates + joins immediately. Backs {@code /ea create <map>}.
+     */
+    public void createAndJoinByMapName(Player host, String mapName, boolean joinAfterCreate) {
+        resolveDraftPolicy(host, blocked -> {
+            if (blocked) {
+                host.sendMessage(Lang.msg("create.party-blocked"));
+                return;
+            }
+            DraftPrivateMatch draft = draftService.getOrCreate(host.getUniqueId());
+            draft.setArenaName(mapName);
+            createAndJoin(host, draft, joinAfterCreate);
         });
     }
 
@@ -378,34 +558,45 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
      */
     public void createAndJoin(Player host, DraftPrivateMatch draft, boolean joinAfterCreate) {
         if (draft == null || !draft.isReadyToCreate()) {
-            host.sendMessage(ItemUtil.color("&cSelect a map first."));
+            host.sendMessage(Lang.msg("create.select-map-first"));
             return;
         }
 
         Arena currentArena = BedwarsAPI.getGameAPI().getArenaByPlayer(host);
         if (currentArena != null && sessionService.getByArena(currentArena) != null) {
-            host.sendMessage(ItemUtil.color("&cLeave your current private match before creating another one."));
+            host.sendMessage(Lang.msg("create.leave-current-first"));
             return;
         }
+
+        // Guards a double-click on Create & Join (or a repeated /ea create) from racing two
+        // overlapping creations while the first is still waiting on the async party check below.
+        if (!creatingSessionFor.add(host.getUniqueId())) return;
 
         // Party-membership rules depend on an async party lookup, so validate that first and
         // only continue on to the actual creation once it's confirmed OK.
         JoinPolicy policy = draft.getJoinPolicy() == null ? JoinPolicy.PARTY : draft.getJoinPolicy();
         PartyResolver.getPartyMember(host, opt -> {
             if (policy == JoinPolicy.CODE && opt.isPresent()) {
-                host.sendMessage(ItemUtil.color("&cYou can't host a Join Code match while you're in a party "
-                        + "— use Party policy instead, or leave your party first."));
+                creatingSessionFor.remove(host.getUniqueId());
+                host.sendMessage(Lang.msg("create.code-while-in-party"));
                 return;
             }
             if (policy == JoinPolicy.PARTY) {
                 boolean isLeader = opt.isPresent() && opt.get().getParty().getLeaders().stream()
                         .anyMatch(leader -> leader.getUniqueId().equals(host.getUniqueId()));
                 if (!isLeader) {
-                    host.sendMessage(ItemUtil.color("&cYou must be the leader of a party to host a Party-policy match."));
+                    creatingSessionFor.remove(host.getUniqueId());
+                    host.sendMessage(Lang.msg("create.must-be-leader"));
                     return;
                 }
             }
-            Bukkit.getScheduler().runTask(this, () -> finishCreateAndJoin(host, draft, joinAfterCreate));
+            Bukkit.getScheduler().runTask(this, () -> {
+                try {
+                    finishCreateAndJoin(host, draft, joinAfterCreate);
+                } finally {
+                    creatingSessionFor.remove(host.getUniqueId());
+                }
+            });
         });
     }
 
@@ -414,17 +605,15 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
         int limit = getArenaLimit(host);
         if (sessionService.countByOwner(host.getUniqueId()) >= limit) {
-            host.sendMessage(ItemUtil.color("&cYou already host the maximum of &f" + limit
-                    + "&c private match" + (limit == 1 ? "" : "es") + "."));
+            host.sendMessage(Lang.msg("create.limit-reached", "%limit%", String.valueOf(limit)));
             return;
         }
         if (sessionService.isArenaReserved(arenaName)) {
-            host.sendMessage(ItemUtil.color("&cThat arena is already reserved by another private match."));
+            host.sendMessage(Lang.msg("create.arena-reserved"));
             return;
         }
         if (!isArenaJoinable(arenaName)) {
-            host.sendMessage(ItemUtil.color("&c&f" + arenaName
-                    + "&c is not available right now (it must be empty and in its lobby)."));
+            host.sendMessage(Lang.msg("create.arena-unavailable", "%arena%", arenaName));
             return;
         }
 
@@ -442,19 +631,17 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(canonical);
         if (local != null) prepareLobby(local, session);
 
-        host.sendMessage(ItemUtil.color("&aCreated your private match on &f" + canonical + "&a!"
-                + (joinAfterCreate ? " Sending you in…" : "")));
+        host.sendMessage(Lang.msg(joinAfterCreate ? "create.created-joining" : "create.created", "%arena%", canonical));
         if (session.getJoinPolicy() == JoinPolicy.CODE) {
-            host.sendMessage(ItemUtil.color("&7Join code: &f" + session.getJoinCode()
-                    + " &7— share with &f/ea join " + session.getJoinCode()));
+            host.sendMessage(Lang.msg("create.code-line", "%code%", session.getJoinCode()));
         } else {
-            host.sendMessage(ItemUtil.color("&7Gating: &aParty members only."));
+            host.sendMessage(Lang.msg("create.party-line"));
         }
 
         if (joinAfterCreate) {
             sendPlayerToArena(host, canonical);
         } else {
-            host.sendMessage(ItemUtil.color("&7Use &fGo to Arena&7 in Match Controls whenever you're ready."));
+            host.sendMessage(Lang.msg("create.created-not-joining"));
         }
     }
 
@@ -481,7 +668,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             Bukkit.dispatchCommand(player, command);
         } catch (Throwable t) {
             getLogger().warning("Failed to dispatch join command for " + arenaName + ": " + t.getMessage());
-            player.sendMessage(ItemUtil.color("&cArena &f" + arenaName + " &cis unavailable."));
+            player.sendMessage(Lang.msg("route.arena-unavailable", "%arena%", arenaName));
         }
     }
 
@@ -543,11 +730,11 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             return;
         }
         if (!remoteCommandService.isAvailable()) {
-            actor.sendMessage(ItemUtil.color("&cThe arena is on another server."));
+            actor.sendMessage(Lang.msg("general.arena-other-server"));
             return;
         }
         remoteCommandService.enqueue(RemoteCommandService.Type.START_MATCH, session);
-        actor.sendMessage(ItemUtil.color("&aSent the start request to &f" + session.getArenaName() + "&a."));
+        actor.sendMessage(Lang.msg("match.start-sent", "%arena%", session.getArenaName()));
     }
 
     /**
@@ -559,11 +746,11 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
         if (local != null && local.exists() || !remoteCommandService.isAvailable()) {
             endMatch(session);
-            actor.sendMessage(ItemUtil.color("&aEnded the private match on &f" + session.getArenaName() + "&a."));
+            actor.sendMessage(Lang.msg("match.ended", "%arena%", session.getArenaName()));
             return;
         }
         remoteCommandService.enqueue(RemoteCommandService.Type.END_MATCH, session);
-        actor.sendMessage(ItemUtil.color("&aSent the request to end the match on &f" + session.getArenaName() + "&a."));
+        actor.sendMessage(Lang.msg("match.end-sent", "%arena%", session.getArenaName()));
     }
 
     /** Ends a match: removes the shared session state and, if the arena is local, clears it. */
@@ -573,7 +760,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         restoreArenaMinPlayers(session, arena);
         sessionService.endSession(session);
         if (arena != null && arena.exists()) {
-            arena.broadcast(ItemUtil.color("&cThe private match has been ended."));
+            arena.broadcast(Lang.msg("match.ended-broadcast"));
             arena.kickAllPlayers();
             arena.kickAllSpectators(KickSpectatorReason.PLUGIN_STOP); // kickAllPlayers() alone leaves spectators behind
         }
@@ -616,11 +803,11 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     public void startMatchNow(Player actor, Arena arena, PrivateSession session) {
         if (arena == null || session == null) return;
         if (!arena.getStatus().isLobby()) {
-            tell(actor, arena, "&cThe match has already begun.");
+            tell(actor, arena, Lang.raw("match.already-begun"));
             return;
         }
         if (arena.getPlayers().size() < 2) {
-            tell(actor, arena, "&cYou need at least one other player in the arena before you can start.");
+            tell(actor, arena, Lang.raw("match.need-more-players"));
             return;
         }
 
@@ -628,10 +815,10 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "bw debug 13 " + arena.getName());
         } catch (Throwable t) {
             getLogger().warning("Could not force-start arena " + arena.getName() + ": " + t.getMessage());
-            tell(actor, arena, "&cFailed to start the match — see console.");
+            tell(actor, arena, Lang.raw("match.start-failed"));
             return;
         }
-        arena.broadcast(ItemUtil.color("&aThe host started the match!"));
+        arena.broadcast(Lang.msg("match.host-started"));
     }
 
     /** Messages the actor directly if present (local click), else falls back to an arena broadcast
@@ -675,8 +862,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         String newCode = sessionService.regenerateJoinCode(session);
         if (newCode == null) return;
         Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
-        if (arena != null) arena.broadcast(ItemUtil.color("&eJoin code regenerated: &f" + newCode
-                + " &e— use &f/ea join " + newCode));
+        if (arena != null) arena.broadcast(Lang.msg("match.code-regenerated", "%code%", newCode));
     }
 
     /**
@@ -689,7 +875,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
         PartyResolver.getPartyMember(host, opt -> {
             if (opt.isEmpty()) {
-                host.sendMessage(ItemUtil.color("&cYou are not in a party."));
+                host.sendMessage(Lang.msg("summon.not-in-party"));
                 return;
             }
             PartiesHook.Party party = opt.get().getParty();
@@ -702,9 +888,9 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                     forceSummon(session, uuid);
                     count++;
                 }
-                host.sendMessage(ItemUtil.color(count > 0
-                        ? "&aSummoning &f" + count + " &aparty member(s)…"
-                        : "&7You have no other party members to summon."));
+                host.sendMessage(count > 0
+                        ? Lang.msg("summon.summoning", "%count%", String.valueOf(count))
+                        : Lang.msg("summon.no-members"));
             });
         });
     }
@@ -717,11 +903,11 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     public void moveArenaPlayersToTeam(Player actor, PrivateSession session, Team team, Set<UUID> playerIds) {
         Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
         if (arena == null || !arena.exists()) {
-            actor.sendMessage(ItemUtil.color("&cThe arena is on another server."));
+            actor.sendMessage(Lang.msg("general.arena-other-server"));
             return;
         }
         if (!arena.getStatus().isLobby()) {
-            actor.sendMessage(ItemUtil.color("&cTeams can only be changed while the arena is in its lobby."));
+            actor.sendMessage(Lang.msg("teams.move-lobby-only"));
             return;
         }
 
@@ -735,10 +921,10 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         }
 
         if (moved > 0) {
-            actor.sendMessage(ItemUtil.color("&aMoved &f" + moved + "&a player(s) to " + team.getDisplayName() + "&a."));
+            actor.sendMessage(Lang.msg("teams.moved", "%count%", String.valueOf(moved), "%team%", team.getDisplayName()));
         }
         if (skipped > 0) {
-            actor.sendMessage(ItemUtil.color("&c" + skipped + " player(s) could not be moved (team full)."));
+            actor.sendMessage(Lang.msg("teams.move-skipped", "%count%", String.valueOf(skipped)));
         }
     }
 
