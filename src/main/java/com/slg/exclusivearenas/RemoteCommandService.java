@@ -18,7 +18,13 @@ import java.util.UUID;
  */
 public final class RemoteCommandService {
 
-    public enum Type { START_MATCH, END_MATCH }
+    public enum Type {
+        START_MATCH, END_MATCH, KICK_ALL,
+        QUICK_REGEN, QUICK_HEAL, QUICK_DROP, QUICK_BEDS, QUICK_CLEAR, QUICK_SKIP_EVENT
+    }
+
+    /** KICK_ALL payload marking the shift-click variant that spares the host. */
+    public static final String PAYLOAD_KEEP_HOST = "keep-host";
 
     private final ExclusiveArenasPlugin plugin;
     private final PrivateSessionService sessions;
@@ -70,9 +76,18 @@ public final class RemoteCommandService {
             return;
         }
 
+        QuickActionsService quick = plugin.getQuickActions();
         switch (type) {
             case START_MATCH -> plugin.startMatchNow(null, arena, session);
             case END_MATCH -> plugin.endMatch(session);
+            case KICK_ALL -> quick.kickAll(null, session, arena,
+                    PAYLOAD_KEEP_HOST.equals(row.payload()));
+            case QUICK_REGEN -> quick.regenerateKeepingPlayers(null, session, arena);
+            case QUICK_HEAL -> quick.healAll(null, session, arena);
+            case QUICK_DROP -> quick.dropAllSpawners(null, session, arena);
+            case QUICK_BEDS -> quick.destroyAllBeds(null, session, arena);
+            case QUICK_CLEAR -> quick.clearGroundItems(null, session, arena);
+            case QUICK_SKIP_EVENT -> quick.skipToNextEvent(null, session, arena);
         }
     }
 }
