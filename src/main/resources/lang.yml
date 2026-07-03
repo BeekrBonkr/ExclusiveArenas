@@ -11,7 +11,7 @@
 # Do not change 'config-version': the plugin uses it to upgrade this file
 # in place when you install a newer version (your edits are preserved).
 # ─────────────────────────────────────────────────────────────────────────────
-config-version: 1
+config-version: 2
 
 general:
   # Sent when the console tries to run /ea.
@@ -116,20 +116,38 @@ teams:
   move-skipped: "&c%count% player(s) could not be moved (team full)."
 
 spectate:
-  # The toggle-spectate lobby hotbar item (see config.yml's lobby-hotbar notes).
-  item-name-on: "&aJoining as Spectator"
-  item-name-off: "&7Joining as Player"
-  item-desc-on: "&7You will not play this match."
-  item-desc-off: "&7You will play this match."
-  item-hint: "&8▶ Click to toggle"
+  # The toggle-spectate lobby hotbar item (see config.yml's lobby-hotbar notes). Hidden once
+  # the player is actually spectating — spectator-rejoin.* takes over from there.
+  item-name: "&7Spectate This Match"
+  item-desc: "&7Sit this match out — you won't play."
+  item-hint: "&8▶ Click to spectate"
   lobby-only: "&cYou can only do that while the match is in its lobby."
   switch-failed: "&cCouldn't switch you to spectating — try again."
   now-spectating: "&eYou're now spectating — you won't play this match."
+
+# The rejoin-as-player lobby hotbar item — visible only to spectators (see config.yml's
+# lobby-hotbar notes). Hidden once the round is running or the arena has no free player slot.
+spectator-rejoin:
+  item-name: "&aRejoin as Player"
+  item-desc: "&7Switch back to playing this match."
+  item-hint: "&8▶ Click to rejoin"
+  lobby-only: "&cYou can only rejoin while the match is in its lobby."
   rejoin-failed: "&cCouldn't rejoin as a player — the match may be full."
   now-playing: "&aYou'll play in this match — pick a team to join in."
 
+# The summon-party lobby hotbar item — visible only to the host of a party-gated match (see
+# config.yml's lobby-hotbar notes). Same action as Match Controls' Summon Party button.
+party-summon:
+  item-name: "&e&lSummon Party"
+  item-desc: "&7Pull your online party members"
+  item-desc-2: "&7into this lobby."
+  item-hint: "&8▶ Click to summon"
+
 cleanup:
   host-abandoned: "&cPrivate match ended: the host did not return in time."
+  # %minutes% — private.inactivity_close_grace_minutes
+  inactivity-warning: "&eThis private match has had no active players for a while — it will &cclose in %minutes% minute(s)&e unless someone joins in."
+  inactivity-closed: "&cPrivate match ended: no one was actively playing."
 
 bossbar:
   # %policy% is one of the three policy labels below.

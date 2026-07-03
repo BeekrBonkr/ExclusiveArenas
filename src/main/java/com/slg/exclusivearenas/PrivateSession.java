@@ -22,6 +22,11 @@ public final class PrivateSession {
     // Set when the host leaves during lobby; cleared when they return. Used for abandon timeout.
     private volatile Instant hostLeftAt = null;
 
+    // Set the moment the arena's lobby has zero active players; cleared the moment it doesn't.
+    // Used by SessionCleanupTask's inactivity warning/close (local-only, never persisted).
+    private volatile Instant inactiveSince = null;
+    private volatile boolean inactivityWarned = false;
+
     // The arena's min-players requirement before we relaxed it to 1 for this private match;
     // restored once the match ends. Null while untouched (local-only, never persisted).
     private volatile Integer originalMinPlayers = null;
@@ -67,6 +72,12 @@ public final class PrivateSession {
 
     public Instant getHostLeftAt() { return hostLeftAt; }
     public void setHostLeftAt(Instant hostLeftAt) { this.hostLeftAt = hostLeftAt; }
+
+    public Instant getInactiveSince() { return inactiveSince; }
+    public void setInactiveSince(Instant inactiveSince) { this.inactiveSince = inactiveSince; }
+
+    public boolean isInactivityWarned() { return inactivityWarned; }
+    public void setInactivityWarned(boolean inactivityWarned) { this.inactivityWarned = inactivityWarned; }
 
     public Integer getOriginalMinPlayers() { return originalMinPlayers; }
     public void setOriginalMinPlayers(Integer originalMinPlayers) { this.originalMinPlayers = originalMinPlayers; }

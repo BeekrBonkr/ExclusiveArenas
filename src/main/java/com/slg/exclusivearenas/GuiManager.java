@@ -13,6 +13,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
+import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -66,6 +67,7 @@ public final class GuiManager {
         GuiHolder holder = new GuiHolder(GuiHolder.Type.MAIN);
         Inventory inv = create(holder, GuiStyle.size("main", 27), GuiStyle.title("main"));
         frame(inv);
+        accentDividers(inv, 11, 13, 15);
 
         String hosting = String.valueOf(sessions.countByOwner(p.getUniqueId()));
         String limit = limitLabel(plugin.getArenaLimit(p));
@@ -192,6 +194,11 @@ public final class GuiManager {
     void renderControls(Inventory inv, PrivateSession session, boolean adminView) {
         inv.clear();
         frame(inv);
+        // Row 1 (setup/navigation) and row 2 (match state/access) get the neutral accent;
+        // row 3 — Kick All / End Match — gets the danger material as a "careful here" cue.
+        fillInteriorRow(inv, 9, accentMaterial());
+        fillInteriorRow(inv, 18, accentMaterial());
+        fillInteriorRow(inv, 27, dangerMaterial());
 
         boolean codePolicy = session.getJoinPolicy() == JoinPolicy.CODE;
         Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
@@ -249,6 +256,8 @@ public final class GuiManager {
         Inventory inv = create(holder, GuiStyle.size("quick-actions", 36),
                 GuiStyle.title("quick-actions", "%arena%", session.getArenaName()));
         frame(inv);
+        fillInteriorRow(inv, 9, accentMaterial());
+        fillInteriorRow(inv, 18, accentMaterial());
 
         GuiStyle.place(inv, "quick-actions.buttons.regenerate-map");
         GuiStyle.place(inv, "quick-actions.buttons.heal-all");
@@ -270,6 +279,7 @@ public final class GuiManager {
         Inventory inv = create(holder, GuiStyle.size("arena-config", 27),
                 GuiStyle.title("arena-config", "%arena%", session.getArenaName()));
         frame(inv);
+        accentDividers(inv, 11, 13, 15);
 
         if (plugin.getTimelineService().isEnabled()) {
             GuiStyle.place(inv, "arena-config.buttons.event-timeline");
@@ -314,9 +324,18 @@ public final class GuiManager {
             long priced = settings.getShopOverrides().values().stream()
                     .filter(SessionSettings.ShopOverride::hasPriceOverride).count();
 
+            // A guis.yml whose "preset" name template is missing (or lost) the %name%
+            // placeholder — e.g. a stale copy from before it was added — must never hide the
+            // saved name entirely; fall back to just showing it plainly.
+            String presetName = GuiStyle.name("presets.items.preset", "%name%", entry.getKey());
+            String stripped = ChatColor.stripColor(presetName);
+            if (stripped == null || !stripped.contains(entry.getKey())) {
+                presetName = "&f&l" + entry.getKey();
+            }
+
             ItemStack item = ItemUtil.button(
                     GuiStyle.material("presets.items.preset.material", Material.PAPER),
-                    GuiStyle.name("presets.items.preset", "%name%", entry.getKey()),
+                    presetName,
                     GuiStyle.lore("presets.items.preset",
                             "%name%", entry.getKey(),
                             "%timeline%", timelineSummary,
@@ -333,6 +352,21 @@ public final class GuiManager {
             GuiStyle.place(inv, "presets.buttons.save-current");
         }
         GuiStyle.place(inv, "presets.buttons.back");
+        p.openInventory(inv);
+    }
+
+    /** Opens the anvil prompt where the host types a name for the preset they're about to save. */
+    public void openPresetNamePrompt(Player p, PrivateSession session, boolean adminView,
+                                     Map<String, String> presets) {
+        java.util.LinkedHashMap<String, String> snapshot = new java.util.LinkedHashMap<>(presets);
+        GuiHolder holder = new GuiHolder(GuiHolder.Type.PRESET_NAME)
+                .sessionId(session.getSessionId()).adminView(adminView).presets(snapshot);
+        Inventory inv = Bukkit.createInventory(holder, InventoryType.ANVIL,
+                GuiStyle.title("preset-name", "%arena%", session.getArenaName()));
+        holder.setInventory(inv);
+
+        String suggested = PresetService.nextFreeName(snapshot);
+        inv.setItem(0, GuiStyle.item("preset-name.buttons.icon", "%name%", suggested));
         p.openInventory(inv);
     }
 
@@ -734,6 +768,7 @@ public final class GuiManager {
             return;
         }
 
+        accentDividers(inv, 11, 13, 15);
         GuiStyle.place(inv, "builder.buttons.select-map",
                 "%map%", d.getArenaName() == null ? "&cNot selected" : "&a" + d.getArenaName());
 
@@ -946,6 +981,28 @@ public final class GuiManager {
         if (slot < 0 || slot >= inv.getSize()) return;
         inv.setItem(slot, ItemUtil.pane(GuiStyle.material("global.accent-material",
                 Material.CYAN_STAINED_GLASS_PANE)));
+    }
+
+    /** Purely decorative accent panes at each of the given slots — call before placing buttons. */
+    private void accentDividers(Inventory inv, int... slots) {
+        for (int slot : slots) setAccentPane(inv, slot);
+    }
+
+    /**
+     * Fills a hub row's 7 interior slots (between the frame's border columns) with one pane,
+     * so buttons placed over some of them afterwards read as an evenly-spaced, gap-free row.
+     */
+    private void fillInteriorRow(Inventory inv, int rowFirstSlot, Material mat) {
+        ItemStack pane = ItemUtil.pane(mat);
+        for (int col = 1; col <= 7; col++) inv.setItem(rowFirstSlot + col, pane);
+    }
+
+    private Material accentMaterial() {
+        return GuiStyle.material("global.accent-material", Material.CYAN_STAINED_GLASS_PANE);
+    }
+
+    private Material dangerMaterial() {
+        return GuiStyle.material("global.danger-material", Material.RED_STAINED_GLASS_PANE);
     }
 
     /** Appends already-colored lines to an item's lore (used for live status cards). */

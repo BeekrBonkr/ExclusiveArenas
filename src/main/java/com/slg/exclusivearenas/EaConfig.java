@@ -26,7 +26,7 @@ import java.nio.file.StandardCopyOption;
  */
 public final class EaConfig {
 
-    static final int CURRENT_VERSION = 6;
+    static final int CURRENT_VERSION = 7;
 
     private final JavaPlugin plugin;
     private final File dataFolder;
@@ -118,6 +118,8 @@ public final class EaConfig {
         if (version < 6) {
             config.set("quick_actions.regenerate_command", null);
         }
+        // v6 → v7: added timeline.max_match_time and the private.inactivity_* cleanup
+        // settings — pure additions, restored automatically by ensureComplete() below.
 
         config.set("config-version", CURRENT_VERSION);
         return true;

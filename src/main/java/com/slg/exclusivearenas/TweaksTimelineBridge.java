@@ -10,6 +10,7 @@ import me.metallicgoat.tweaksaddon.api.events.gentiers.GenTiersScheduleEvent;
 import me.metallicgoat.tweaksaddon.api.gentiers.GenTierActionType;
 import me.metallicgoat.tweaksaddon.api.gentiers.GenTierLevel;
 import me.metallicgoat.tweaksaddon.api.gentiers.GenTierState;
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -141,7 +142,10 @@ public final class TweaksTimelineBridge implements Listener {
                     description = Lang.raw("timeline.tweaks-bed-destroy");
                 }
                 case SUDDEN_DEATH -> {
-                    type = TimelineService.Type.DESTROY_BEDS;
+                    // Distinct from DESTROY_BEDS: Tweaks' dragons threaten/kill players but never
+                    // touch MBedwars' own bed-tracking, so this type gets a forced bed-break of
+                    // its own in onGenTierSchedule below when a host's custom timeline needs it.
+                    type = TimelineService.Type.SUDDEN_DEATH;
                     icon = Material.DRAGON_HEAD;
                     description = Lang.raw("timeline.tweaks-sudden-death");
                 }
@@ -279,6 +283,16 @@ public final class TweaksTimelineBridge implements Listener {
                 // display cleanup only
             }
             return;
+        }
+
+        if (def.type() == TimelineService.Type.SUDDEN_DEATH && session.getSettings().getTimeline() != null) {
+            // Tweaks' Sudden Death dragons threaten/kill players but never register a bed as
+            // destroyed with MBedwars — normally harmless because the real Bed Destruction tier
+            // already ran first, but a host-customized timeline can reorder or drop that tier.
+            // Force it here, timed to land the moment Sudden Death itself actually fires.
+            Bukkit.getScheduler().runTaskLater(plugin,
+                    () -> { if (arena.exists()) plugin.getTimelineEngine().destroyAllBeds(arena); },
+                    Math.max(1, delay) * 20L);
         }
 
         event.setNextTier(level);

@@ -95,6 +95,14 @@ public final class PresetService {
         return null;
     }
 
+    /** The stored preset name matching {@code raw} case-insensitively, or null. */
+    public static String existingName(LinkedHashMap<String, String> existing, String raw) {
+        for (String name : existing.keySet()) {
+            if (name.equalsIgnoreCase(raw)) return name;
+        }
+        return null;
+    }
+
     // ── File fallback (single-server mode) ───────────────────────────────────────
 
     private LinkedHashMap<String, String> loadFromFile(UUID owner) {

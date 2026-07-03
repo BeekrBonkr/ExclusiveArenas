@@ -23,12 +23,14 @@
 # Do not change 'config-version': the plugin uses it to upgrade this file in
 # place when you install a newer version (your edits are preserved).
 # ─────────────────────────────────────────────────────────────────────────────
-config-version: 2
+config-version: 3
 
 # Materials used to decorate every menu.
 global:
   border-material: GRAY_STAINED_GLASS_PANE
   accent-material: CYAN_STAINED_GLASS_PANE
+  # Flanks the Kick All / End Match row in Match Controls — a visual "danger zone" cue.
+  danger-material: RED_STAINED_GLASS_PANE
 
 # ── Main menu (/ea) ──────────────────────────────────────────────────────────
 # Placeholders: %hosting% (matches hosted), %limit% (max allowed)
@@ -208,7 +210,7 @@ controls:
       lore: []
       glint: false
     settings:
-      slot: 13
+      slot: 10
       material: CRAFTING_TABLE
       name: "&e&lArena Settings"
       lore:
@@ -218,7 +220,7 @@ controls:
         - "&8▶ Click to open"
       glint: false
     manage-teams:
-      slot: 15
+      slot: 12
       material: WHITE_BANNER
       name: "&e&lManage Teams"
       lore:
@@ -229,7 +231,7 @@ controls:
       glint: false
     # %policy% and %policy_desc% describe the fixed join policy.
     policy:
-      slot: 19
+      slot: 14
       material: NAME_TAG
       name: "&e&lJoin Policy: %policy%"
       lore:
@@ -237,8 +239,18 @@ controls:
         - "&8"
         - "&8Set when the arena was created."
       glint: false
+    quick-actions:
+      slot: 16
+      material: REDSTONE_TORCH
+      name: "&e&lQuick Actions"
+      lore:
+        - "&7Handy one-click shortcuts"
+        - "&7for managing this match."
+        - "&8"
+        - "&8▶ Click to open"
+      glint: false
     start-lobby:
-      slot: 20
+      slot: 19
       material: LIME_CONCRETE
       name: "&a&lStart Match"
       lore:
@@ -247,14 +259,14 @@ controls:
         - "&8▶ Click"
       glint: false
     start-running:
-      slot: 20
+      slot: 19
       material: CLOCK
       name: "&7&lStart Match"
       lore:
         - "&7The match has already begun."
       glint: false
     public-on:
-      slot: 22
+      slot: 21
       material: LIME_DYE
       name: "&a&lPublic"
       lore:
@@ -263,7 +275,7 @@ controls:
         - "&8▶ Click to toggle"
       glint: false
     public-off:
-      slot: 22
+      slot: 21
       material: RED_DYE
       name: "&c&lLocked"
       lore:
@@ -272,7 +284,7 @@ controls:
         - "&8▶ Click to toggle"
       glint: false
     summon-party:
-      slot: 22
+      slot: 21
       material: ENDER_PEARL
       name: "&e&lSummon Party"
       lore:
@@ -281,7 +293,7 @@ controls:
         - "&8▶ Click"
       glint: false
     regenerate-code:
-      slot: 24
+      slot: 23
       material: TRIPWIRE_HOOK
       name: "&e&lRegenerate Code"
       lore:
@@ -290,7 +302,7 @@ controls:
         - "&8▶ Click"
       glint: false
     go-to-arena:
-      slot: 30
+      slot: 25
       material: COMPASS
       name: "&b&lGo to Arena"
       lore:
@@ -298,7 +310,7 @@ controls:
         - "&8▶ Click"
       glint: false
     kick-all:
-      slot: 31
+      slot: 30
       material: IRON_SWORD
       name: "&c&lKick All Players"
       lore:
@@ -316,16 +328,6 @@ controls:
         - "&7Close this private match and"
         - "&7release the arena."
         - "&8▶ Click"
-      glint: false
-    quick-actions:
-      slot: 34
-      material: REDSTONE_TORCH
-      name: "&e&lQuick Actions"
-      lore:
-        - "&7Handy one-click shortcuts"
-        - "&7for managing this match."
-        - "&8"
-        - "&8▶ Click to open"
       glint: false
     back:
       slot: 36
@@ -396,7 +398,7 @@ quick-actions:
         - "&8▶ Click to destroy all beds"
       glint: true
     clear-items:
-      slot: 20
+      slot: 21
       material: HOPPER
       name: "&e&lClear Ground Items"
       lore:
@@ -406,7 +408,7 @@ quick-actions:
         - "&8▶ Click to clear"
       glint: false
     skip-event:
-      slot: 24
+      slot: 23
       material: ENDER_EYE
       name: "&d&lSkip to Next Event"
       lore:
@@ -542,6 +544,21 @@ presets:
   summary-default-timeline: "&8Default timeline"
   summary-custom-timeline: "&7Custom timeline &8(%events% events)"
 
+# ── Preset naming (anvil) ─────────────────────────────────────────────────────
+# Opens when a player clicks "Save Current Setup". Type a name in the anvil's
+# text field, then take the result item (right-hand slot) to confirm — no XP
+# is actually spent, the level cost shown is cosmetic and ignored.
+preset-name:
+  title: "&1Name this configuration"
+  buttons:
+    icon:
+      material: PAPER
+      name: "%name%"
+      lore:
+        - "&7Type a name above, then take"
+        - "&7the result to save it."
+      glint: false
+
 # ── Event timeline editor ────────────────────────────────────────────────────
 # Title placeholders: %arena%
 # The interior top two rows show the events left→right in match order. Click
@@ -560,9 +577,10 @@ timeline:
         - "&8"
         - "&7• &fClick&7 an event to select it, then"
         - "&7  use the buttons below to move it."
-        - "&7• &fMatch End&7 can be moved but never"
-        - "&7  deleted — shortening the match"
-        - "&7  rescales the other events with it."
+        - "&7• &fMatch End&7 shows the &ftotal match"
+        - "&7  time&7 instead — it can be moved but"
+        - "&7  never deleted, and shortening the"
+        - "&7  match rescales every other event."
         - "&8"
         - "&7Changes apply when the match starts."
       glint: false
@@ -644,7 +662,7 @@ timeline:
     match-end:
       name: "&c&lMatch End"
       lore:
-        - "&7The match ends at: &f%time%"
+        - "&7Total match time: &f%time%"
         - "&7Effect: %effect%"
         - "&8"
         - "&7Moving this &fearlier&7 rescales every"
@@ -655,7 +673,7 @@ timeline:
     match-end-selected:
       name: "&a&lMatch End &7(selected)"
       lore:
-        - "&7The match ends at: &f%time%"
+        - "&7Total match time: &f%time%"
         - "&7Effect: %effect%"
         - "&8"
         - "&7Moving this &fearlier&7 rescales every"

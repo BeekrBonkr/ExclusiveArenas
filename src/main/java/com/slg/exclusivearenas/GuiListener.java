@@ -11,11 +11,16 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.PrepareAnvilEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.InventoryHolder;
+import org.bukkit.inventory.InventoryView;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.view.AnvilView;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -75,7 +80,29 @@ public final class GuiListener implements Listener {
             case TEAM_SELECT -> handleTeamSelect(p, gh, slot);
             case TEAM_PLAYERS-> handleTeamPlayers(p, gh, slot, e.isShiftClick());
             case HELP        -> { if (slot == GuiStyle.slot("help.buttons.back")) gui.openMainMenu(p); }
+            case PRESET_NAME -> handlePresetName(p, gh, slot, e.getView());
         }
+    }
+
+    /**
+     * Forces the anvil's output slot to always mirror the current rename text, regardless of
+     * vanilla's normal recipe/repair-cost rules — the click handler never actually consumes it
+     * (every click on one of our menus is cancelled), so no XP is ever spent either.
+     */
+    @EventHandler
+    public void onPrepareAnvil(PrepareAnvilEvent e) {
+        if (!(e.getInventory().getHolder() instanceof GuiHolder gh) || gh.type() != GuiHolder.Type.PRESET_NAME) return;
+
+        String text = e.getView().getRenameText();
+        if (text == null || text.isBlank()) {
+            e.setResult(null);
+            return;
+        }
+        ItemStack result = new ItemStack(Material.PAPER);
+        ItemMeta meta = result.getItemMeta();
+        meta.setDisplayName(text.trim());
+        result.setItemMeta(meta);
+        e.setResult(result);
     }
 
     // ── Main menu ─────────────────────────────────────────────────────────────────
@@ -276,18 +303,12 @@ public final class GuiListener implements Listener {
                 gh.presets() == null ? new java.util.LinkedHashMap<>() : new java.util.LinkedHashMap<>(gh.presets());
 
         if (slot == GuiStyle.slot("presets.buttons.save-current")) {
-            String name = PresetService.nextFreeName(presets);
-            if (name == null) {
+            if (presets.size() >= PresetService.MAX_PRESETS) {
                 p.sendMessage(Lang.msg("presets.limit", "%max%",
                         String.valueOf(PresetService.MAX_PRESETS)));
                 return;
             }
-            String json = session.getSettings().toJson();
-            plugin.getPresetService().save(p.getUniqueId(), name, json);
-            p.sendMessage(Lang.msg("presets.saved", "%name%", name));
-            // The write is async — update the local copy so the reopened menu is current.
-            presets.put(name, json);
-            gui.openPresets(p, session, gh.adminView(), presets);
+            gui.openPresetNamePrompt(p, session, gh.adminView(), presets);
             return;
         }
 
@@ -305,6 +326,43 @@ public final class GuiListener implements Listener {
         session.setSettings(SessionSettings.fromJson(presets.get(name)));
         sessions.saveSettings(session);
         p.sendMessage(Lang.msg("presets.applied", "%name%", name, "%arena%", session.getArenaName()));
+    }
+
+    /** Confirms the anvil name prompt — only the result slot (2) saves; anything else is a no-op. */
+    private void handlePresetName(Player p, GuiHolder gh, int slot, InventoryView view) {
+        if (slot != 2) return;
+        PrivateSession session = requireManageable(p, gh);
+        if (session == null) return;
+
+        LinkedHashMap<String, String> presets =
+                gh.presets() == null ? new LinkedHashMap<>() : new LinkedHashMap<>(gh.presets());
+
+        String typed = view instanceof AnvilView anvil ? anvil.getRenameText() : null;
+        String requested = typed == null || typed.isBlank() ? null : typed.trim();
+
+        String name;
+        if (requested == null) {
+            name = PresetService.nextFreeName(presets);
+        } else if (!PresetService.isValidName(requested)) {
+            p.sendMessage(Lang.msg("cmd.preset-bad-name", "%max%", String.valueOf(PresetService.MAX_NAME_LENGTH)));
+            return;
+        } else {
+            String existing = PresetService.existingName(presets, requested);
+            name = existing != null ? existing : requested;
+        }
+
+        // Overwriting an existing preset is fine; only a brand-new name counts toward the cap.
+        boolean isNew = name == null || !presets.containsKey(name);
+        if (name == null || (isNew && presets.size() >= PresetService.MAX_PRESETS)) {
+            p.sendMessage(Lang.msg("presets.limit", "%max%", String.valueOf(PresetService.MAX_PRESETS)));
+            return;
+        }
+
+        String json = session.getSettings().toJson();
+        plugin.getPresetService().save(p.getUniqueId(), name, json);
+        p.sendMessage(Lang.msg("presets.saved", "%name%", name));
+        presets.put(name, json);
+        gui.openPresets(p, session, gh.adminView(), presets);
     }
 
     // ── Quick actions ───────────────────────────────────────────────────────────────
@@ -327,6 +385,11 @@ public final class GuiListener implements Listener {
         else if (slot == GuiStyle.slot("quick-actions.buttons.skip-event")) type = RemoteCommandService.Type.QUICK_SKIP_EVENT;
         if (type == null) return;
 
+        if (type == RemoteCommandService.Type.QUICK_REGEN) {
+            // Regen cycles the host through spectator and back to player; a menu left open
+            // the whole time is the one thing that reliably kept the host from being reseated.
+            p.closeInventory();
+        }
         plugin.runArenaAction(p, session, type);
     }
 

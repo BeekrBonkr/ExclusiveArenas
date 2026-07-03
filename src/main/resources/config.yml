@@ -4,7 +4,7 @@
 # Related files (same folder):
 #   lang.yml — every chat message the plugin sends.
 #   guis.yml — every menu's layout, button materials, names, lore and glints.
-config-version: 6
+config-version: 7
 
 # Verbose debug logging. When true, ExclusiveArenas logs detailed database and sync activity
 # to the console. Leave false for normal operation — errors are always logged regardless.
@@ -77,6 +77,14 @@ private:
   # Only applies when the arena is not in an active RUNNING game.
   stale_session_hours: 12
 
+  # A lobby with no active players in it (everyone's spectating, or nobody ever actually
+  # joined) is warned in-arena and — if the host is online elsewhere — directly, then closed
+  # if it's still empty of active players after the grace period. This catches hosts/guests
+  # who are online but never got around to starting (or left everyone spectating). Set
+  # inactivity_warning_minutes to 0 to disable this check entirely.
+  inactivity_warning_minutes: 10
+  inactivity_close_grace_minutes: 5
+
 # ExclusiveArenas registers an MBedwars arena-picker condition variable named
 # "exclusivearenas_private" (1 while an arena hosts one of our private matches, else 0).
 # To keep reserved private lobbies out of MBedwars' own ArenasGUI menu, add a condition to
@@ -86,21 +94,31 @@ private:
 #     condition: "[exclusivearenas_private=0]"
 #     area: ...
 
-# ExclusiveArenas also registers two custom MBedwars lobby hotbar item handlers. Registering
+# ExclusiveArenas also registers four custom MBedwars lobby hotbar item handlers. Registering
 # only makes them available — add an entry referencing one to your live lobby-hotbar.yml
 # (plugins/MBedwars/configs/.../lobby-hotbar.yml) to actually give players the item. Slot is
-# yours to choose; name/item are placeholders only — toggle-spectate overrides its own icon and
-# name at render time (gray dye = joining as a player, green dye = joining as a spectator):
+# yours to choose; name/item are placeholders only — every handler below overrides its own
+# icon/name/lore at render time (see lang.yml's matching section for the exact text):
 #   open-controls:
 #     name: '&eMatch Controls'
 #     slot: 2
-#     handler: 'exclusivearenas:open_controls'   # only visible to the match's host
+#     handler: 'exclusivearenas:open_controls'    # only visible to the match's host
 #     item: 'command_block'
 #   toggle-spectate:
 #     name: '&7Spectate This Match'
 #     slot: 3
-#     handler: 'exclusivearenas:toggle_spectate'  # any player; opts out of playing
-#     item: 'gray_dye'
+#     handler: 'exclusivearenas:toggle_spectate'   # any active player; opts out of playing.
+#     item: 'gray_dye'                             # Hidden once they're actually spectating.
+#   rejoin-as-player:
+#     name: '&aRejoin as Player'
+#     slot: 3
+#     handler: 'exclusivearenas:rejoin_as_player'  # any spectator; switches back to playing.
+#     item: 'lime_dye'                             # Hidden once the round is running or full.
+#   summon-party:
+#     name: '&eSummon Party'
+#     slot: 4
+#     handler: 'exclusivearenas:summon_party'      # host only, and only on party-gated matches.
+#     item: 'ender_pearl'
 
 # ── Event timeline ────────────────────────────────────────────────────────────
 # The default in-match event schedule for every private match. Hosts can move or
@@ -136,6 +154,9 @@ timeline:
   #              shows them correctly). Falls back to the internal engine without Tweaks.
   #   internal — always use the built-in engine below, even with Tweaks installed.
   backend: "auto"
+  # Hosts can drag Match End out via the timeline editor or /ea timeline set/move — this
+  # caps how long a match can ever be pushed to, however it's edited. "m:ss" or plain seconds.
+  max_match_time: "60:00"
   events:
     diamond2:
       name: "Diamond II"

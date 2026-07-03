@@ -158,11 +158,26 @@ public final class QuickActionsService implements Listener {
         if (event.getNewStatus() != ArenaStatus.LOBBY) return;
 
         Arena arena = event.getArena();
-        RegenSnapshot snapshot = pendingRegens.remove(key(arena.getName()));
-        if (snapshot == null) return;
+        String k = key(arena.getName());
+        if (!pendingRegens.containsKey(k)) return;
 
-        // Give MBedwars a moment to finish settling the fresh lobby before re-adding.
-        Bukkit.getScheduler().runTaskLater(plugin, () -> reseat(arena, snapshot), 20L);
+        // Give MBedwars a moment to finish settling the fresh lobby, then confirm the arena
+        // is genuinely done regenerating (still LOBBY, not flickered back into a reset) before
+        // reseating anyone — a handful of retries beats trusting a single fixed delay.
+        confirmSettledThenReseat(arena, k, 10);
+    }
+
+    private void confirmSettledThenReseat(Arena arena, String k, int attemptsLeft) {
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            RegenSnapshot snapshot = pendingRegens.get(k);
+            if (snapshot == null) return; // watchdog already gave up, or another pass handled it
+            if (!arena.exists()) { pendingRegens.remove(k); return; }
+            if (arena.getStatus() != ArenaStatus.LOBBY) {
+                if (attemptsLeft > 0) confirmSettledThenReseat(arena, k, attemptsLeft - 1);
+                return; // the timeout watchdog in regenerateKeepingPlayers still bounds this
+            }
+            if (pendingRegens.remove(k) != null) reseat(arena, snapshot);
+        }, 20L);
     }
 
     private void reseat(Arena arena, RegenSnapshot snapshot) {
