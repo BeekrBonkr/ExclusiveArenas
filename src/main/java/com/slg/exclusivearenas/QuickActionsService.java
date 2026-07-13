@@ -1,5 +1,6 @@
 package com.slg.exclusivearenas;
 
+import de.marcely.bedwars.api.BedwarsAPI;
 import de.marcely.bedwars.api.arena.Arena;
 import de.marcely.bedwars.api.arena.ArenaStatus;
 import de.marcely.bedwars.api.arena.KickReason;
@@ -8,18 +9,26 @@ import de.marcely.bedwars.api.event.arena.ArenaStatusChangeEvent;
 import de.marcely.bedwars.api.game.spawner.Spawner;
 import de.marcely.bedwars.api.game.spectator.KickSpectatorReason;
 import de.marcely.bedwars.api.game.spectator.SpectateReason;
+import de.marcely.bedwars.api.game.upgrade.QueuedTrap;
+import de.marcely.bedwars.api.game.upgrade.UpgradeLevel;
+import de.marcely.bedwars.api.game.upgrade.UpgradeState;
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerMoveEvent;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -42,6 +51,9 @@ public final class QuickActionsService implements Listener {
      * before the round is wound down so everyone can be put back afterwards.
      */
     private final Map<String, RegenSnapshot> pendingRegens = new ConcurrentHashMap<>();
+
+    /** Arenas (lower-cased name) currently frozen by {@link #toggleFreeze} — see {@link #onMove}. */
+    private final Set<String> frozenArenas = ConcurrentHashMap.newKeySet();
 
     private static final class RegenSnapshot {
         final PrivateSession session;
@@ -137,15 +149,38 @@ public final class QuickActionsService implements Listener {
             }
         }
 
-        // Watchdog: if the arena never comes back to its lobby, drop the snapshot and say so.
-        long timeoutTicks = 20L * Math.max(10,
+        // Watchdog: a regen that's merely SLOW (big map, slow disk) must never have its snapshot
+        // pulled out from under it — the players switched to spectator above would then be
+        // stuck there permanently, since onStatusChange (the real completion path) has no fixed
+        // deadline of its own and would find nothing left to reseat them from. So the configured
+        // timeout only warns; giving up for real happens much later, and even then checks once
+        // more whether the arena actually did settle before conceding.
+        long softTimeoutTicks = 20L * Math.max(10,
                 plugin.getEaConfig().intNum("quick_actions.regenerate_timeout_seconds", 60));
+        long hardTimeoutTicks = softTimeoutTicks * 5;
+
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            RegenSnapshot stale = pendingRegens.remove(k);
-            if (stale != null && stale.actor != null && stale.actor.isOnline()) {
+            RegenSnapshot stillPending = pendingRegens.get(k);
+            if (stillPending == null) return; // already completed
+            if (stillPending.actor != null && stillPending.actor.isOnline()) {
+                stillPending.actor.sendMessage(Lang.msg("quick.regen-slow"));
+            }
+        }, softTimeoutTicks);
+
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            RegenSnapshot stale = pendingRegens.get(k);
+            if (stale == null) return; // already completed
+            // Last chance: reseat now if the arena actually did settle and the event was missed,
+            // rather than stranding everyone as spectators.
+            if (arena.exists() && arena.getStatus() == ArenaStatus.LOBBY && pendingRegens.remove(k) != null) {
+                reseat(arena, stale);
+                return;
+            }
+            pendingRegens.remove(k);
+            if (stale.actor != null && stale.actor.isOnline()) {
                 stale.actor.sendMessage(Lang.msg("quick.regen-failed"));
             }
-        }, timeoutTicks);
+        }, hardTimeoutTicks);
     }
 
     /**
@@ -155,6 +190,12 @@ public final class QuickActionsService implements Listener {
      */
     @EventHandler
     public void onStatusChange(ArenaStatusChangeEvent event) {
+        // Freezing only ever makes sense mid-round — don't let it silently carry over into
+        // this arena's next match once the round it was set during actually ends.
+        if (event.getNewStatus() != ArenaStatus.RUNNING) {
+            frozenArenas.remove(key(event.getArena().getName()));
+        }
+
         if (event.getNewStatus() != ArenaStatus.LOBBY) return;
 
         Arena arena = event.getArena();
@@ -302,6 +343,195 @@ public final class QuickActionsService implements Listener {
         TimelineService.Definition def = plugin.getTimelineEngine().skipToNextEvent(arena);
         if (def == null) tell(actor, arena, Lang.msg("quick.nothing-to-skip"));
         // Success feedback is the event's own in-arena broadcast.
+    }
+
+    // ── Team management ───────────────────────────────────────────────────────────
+
+    /** Instantly ends the match, awarding {@code winner} the win. */
+    public void forceWin(Player actor, PrivateSession session, Arena arena, Team winner) {
+        if (winner == null) return;
+        try {
+            arena.endMatch(winner);
+            tell(actor, arena, Lang.msg("quick.force-win", "%team%", winner.getDisplayName(null)));
+        } catch (Throwable t) {
+            plugin.getLogger().warning("Force-win failed on " + arena.getName() + ": " + t.getMessage());
+        }
+    }
+
+    /** Swaps every player between two teams' rosters. */
+    public void swapTeams(Player actor, PrivateSession session, Arena arena, Team a, Team b) {
+        if (a == null || b == null || a == b) return;
+        List<Player> aPlayers = playersOnTeam(arena, a);
+        List<Player> bPlayers = playersOnTeam(arena, b);
+        for (Player p : aPlayers) arena.setPlayerTeam(p, b);
+        for (Player p : bPlayers) arena.setPlayerTeam(p, a);
+        tell(actor, arena, Lang.msg("quick.teams-swapped",
+                "%team-a%", a.getDisplayName(null), "%team-b%", b.getDisplayName(null)));
+    }
+
+    /** Re-shuffles every current player evenly across the enabled teams. */
+    public void balanceTeams(Player actor, PrivateSession session, Arena arena) {
+        List<Team> teams = new ArrayList<>(arena.getEnabledTeams());
+        if (teams.isEmpty()) return;
+        List<Player> players = new ArrayList<>(arena.getPlayers());
+        java.util.Collections.shuffle(players);
+
+        int i = 0;
+        for (Player p : players) {
+            arena.setPlayerTeam(p, teams.get(i % teams.size()));
+            i++;
+        }
+        tell(actor, arena, Lang.msg("quick.teams-balanced", "%count%", String.valueOf(players.size())));
+    }
+
+    // ── Traps & upgrades ─────────────────────────────────────────────────────────
+
+    /**
+     * Force-triggers a random team's queued trap, if any team has one queued. The exact
+     * semantics of {@code UpgradeState#triggerTrap}'s player/boolean arguments aren't
+     * documented anywhere — a best-effort "chaos" action, wrapped so a wrong interpretation
+     * degrades to a no-op rather than breaking anything.
+     */
+    public void triggerRandomTrap(Player actor, PrivateSession session, Arena arena) {
+        List<Team> candidates = new ArrayList<>();
+        for (Team team : arena.getAliveTeams()) {
+            UpgradeState state = arena.getUpgradeState(team);
+            if (state != null && !state.getQueuedTraps().isEmpty()) candidates.add(team);
+        }
+        if (candidates.isEmpty()) {
+            tell(actor, arena, Lang.msg("quick.no-traps-queued"));
+            return;
+        }
+
+        Random random = new Random();
+        Team target = candidates.get(random.nextInt(candidates.size()));
+        List<Player> players = new ArrayList<>(arena.getPlayers());
+        Player triggerer = players.isEmpty() ? null : players.get(random.nextInt(players.size()));
+        try {
+            arena.getUpgradeState(target).triggerTrap(triggerer, target, true);
+            tell(actor, arena, Lang.msg("quick.trap-triggered", "%team%", target.getDisplayName(null)));
+        } catch (Throwable t) {
+            plugin.getLogger().warning("Trap trigger failed on " + arena.getName() + ": " + t.getMessage());
+        }
+    }
+
+    /** Clears every team's queued (not yet triggered) traps. */
+    public void clearAllTrapQueues(Player actor, PrivateSession session, Arena arena) {
+        int cleared = 0;
+        for (Team team : arena.getEnabledTeams()) {
+            UpgradeState state = arena.getUpgradeState(team);
+            if (state == null || state.getQueuedTraps().isEmpty()) continue;
+            cleared += state.getQueuedTraps().size();
+            state.clearTrapQueue();
+        }
+        tell(actor, arena, Lang.msg("quick.traps-cleared", "%count%", String.valueOf(cleared)));
+    }
+
+    /** Resets every team's generator/shop upgrades back to nothing purchased. */
+    public void resetAllTeamUpgrades(Player actor, PrivateSession session, Arena arena) {
+        int cleared = 0;
+        for (Team team : arena.getEnabledTeams()) {
+            UpgradeState state = arena.getUpgradeState(team);
+            if (state == null) continue;
+            for (UpgradeLevel level : new ArrayList<>(state.getActiveUpgrades())) {
+                try {
+                    if (state.clearUpgrade(level.getUpgrade()) != null) cleared++;
+                } catch (Throwable ignored) {
+                    // best effort per upgrade
+                }
+            }
+        }
+        tell(actor, arena, Lang.msg("quick.upgrades-reset", "%count%", String.valueOf(cleared)));
+    }
+
+    // ── Buffs ────────────────────────────────────────────────────────────────────
+
+    /** Grants everyone currently in the arena a timed potion effect. */
+    public void grantEffect(Player actor, PrivateSession session, Arena arena,
+                            org.bukkit.potion.PotionEffectType type, int amplifier, int seconds) {
+        if (type == null) return;
+        int count = 0;
+        for (Player p : arena.getPlayers()) {
+            p.addPotionEffect(new org.bukkit.potion.PotionEffect(type, Math.max(1, seconds) * 20, amplifier, false, true));
+            count++;
+        }
+        if (count > 0) arena.broadcast(Lang.msg("quick.buff-broadcast"));
+        tell(actor, arena, Lang.msg("quick.buffed", "%count%", String.valueOf(count)));
+    }
+
+    // ── Freeze ───────────────────────────────────────────────────────────────────
+
+    /** Toggles whether everyone in the arena is locked in place — a "hold on a second" button. */
+    public void toggleFreeze(Player actor, PrivateSession session, Arena arena) {
+        String k = key(arena.getName());
+        if (!frozenArenas.add(k)) {
+            frozenArenas.remove(k);
+            arena.broadcast(Lang.msg("quick.unfrozen"));
+        } else {
+            arena.broadcast(Lang.msg("quick.frozen"));
+        }
+    }
+
+    /** Snaps movement back for anyone in a frozen arena — looking around is still allowed. */
+    @EventHandler(ignoreCancelled = true)
+    public void onMove(PlayerMoveEvent event) {
+        if (frozenArenas.isEmpty()) return; // fast path — nothing frozen anywhere
+        Location from = event.getFrom();
+        Location to = event.getTo();
+        if (to == null) return;
+        if (from.getX() == to.getX() && from.getY() == to.getY() && from.getZ() == to.getZ()) return;
+
+        Player player = event.getPlayer();
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByPlayer(player);
+        if (arena == null || !frozenArenas.contains(key(arena.getName()))) return;
+        event.setTo(from);
+        // Without this, a player already falling/knocked back when frozen keeps their old
+        // velocity and immediately drifts again next tick despite the position snap-back.
+        player.setVelocity(new org.bukkit.util.Vector(0, 0, 0));
+        player.setFallDistance(0f);
+    }
+
+    // ── Recovery ─────────────────────────────────────────────────────────────────
+
+    /** Sweeps disconnected players who are back online (on this server) and rejoins them. */
+    public void forceRejoinDisconnected(Player actor, PrivateSession session, Arena arena) {
+        int rejoined = 0;
+        for (de.marcely.bedwars.api.arena.QuitPlayerMemory memory :
+                new ArrayList<>(arena.getQuitPlayerMemories())) {
+            Player online = Bukkit.getPlayer(memory.getUniqueId());
+            if (online == null || !online.isOnline()) continue;
+            try {
+                if (arena.rejoinPlayer(online) == null) rejoined++;
+            } catch (Throwable ignored) {
+                // best effort per player
+            }
+        }
+        tell(actor, arena, Lang.msg("quick.rejoined", "%count%", String.valueOf(rejoined)));
+    }
+
+    // ── Debug ────────────────────────────────────────────────────────────────────
+
+    /**
+     * Visualizes the arena's match-area border to {@code actor} only — a local-only visual
+     * aid, never relayed cross-server (the border particles wouldn't render for a player on a
+     * different server than the arena anyway).
+     */
+    public void revealBorder(Player actor, Arena arena) {
+        if (actor == null) return;
+        try {
+            BedwarsAPI.getGameAPI().drawBorder(arena.getMinRegionCorner(), arena.getMaxRegionCorner(), actor);
+            actor.sendMessage(Lang.msg("quick.border-shown"));
+        } catch (Throwable t) {
+            plugin.getLogger().warning("Draw border failed on " + arena.getName() + ": " + t.getMessage());
+        }
+    }
+
+    private static List<Player> playersOnTeam(Arena arena, Team team) {
+        List<Player> out = new ArrayList<>();
+        for (Player p : arena.getPlayers()) {
+            if (team.equals(arena.getPlayerTeam(p))) out.add(p);
+        }
+        return out;
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────────

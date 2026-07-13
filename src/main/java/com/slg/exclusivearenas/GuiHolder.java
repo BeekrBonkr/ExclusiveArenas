@@ -22,7 +22,7 @@ public final class GuiHolder implements InventoryHolder {
         MAIN, ARENA_LIST, ADMIN_LIST, BUILDER, ARENA_SELECT, CONTROLS, ARENA_CONFIG,
         TEAM_SELECT, TEAM_PLAYERS, QUICK_ACTIONS, HELP,
         TIMELINE, SHOP_PAGES, SHOP_ITEMS, SHOP_PRICE, PRESETS, PRESET_NAME, TEAM_SIZE,
-        BUILDER_SETTINGS
+        BUILDER_SETTINGS, ENVIRONMENT, TIMELINE_ADD, QUICK_FORCE_WIN, QUICK_GRANT_EFFECT
     }
 
     private final Type type;
@@ -35,7 +35,11 @@ public final class GuiHolder implements InventoryHolder {
     private int playersPerTeamFilter;              // ARENA_SELECT: 0 = any
     private Team targetTeam;                       // TEAM_PLAYERS: which team is being filled
     private Set<UUID> selectedPlayers = Collections.emptySet(); // TEAM_PLAYERS: staged multi-select
-    private final Map<Integer, UUID> slotToSession = new HashMap<>(); // list menus: slot -> session
+    // Slot -> UUID, reused for two unrelated id kinds depending on menu type: a session id in
+    // the list menus (ARENA_LIST/ADMIN_LIST), a player id in TEAM_PLAYERS. Safe because a given
+    // GuiHolder belongs to exactly one menu instance, but named generically to avoid the trap of
+    // reading "session" as a guarantee it always holds one.
+    private final Map<Integer, UUID> slotToId = new HashMap<>();
     private final Map<Integer, Team> slotToTeam = new HashMap<>();    // TEAM_SELECT: slot -> team
     private final Map<Integer, String> slotToKey = new HashMap<>();   // TIMELINE/SHOP_*: slot -> event/page/item id
 
@@ -74,8 +78,8 @@ public final class GuiHolder implements InventoryHolder {
         return this;
     }
 
-    public void mapSlot(int slot, UUID sessionId) { slotToSession.put(slot, sessionId); }
-    public UUID sessionAt(int slot) { return slotToSession.get(slot); }
+    public void mapSlot(int slot, UUID id) { slotToId.put(slot, id); }
+    public UUID idAt(int slot) { return slotToId.get(slot); }
 
     public void mapTeamSlot(int slot, Team team) { slotToTeam.put(slot, team); }
     public Team teamAt(int slot) { return slotToTeam.get(slot); }
@@ -85,7 +89,7 @@ public final class GuiHolder implements InventoryHolder {
 
     /** Clears all slot mappings — used when a menu is re-rendered in place (live refresh). */
     public void clearSlotMaps() {
-        slotToSession.clear();
+        slotToId.clear();
         slotToTeam.clear();
         slotToKey.clear();
     }

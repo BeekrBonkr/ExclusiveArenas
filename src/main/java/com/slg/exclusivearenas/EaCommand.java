@@ -2,6 +2,8 @@ package com.slg.exclusivearenas;
 
 import de.marcely.bedwars.api.BedwarsAPI;
 import de.marcely.bedwars.api.arena.Arena;
+import de.marcely.bedwars.api.arena.ArenaTimeType;
+import de.marcely.bedwars.api.arena.ArenaWeatherType;
 import de.marcely.bedwars.api.arena.Team;
 import de.marcely.bedwars.api.game.shop.ShopItem;
 import de.marcely.bedwars.api.game.shop.ShopPage;
@@ -17,9 +19,9 @@ import org.bukkit.entity.Player;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -189,12 +191,25 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
             case "beds" -> runQuick(p, RemoteCommandService.Type.QUICK_BEDS);
             case "clearitems" -> runQuick(p, RemoteCommandService.Type.QUICK_CLEAR);
             case "skipevent" -> runQuick(p, RemoteCommandService.Type.QUICK_SKIP_EVENT);
+            case "balance" -> runQuick(p, RemoteCommandService.Type.QUICK_BALANCE_TEAMS);
+            case "trigtrap" -> runQuick(p, RemoteCommandService.Type.QUICK_TRIGGER_TRAP);
+            case "cleartraps" -> runQuick(p, RemoteCommandService.Type.QUICK_CLEAR_TRAPS);
+            case "resetupgrades" -> runQuick(p, RemoteCommandService.Type.QUICK_RESET_UPGRADES);
+            case "freeze" -> runQuick(p, RemoteCommandService.Type.QUICK_TOGGLE_FREEZE);
+            case "rejoinall" -> runQuick(p, RemoteCommandService.Type.QUICK_FORCE_REJOIN);
+            case "forcewin" -> handleForceWin(p, args);
+            case "swapteams" -> handleSwapTeams(p, args);
+            case "buff" -> handleBuff(p, args);
+            case "border" -> handleRevealBorder(p);
 
             // ── Arena Settings editors ──────────────────────────────────────────
 
             case "timeline" -> handleTimeline(p, args);
             case "shop" -> handleShop(p, args);
             case "preset", "presets" -> handlePreset(p, args);
+            case "weather" -> handleWeather(p, args);
+            case "time" -> handleTime(p, args);
+            case "teamsize" -> handleTeamSize(p, args);
 
             default -> p.sendMessage(Lang.msg("general.unknown-subcommand"));
         }
@@ -205,6 +220,83 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
         PrivateSession session = requireHostedSession(p);
         if (session == null) return;
         plugin.runArenaAction(p, session, type);
+    }
+
+    private void handleForceWin(Player p, String[] args) {
+        PrivateSession session = requireHostedSession(p);
+        if (session == null) return;
+        if (args.length < 2) {
+            p.sendMessage(Lang.msg("cmd.forcewin-usage"));
+            return;
+        }
+        // Best-effort: only checkable when the arena happens to be loaded on this server — the
+        // relay path (arena hosted elsewhere) can't validate before sending, same as every other
+        // quick action's relay path.
+        Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        if (local != null && local.exists() && teamByLocalName(local, args[1]) == null) {
+            p.sendMessage(Lang.msg("cmd.team-unknown", "%team%", args[1]));
+            return;
+        }
+        plugin.runArenaAction(p, session, RemoteCommandService.Type.QUICK_FORCE_WIN, args[1]);
+    }
+
+    private void handleSwapTeams(Player p, String[] args) {
+        PrivateSession session = requireHostedSession(p);
+        if (session == null) return;
+        if (args.length < 3) {
+            p.sendMessage(Lang.msg("cmd.swapteams-usage"));
+            return;
+        }
+        Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        if (local != null && local.exists()) {
+            String bad = teamByLocalName(local, args[1]) == null ? args[1]
+                    : teamByLocalName(local, args[2]) == null ? args[2] : null;
+            if (bad != null) {
+                p.sendMessage(Lang.msg("cmd.team-unknown", "%team%", bad));
+                return;
+            }
+        }
+        plugin.runArenaAction(p, session, RemoteCommandService.Type.QUICK_SWAP_TEAMS, args[1] + ":" + args[2]);
+    }
+
+    private static Team teamByLocalName(Arena arena, String name) {
+        for (Team team : arena.getEnabledTeams()) {
+            if (team.name().equalsIgnoreCase(name)) return team;
+        }
+        return null;
+    }
+
+    private static final Map<String, String> BUFF_SHORTHANDS = Map.of(
+            "speed", "SPEED:1:60", "jump", "JUMP:1:60",
+            "regen", "REGENERATION:1:60", "strength", "STRENGTH:1:60");
+
+    private void handleBuff(Player p, String[] args) {
+        PrivateSession session = requireHostedSession(p);
+        if (session == null) return;
+        if (args.length < 2) {
+            p.sendMessage(Lang.msg("cmd.buff-usage"));
+            return;
+        }
+        String payload = BUFF_SHORTHANDS.get(args[1].toLowerCase(Locale.ROOT));
+        if (payload == null) {
+            // Advanced form: /ea buff <potion_type> [amplifier] [seconds]
+            String type = args[1].toUpperCase(Locale.ROOT);
+            String amplifier = args.length >= 3 ? args[2] : "0";
+            String seconds = args.length >= 4 ? args[3] : "30";
+            payload = type + ":" + amplifier + ":" + seconds;
+        }
+        plugin.runArenaAction(p, session, RemoteCommandService.Type.QUICK_GRANT_EFFECT, payload);
+    }
+
+    private void handleRevealBorder(Player p) {
+        PrivateSession session = requireHostedSession(p);
+        if (session == null) return;
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        if (arena == null || !arena.exists()) {
+            p.sendMessage(Lang.msg("teams.requires-local"));
+            return;
+        }
+        plugin.getQuickActions().revealBorder(p, arena);
     }
 
     // ── /ea team <player> <team> ─────────────────────────────────────────────────
@@ -242,6 +334,105 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
         plugin.moveArenaPlayersToTeam(p, session, team, Set.of(target.getUniqueId()));
     }
 
+    // ── /ea teamsize ─────────────────────────────────────────────────────────────
+
+    private void handleTeamSize(Player p, String[] args) {
+        PrivateSession session = requireHostedSession(p);
+        if (session == null) return;
+
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        if (arena == null || !arena.exists()) {
+            p.sendMessage(Lang.msg("teams.requires-local"));
+            return;
+        }
+        if (!plugin.canChangeTeamSize(arena)) {
+            p.sendMessage(Lang.msg("teamsize.locked"));
+            return;
+        }
+        if (args.length < 2) {
+            p.sendMessage(Lang.msg("cmd.teamsize-usage"));
+            return;
+        }
+
+        Integer original = session.getOriginalPlayersPerTeam();
+        int fallback = original != null ? original : arena.getPlayersPerTeam();
+
+        Integer next;
+        if (args[1].equalsIgnoreCase("reset")) {
+            next = null;
+        } else {
+            int parsed;
+            try {
+                parsed = Integer.parseInt(args[1]);
+            } catch (NumberFormatException e) {
+                p.sendMessage(Lang.msg("cmd.teamsize-usage"));
+                return;
+            }
+            int clamped = Math.max(GuiManager.MIN_PLAYERS_PER_TEAM, Math.min(GuiManager.MAX_PLAYERS_PER_TEAM, parsed));
+            next = clamped != fallback ? clamped : null;
+        }
+
+        session.getSettings().setPlayersPerTeam(next);
+        sessions.saveSettings(session);
+        plugin.applyPlayersPerTeamOverride(arena, session);
+        p.sendMessage(Lang.msg("teamsize.changed", "%amount%", String.valueOf(next != null ? next : fallback)));
+    }
+
+    // ── /ea weather / /ea time ────────────────────────────────────────────────────
+
+    private void handleWeather(Player p, String[] args) {
+        PrivateSession session = requireHostedSession(p);
+        if (session == null) return;
+
+        ArenaWeatherType type = switch (args.length >= 2 ? args[1].toLowerCase(Locale.ROOT) : "") {
+            case "clear" -> ArenaWeatherType.CLEAR;
+            case "rain" -> ArenaWeatherType.RAINING;
+            case "off" -> ArenaWeatherType.UNTOUCHED;
+            default -> null;
+        };
+        if (type == null) {
+            p.sendMessage(Lang.msg("cmd.weather-usage"));
+            return;
+        }
+
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        if (arena == null || !arena.exists()) {
+            p.sendMessage(Lang.msg("teams.requires-local"));
+            return;
+        }
+        session.getSettings().setWeatherType(type == ArenaWeatherType.UNTOUCHED ? null : type.name());
+        sessions.saveSettings(session);
+        plugin.applyEnvironmentOverride(arena, session);
+        p.sendMessage(Lang.msg("environment.weather-changed", "%weather%", type.name()));
+    }
+
+    private void handleTime(Player p, String[] args) {
+        PrivateSession session = requireHostedSession(p);
+        if (session == null) return;
+
+        ArenaTimeType type = switch (args.length >= 2 ? args[1].toLowerCase(Locale.ROOT) : "") {
+            case "noon" -> ArenaTimeType.NOON;
+            case "sunset" -> ArenaTimeType.SUNSET;
+            case "night" -> ArenaTimeType.NIGHT;
+            case "off" -> ArenaTimeType.UNTOUCHED;
+            default -> null;
+        };
+        if (type == null) {
+            p.sendMessage(Lang.msg("cmd.time-usage"));
+            return;
+        }
+
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        if (arena == null || !arena.exists()) {
+            p.sendMessage(Lang.msg("teams.requires-local"));
+            return;
+        }
+        session.getSettings().setTimeType(type == ArenaTimeType.UNTOUCHED ? null : type.name());
+        sessions.saveSettings(session);
+        plugin.applyEnvironmentOverride(arena, session);
+        p.sendMessage(Lang.msg("environment.time-changed", "%time%", type.name()));
+    }
+
     // ── /ea timeline … ───────────────────────────────────────────────────────────
 
     private void handleTimeline(Player p, String[] args) {
@@ -259,7 +450,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
             case "list" -> {
                 p.sendMessage(Lang.msg("cmd.timeline-header", "%arena%", session.getArenaName()));
                 for (SessionSettings.TimelineEntry entry : timelines.effectiveTimeline(session.getSettings())) {
-                    TimelineService.Definition def = timelines.definition(entry.id());
+                    TimelineService.Definition def = timelines.definitionFor(entry);
                     p.sendMessage(Lang.msg("cmd.timeline-line",
                             "%time%", TimelineService.format(entry.seconds()),
                             "%event%", def != null ? def.name() : entry.id(),
@@ -267,9 +458,62 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                 }
             }
 
+            case "add" -> {
+                if (!timelineEditable(p, session)) return;
+                if (args.length < 3) { p.sendMessage(Lang.msg("cmd.timeline-add-usage")); return; }
+                String id = resolveEventId(timelines, session, args[2]);
+                if (id == null) {
+                    p.sendMessage(Lang.msg("cmd.timeline-unknown-event", "%id%", args[2]));
+                    return;
+                }
+                TimelineService.Definition def = timelines.definition(id);
+                int time = args.length >= 4
+                        ? (parseDuration(args[3]) != null ? parseDuration(args[3])
+                                : def != null ? def.defaultSeconds() : 60)
+                        : def != null ? def.defaultSeconds() : 60;
+                if (!timelines.addEvent(session.getSettings(), id, time)) {
+                    p.sendMessage(Lang.msg("timeline.add-failed"));
+                    return;
+                }
+                sessions.saveSettings(session);
+                p.sendMessage(Lang.msg("timeline.added", "%event%", def != null ? def.name() : id));
+            }
+
+            case "custom" -> {
+                if (!timelineEditable(p, session)) return;
+                if (args.length < 5) { p.sendMessage(Lang.msg("cmd.timeline-custom-usage")); return; }
+
+                TimelineService.Type type;
+                try {
+                    type = TimelineService.Type.valueOf(args[2].toUpperCase(Locale.ROOT));
+                } catch (IllegalArgumentException e) {
+                    p.sendMessage(Lang.msg("cmd.timeline-custom-usage"));
+                    return;
+                }
+                Integer time = parseDuration(args[args.length - 1]);
+                if (time == null) {
+                    p.sendMessage(Lang.msg("cmd.bad-time", "%value%", args[args.length - 1]));
+                    return;
+                }
+                // The value itself may contain spaces (an announcement message) — everything
+                // between the type and the trailing time is joined back together.
+                String value = String.join(" ", Arrays.asList(args).subList(3, args.length - 1));
+
+                SessionSettings.TimelineEntry entry =
+                        timelines.addCustomEvent(session.getSettings(), type, value, time);
+                if (entry == null) {
+                    p.sendMessage(Lang.msg("timeline.add-failed"));
+                    return;
+                }
+                sessions.saveSettings(session);
+                TimelineService.Definition def = timelines.definitionFor(entry);
+                p.sendMessage(Lang.msg("timeline.added", "%event%", def != null ? def.name() : entry.id()));
+            }
+
             case "move", "set" -> {
+                if (!timelineEditable(p, session)) return;
                 if (args.length < 4) { p.sendMessage(Lang.msg("cmd.timeline-usage")); return; }
-                String id = resolveEventId(timelines, args[2]);
+                String id = resolveEventId(timelines, session, args[2]);
                 if (id == null) {
                     p.sendMessage(Lang.msg("cmd.timeline-unknown-event", "%id%", args[2]));
                     return;
@@ -298,7 +542,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                     return;
                 }
                 sessions.saveSettings(session);
-                TimelineService.Definition def = timelines.definition(id);
+                TimelineService.Definition def = timelines.definitionFor(session.getSettings(), id);
                 boolean isEnd = def != null && def.type() == TimelineService.Type.MATCH_END;
                 p.sendMessage(Lang.msg(isEnd ? "timeline.end-moved" : "timeline.moved",
                         "%event%", def != null ? def.name() : id,
@@ -306,13 +550,14 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
             }
 
             case "delete", "remove" -> {
+                if (!timelineEditable(p, session)) return;
                 if (args.length < 3) { p.sendMessage(Lang.msg("cmd.timeline-usage")); return; }
-                String id = resolveEventId(timelines, args[2]);
+                String id = resolveEventId(timelines, session, args[2]);
                 if (id == null) {
                     p.sendMessage(Lang.msg("cmd.timeline-unknown-event", "%id%", args[2]));
                     return;
                 }
-                TimelineService.Definition def = timelines.definition(id);
+                TimelineService.Definition def = timelines.definitionFor(session.getSettings(), id);
                 if (def != null && def.type() == TimelineService.Type.MATCH_END) {
                     p.sendMessage(Lang.msg("timeline.cannot-delete-end"));
                     return;
@@ -325,6 +570,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
             }
 
             case "reset" -> {
+                if (!timelineEditable(p, session)) return;
                 timelines.resetTimeline(session.getSettings());
                 sessions.saveSettings(session);
                 p.sendMessage(Lang.msg("timeline.reset"));
@@ -334,10 +580,33 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
         }
     }
 
-    /** Case-insensitive event-id lookup, so tab-completed and hand-typed ids both work. */
-    private static String resolveEventId(TimelineService timelines, String raw) {
+    /**
+     * The timeline engine snapshots a match's schedule once at round start and never re-reads
+     * it, so an edit made while the round is already RUNNING would silently have no effect
+     * until the next round despite the command confirming success — same reasoning as
+     * team-select being gated to the lobby.
+     */
+    private boolean timelineEditable(Player p, PrivateSession session) {
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        if (arena != null && !arena.getStatus().isLobby()) {
+            p.sendMessage(Lang.msg("timeline.lobby-only"));
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Case-insensitive event-id lookup against the full catalog, so tab-completed and
+     * hand-typed ids both work — plus an exact (case-sensitive) match against the session's own
+     * currently-scheduled entries, so a host-authored custom event's generated id (shown by
+     * {@code /ea timeline list}, never itself in the catalog) can still be moved/deleted by id.
+     */
+    private static String resolveEventId(TimelineService timelines, PrivateSession session, String raw) {
         for (String id : timelines.definitionIds()) {
             if (id.equalsIgnoreCase(raw)) return id;
+        }
+        for (SessionSettings.TimelineEntry entry : timelines.effectiveTimeline(session.getSettings())) {
+            if (entry.id().equals(raw)) return entry.id();
         }
         return null;
     }
@@ -594,7 +863,9 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
             int minutes = Integer.parseInt(raw.substring(0, colon));
             int seconds = Integer.parseInt(raw.substring(colon + 1));
             if (minutes < 0 || seconds < 0 || seconds > 59) return null;
-            return minutes * 60 + seconds;
+            long total = (long) minutes * 60 + seconds; // long math so a huge minutes can't wrap the int
+            if (total > Integer.MAX_VALUE) return null;
+            return (int) total;
         } catch (NumberFormatException e) {
             return null;
         }
@@ -660,7 +931,11 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
 
     private void joinSession(Player p, PrivateSession session) {
         if (session.getJoinPolicy() == JoinPolicy.CODE && !session.isPublic()) {
-            p.sendMessage(Lang.msg("join.not-accepting"));
+            // Deliberately the same message as an unrecognized code (join.invalid-code) rather
+            // than a distinct "that one's locked" — otherwise a guesser could tell a code that
+            // exists-but-is-locked apart from one that doesn't exist at all, which helps an
+            // automated guesser converge faster than blind guessing would.
+            p.sendMessage(Lang.msg("join.invalid-code"));
             return;
         }
 
@@ -678,7 +953,19 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
         Arena arena = BedwarsAPI.getGameAPI().getArenaByPlayer(p);
         PrivateSession session = arena != null ? sessions.getByArena(arena) : null;
 
-        if (session == null) session = sessions.getByOwner(p.getUniqueId());
+        if (session == null) {
+            // Not physically standing in one of their own matches — fall back to "the" hosted
+            // session, but only when that's unambiguous. A host running more than one match at
+            // once (an elevated exclusivearenas.limit.<n>) has no way to say which one they mean
+            // here, so guessing (e.g. always the first PARTY-policy match) risks silently acting
+            // on the wrong arena — send them to the list instead of picking for them.
+            List<PrivateSession> owned = sessions.getSessionsByOwner(p.getUniqueId());
+            if (owned.size() > 1) {
+                p.sendMessage(Lang.msg("host.ambiguous"));
+                return null;
+            }
+            session = owned.isEmpty() ? null : owned.get(0);
+        }
         if (session == null) {
             p.sendMessage(Lang.msg("host.not-hosting"));
             return null;
@@ -698,8 +985,10 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
         if (args.length == 1) {
             List<String> subs = new ArrayList<>(Arrays.asList(
                     "menu", "arena", "list", "help", "lobby", "join", "start", "end", "summon",
-                    "goto", "kick", "code", "public", "team",
+                    "goto", "kick", "code", "public", "team", "teamsize", "weather", "time",
                     "regen", "heal", "drop", "beds", "clearitems", "skipevent",
+                    "balance", "trigtrap", "cleartraps", "resetupgrades", "freeze", "rejoinall",
+                    "forcewin", "swapteams", "buff", "border",
                     "timeline", "shop", "preset"));
             if (sender.hasPermission(GuiManager.ADMIN_PERM)) {
                 subs.add("admin");
@@ -720,18 +1009,42 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
             case "public" -> {
                 if (args.length == 2) return partial(args[1], List.of("on", "off"));
             }
+            case "weather" -> {
+                if (args.length == 2) return partial(args[1], List.of("clear", "rain", "off"));
+            }
+            case "time" -> {
+                if (args.length == 2) return partial(args[1], List.of("noon", "sunset", "night", "off"));
+            }
+            case "teamsize" -> {
+                if (args.length == 2) return partial(args[1], List.of("reset"));
+            }
             case "team" -> {
                 if (args.length == 2) return partial(args[1], hostedArenaPlayerNames(sender));
                 if (args.length == 3) return partial(args[2], hostedArenaTeamNames(sender));
             }
+            case "forcewin" -> {
+                if (args.length == 2) return partial(args[1], hostedArenaTeamNames(sender));
+            }
+            case "swapteams" -> {
+                if (args.length == 2 || args.length == 3) {
+                    return partial(args[args.length - 1], hostedArenaTeamNames(sender));
+                }
+            }
+            case "buff" -> {
+                if (args.length == 2) return partial(args[1], List.of("speed", "jump", "regen", "strength"));
+            }
             case "timeline" -> {
                 if (args.length == 2) {
-                    return partial(args[1], List.of("list", "move", "set", "delete", "reset"));
+                    return partial(args[1], List.of("list", "add", "custom", "move", "set", "delete", "reset"));
                 }
-                if (args.length == 3 && List.of("move", "set", "delete").contains(
+                if (args.length == 3 && List.of("move", "set", "delete", "add").contains(
                         args[1].toLowerCase(Locale.ROOT))) {
                     return partial(args[2],
                             List.copyOf(plugin.getTimelineService().definitionIds()));
+                }
+                if (args.length == 3 && args[1].equalsIgnoreCase("custom")) {
+                    return partial(args[2], Arrays.stream(TimelineService.Type.values())
+                            .map(t -> t.name().toLowerCase(Locale.ROOT)).toList());
                 }
             }
             case "shop" -> {

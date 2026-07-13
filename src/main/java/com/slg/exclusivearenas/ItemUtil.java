@@ -1,5 +1,6 @@
 package com.slg.exclusivearenas;
 
+import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.OfflinePlayer;
@@ -11,10 +12,17 @@ import org.bukkit.inventory.meta.SkullMeta;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 public final class ItemUtil {
 
     private ItemUtil() {}
+
+    /** An offline player's last-known name, or {@code fallback} if it was never cached. */
+    public static String offlineName(UUID playerId, String fallback) {
+        OfflinePlayer off = Bukkit.getOfflinePlayer(playerId);
+        return off.getName() != null ? off.getName() : fallback;
+    }
 
     public static ItemStack button(Material mat, String name, String... lore) {
         List<String> lines = new ArrayList<>();
@@ -117,18 +125,7 @@ public final class ItemUtil {
         return item;
     }
 
-    /** Stub item for features planned but not yet implemented. */
-    public static ItemStack stub(String name, String description) {
-        return button(Material.CLOCK, "&8✦ &7" + name + " &8(Soon)",
-                "&8" + strip(description),
-                "&8Not yet available.");
-    }
-
     public static String color(String s) {
         return ChatColor.translateAlternateColorCodes('&', s == null ? "" : s);
-    }
-
-    private static String strip(String s) {
-        return s == null ? "" : s;
     }
 }

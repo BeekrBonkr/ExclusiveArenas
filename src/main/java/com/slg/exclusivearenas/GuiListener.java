@@ -2,6 +2,8 @@ package com.slg.exclusivearenas;
 
 import de.marcely.bedwars.api.BedwarsAPI;
 import de.marcely.bedwars.api.arena.Arena;
+import de.marcely.bedwars.api.arena.ArenaTimeType;
+import de.marcely.bedwars.api.arena.ArenaWeatherType;
 import de.marcely.bedwars.api.arena.Team;
 import de.marcely.bedwars.api.game.shop.ShopItem;
 import de.marcely.bedwars.api.game.spawner.DropType;
@@ -11,6 +13,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.PrepareAnvilEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.InventoryHolder;
@@ -47,6 +50,18 @@ public final class GuiListener implements Listener {
         this.gui = gui;
     }
 
+    /**
+     * A drag gesture is a separate event from a click and was never cancelled here — several
+     * list/grid menus leave real AIR holes in their interior whenever the entry count is below
+     * the slot template's capacity, and a drag spanning one of those holes and the player's own
+     * inventory would silently swallow the dragged item when the (throwaway) menu closes.
+     */
+    @EventHandler
+    public void onDrag(InventoryDragEvent e) {
+        InventoryHolder holder = e.getView().getTopInventory().getHolder();
+        if (holder instanceof GuiHolder) e.setCancelled(true);
+    }
+
     @EventHandler
     public void onClick(InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player p)) return;
@@ -61,14 +76,13 @@ public final class GuiListener implements Listener {
         if (e.getClickedInventory() == null || e.getClickedInventory() != e.getView().getTopInventory()) return;
 
         int slot = e.getSlot();
-        ItemStack clicked = e.getCurrentItem();
 
         switch (gh.type()) {
             case MAIN        -> handleMain(p, slot);
             case ARENA_LIST  -> handleList(p, gh, slot, false);
             case ADMIN_LIST  -> handleList(p, gh, slot, true);
             case BUILDER     -> handleBuilder(p, slot, e.isShiftClick());
-            case ARENA_SELECT-> handleArenaSelect(p, gh, slot, clicked);
+            case ARENA_SELECT-> handleArenaSelect(p, gh, slot);
             case CONTROLS    -> handleControls(p, gh, slot, e.isShiftClick());
             case ARENA_CONFIG-> handleArenaConfig(p, gh, slot);
             case PRESETS     -> handlePresets(p, gh, slot, e.isShiftClick());
@@ -83,6 +97,10 @@ public final class GuiListener implements Listener {
             case PRESET_NAME -> handlePresetName(p, gh, slot, e.getView());
             case TEAM_SIZE   -> handleTeamSize(p, gh, slot);
             case BUILDER_SETTINGS -> handleBuilderSettings(p, slot);
+            case ENVIRONMENT -> handleEnvironment(p, gh, slot);
+            case TIMELINE_ADD -> handleTimelineAdd(p, gh, slot);
+            case QUICK_FORCE_WIN -> handleForceWin(p, gh, slot);
+            case QUICK_GRANT_EFFECT -> handleGrantEffect(p, gh, slot);
         }
     }
 
@@ -124,6 +142,15 @@ public final class GuiListener implements Listener {
     // ── Session lists (player + admin) ─────────────────────────────────────────────
 
     private void handleList(Player p, GuiHolder gh, int slot, boolean admin) {
+        // GuiRefreshTask keeps an open Admin List re-rendering (and thus still navigable) for as
+        // long as it stays open, regardless of whether the viewer's permission was revoked in
+        // the meantime — re-check live here rather than trusting that opening it once was enough,
+        // so a since-revoked admin can't keep browsing into other players' session details.
+        if (admin && !p.hasPermission(GuiManager.ADMIN_PERM)) {
+            p.closeInventory();
+            return;
+        }
+
         String menu = admin ? "admin-list" : "arena-list";
         int page = gh.page();
 
@@ -134,7 +161,7 @@ public final class GuiListener implements Listener {
         if (admin && slot == GuiStyle.slot("admin-list.buttons.close")) { p.closeInventory(); return; }
         if (!admin && slot == GuiStyle.slot("arena-list.buttons.create")) { plugin.openBuilderMenu(p); return; }
 
-        UUID sessionId = gh.sessionAt(slot);
+        UUID sessionId = gh.idAt(slot);
         if (sessionId == null) return;
         PrivateSession session = sessions.getById(sessionId);
         if (session == null) {
@@ -187,7 +214,7 @@ public final class GuiListener implements Listener {
 
     // ── Arena selector ──────────────────────────────────────────────────────────────
 
-    private void handleArenaSelect(Player p, GuiHolder gh, int slot, ItemStack clicked) {
+    private void handleArenaSelect(Player p, GuiHolder gh, int slot) {
         int page = gh.page();
         int teamFilter = gh.teamFilter();
         int ppFilter = gh.playersPerTeamFilter();
@@ -198,10 +225,10 @@ public final class GuiListener implements Listener {
         if (slot == GuiStyle.slot("arena-select.buttons.players-filter")) { gui.openArenaSelect(p, 0, teamFilter, gui.cyclePlayersPerTeamFilter(ppFilter)); return; }
         if (slot == GuiStyle.slot("arena-select.buttons.back")) { gui.openBuilder(p); return; }
 
-        if (clicked == null || clicked.getType() == Material.AIR) return;
-        if (clicked.getItemMeta() == null || clicked.getItemMeta().getDisplayName().isEmpty()) return;
-
-        String name = ChatColor.stripColor(clicked.getItemMeta().getDisplayName());
+        // Resolved from the slot->name map built when this page was rendered, not the clicked
+        // item's display text — the "no arenas match" empty-state pane sits in the same slot
+        // family as real entries and isn't mapped, so clicking it is now correctly a no-op.
+        String name = gh.keyAt(slot);
         if (name == null || name.isBlank()) return;
 
         if (!sessions.reserveDraftArena(name, p.getUniqueId())) {
@@ -287,6 +314,8 @@ public final class GuiListener implements Listener {
             openPresetsFor(p, gh);
         } else if (slot == GuiStyle.slot("arena-config.buttons.team-size")) {
             gui.openTeamSize(p, session, gh.adminView());
+        } else if (slot == GuiStyle.slot("arena-config.buttons.environment")) {
+            gui.openEnvironment(p, session, gh.adminView());
         } else if (slot == GuiStyle.slot("arena-config.buttons.back")) {
             gui.openControls(p, session, gh.adminView());
         }
@@ -367,6 +396,48 @@ public final class GuiListener implements Listener {
         p.sendMessage(Lang.msg("teamsize.changed",
                 "%amount%", String.valueOf(next != null ? next : fallback)));
         gui.openTeamSize(p, holder, adminView);
+    }
+
+    // ── Environment (time / weather) ─────────────────────────────────────────────────
+
+    private static final ArenaWeatherType[] WEATHER_CYCLE =
+            {ArenaWeatherType.UNTOUCHED, ArenaWeatherType.CLEAR, ArenaWeatherType.RAINING};
+    private static final ArenaTimeType[] TIME_CYCLE =
+            {ArenaTimeType.UNTOUCHED, ArenaTimeType.NOON, ArenaTimeType.SUNSET, ArenaTimeType.NIGHT};
+
+    private void handleEnvironment(Player p, GuiHolder gh, int slot) {
+        PrivateSession session = requireManageable(p, gh);
+        if (session == null) return;
+
+        if (slot == GuiStyle.slot("environment.buttons.back")) {
+            gui.openArenaConfig(p, session, gh.adminView());
+            return;
+        }
+
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        if (arena == null || !arena.exists()) return;
+
+        if (slot == GuiStyle.slot("environment.buttons.weather")) {
+            ArenaWeatherType current = ExclusiveArenasPlugin.parseWeatherType(session.getSettings().getWeatherType());
+            ArenaWeatherType next = WEATHER_CYCLE[(indexOf(WEATHER_CYCLE, current) + 1) % WEATHER_CYCLE.length];
+            session.getSettings().setWeatherType(next == ArenaWeatherType.UNTOUCHED ? null : next.name());
+            sessions.saveSettings(session);
+            plugin.applyEnvironmentOverride(arena, session);
+        } else if (slot == GuiStyle.slot("environment.buttons.time")) {
+            ArenaTimeType current = ExclusiveArenasPlugin.parseTimeType(session.getSettings().getTimeType());
+            ArenaTimeType next = TIME_CYCLE[(indexOf(TIME_CYCLE, current) + 1) % TIME_CYCLE.length];
+            session.getSettings().setTimeType(next == ArenaTimeType.UNTOUCHED ? null : next.name());
+            sessions.saveSettings(session);
+            plugin.applyEnvironmentOverride(arena, session);
+        } else {
+            return;
+        }
+        gui.openEnvironment(p, session, gh.adminView());
+    }
+
+    private static <T> int indexOf(T[] array, T value) {
+        for (int i = 0; i < array.length; i++) if (array[i] == value) return i;
+        return 0;
     }
 
     // ── Saved configurations (presets) ───────────────────────────────────────────────
@@ -463,14 +534,21 @@ public final class GuiListener implements Listener {
         String json = session.getSettings().toJson();
         plugin.getPresetService().save(session.getOwner(), name, json, ok -> {
             if (!p.isOnline()) return;
+            // Re-fetch rather than trusting the closure-captured session — the match may have
+            // ended while this database-mode save was in flight (matches openPresetsFor's guard).
+            PrivateSession live = sessions.getById(session.getSessionId());
+            if (live == null) {
+                p.sendMessage(Lang.msg("general.match-gone"));
+                return;
+            }
             if (!ok) {
                 p.sendMessage(Lang.msg("presets.save-failed", "%name%", name));
-                gui.openPresets(p, session, gh.adminView(), presets); // unchanged — nothing was persisted
+                gui.openPresets(p, live, gh.adminView(), presets); // unchanged — nothing was persisted
                 return;
             }
             p.sendMessage(Lang.msg("presets.saved", "%name%", name));
             presets.put(name, json);
-            gui.openPresets(p, session, gh.adminView(), presets);
+            gui.openPresets(p, live, gh.adminView(), presets);
         });
     }
 
@@ -484,6 +562,27 @@ public final class GuiListener implements Listener {
             gui.openControls(p, session, gh.adminView());
             return;
         }
+        if (slot == GuiStyle.slot("quick-actions.buttons.force-win")) {
+            gui.openForceWin(p, session, gh.adminView());
+            return;
+        }
+        if (slot == GuiStyle.slot("quick-actions.buttons.grant-effect")) {
+            gui.openGrantEffect(p, session, gh.adminView());
+            return;
+        }
+        if (slot == GuiStyle.slot("quick-actions.buttons.swap-teams-info")) {
+            p.sendMessage(Lang.msg("quick.swap-teams-hint"));
+            return;
+        }
+        if (slot == GuiStyle.slot("quick-actions.buttons.reveal-border")) {
+            Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+            if (arena == null || !arena.exists()) {
+                p.sendMessage(Lang.msg("teams.requires-local"));
+                return;
+            }
+            plugin.getQuickActions().revealBorder(p, arena);
+            return;
+        }
 
         RemoteCommandService.Type type = null;
         if (slot == GuiStyle.slot("quick-actions.buttons.regenerate-map")) type = RemoteCommandService.Type.QUICK_REGEN;
@@ -492,6 +591,12 @@ public final class GuiListener implements Listener {
         else if (slot == GuiStyle.slot("quick-actions.buttons.destroy-beds")) type = RemoteCommandService.Type.QUICK_BEDS;
         else if (slot == GuiStyle.slot("quick-actions.buttons.clear-items")) type = RemoteCommandService.Type.QUICK_CLEAR;
         else if (slot == GuiStyle.slot("quick-actions.buttons.skip-event")) type = RemoteCommandService.Type.QUICK_SKIP_EVENT;
+        else if (slot == GuiStyle.slot("quick-actions.buttons.balance-teams")) type = RemoteCommandService.Type.QUICK_BALANCE_TEAMS;
+        else if (slot == GuiStyle.slot("quick-actions.buttons.trigger-trap")) type = RemoteCommandService.Type.QUICK_TRIGGER_TRAP;
+        else if (slot == GuiStyle.slot("quick-actions.buttons.clear-traps")) type = RemoteCommandService.Type.QUICK_CLEAR_TRAPS;
+        else if (slot == GuiStyle.slot("quick-actions.buttons.reset-upgrades")) type = RemoteCommandService.Type.QUICK_RESET_UPGRADES;
+        else if (slot == GuiStyle.slot("quick-actions.buttons.toggle-freeze")) type = RemoteCommandService.Type.QUICK_TOGGLE_FREEZE;
+        else if (slot == GuiStyle.slot("quick-actions.buttons.force-rejoin")) type = RemoteCommandService.Type.QUICK_FORCE_REJOIN;
         if (type == null) return;
 
         if (type == RemoteCommandService.Type.QUICK_REGEN) {
@@ -500,6 +605,39 @@ public final class GuiListener implements Listener {
             p.closeInventory();
         }
         plugin.runArenaAction(p, session, type);
+    }
+
+    private void handleForceWin(Player p, GuiHolder gh, int slot) {
+        PrivateSession session = requireManageable(p, gh);
+        if (session == null) return;
+
+        if (slot == GuiStyle.slot("quick-force-win.buttons.back")) {
+            gui.openQuickActions(p, session, gh.adminView());
+            return;
+        }
+        String teamName = gh.keyAt(slot);
+        if (teamName == null) return;
+        plugin.runArenaAction(p, session, RemoteCommandService.Type.QUICK_FORCE_WIN, teamName);
+        p.closeInventory();
+    }
+
+    private void handleGrantEffect(Player p, GuiHolder gh, int slot) {
+        PrivateSession session = requireManageable(p, gh);
+        if (session == null) return;
+
+        if (slot == GuiStyle.slot("quick-grant-effect.buttons.back")) {
+            gui.openQuickActions(p, session, gh.adminView());
+            return;
+        }
+        String payload = null;
+        if (slot == GuiStyle.slot("quick-grant-effect.buttons.speed")) payload = "SPEED:1:60";
+        else if (slot == GuiStyle.slot("quick-grant-effect.buttons.jump")) payload = "JUMP:1:60";
+        else if (slot == GuiStyle.slot("quick-grant-effect.buttons.regen")) payload = "REGENERATION:1:60";
+        else if (slot == GuiStyle.slot("quick-grant-effect.buttons.strength")) payload = "STRENGTH:1:60";
+        if (payload == null) return;
+
+        plugin.runArenaAction(p, session, RemoteCommandService.Type.QUICK_GRANT_EFFECT, payload);
+        p.closeInventory();
     }
 
     // ── Event timeline editor ────────────────────────────────────────────────────────
@@ -519,7 +657,13 @@ public final class GuiListener implements Listener {
             p.closeInventory();
             return;
         }
+        if (slot == GuiStyle.slot("timeline.buttons.add-event")) {
+            if (!timelineEditable(p, holder)) return;
+            gui.openTimelineAdd(p, holder, adminView);
+            return;
+        }
         if (slot == GuiStyle.slot("timeline.buttons.reset")) {
+            if (!timelineEditable(p, holder)) return;
             timelines.resetTimeline(holder.getSettings());
             persist(holder);
             p.sendMessage(Lang.msg("timeline.reset"));
@@ -546,10 +690,11 @@ public final class GuiListener implements Listener {
         else if (slot == GuiStyle.slot("timeline.buttons.plus-minute")) delta = 60;
 
         if (delta != 0) {
+            if (!timelineEditable(p, holder)) return;
             int newTime = timelines.moveEvent(holder.getSettings(), selected, delta);
             if (newTime >= 0) {
                 persist(holder);
-                TimelineService.Definition def = timelines.definition(selected);
+                TimelineService.Definition def = timelines.definitionFor(holder.getSettings(), selected);
                 boolean isEnd = def != null && def.type() == TimelineService.Type.MATCH_END;
                 p.sendMessage(Lang.msg(isEnd ? "timeline.end-moved" : "timeline.moved",
                         "%event%", def != null ? def.name() : selected,
@@ -560,7 +705,8 @@ public final class GuiListener implements Listener {
         }
 
         if (slot == GuiStyle.slot("timeline.buttons.delete")) {
-            TimelineService.Definition def = timelines.definition(selected);
+            if (!timelineEditable(p, holder)) return;
+            TimelineService.Definition def = timelines.definitionFor(holder.getSettings(), selected);
             if (def != null && def.type() == TimelineService.Type.MATCH_END) {
                 p.sendMessage(Lang.msg("timeline.cannot-delete-end"));
                 return;
@@ -572,6 +718,48 @@ public final class GuiListener implements Listener {
             }
             gui.openTimeline(p, holder, adminView, null);
         }
+    }
+
+    /**
+     * The timeline engine snapshots a match's schedule once at round start and never re-reads
+     * it, so an edit made while the round is already RUNNING would silently have no effect
+     * until the next round despite the GUI confirming success — same reasoning as team-select
+     * being gated to the lobby. Always editable for a not-yet-created draft (no arena yet).
+     */
+    private boolean timelineEditable(Player p, SettingsHolder holder) {
+        if (!(holder instanceof PrivateSession session)) return true;
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        if (arena != null && !arena.getStatus().isLobby()) {
+            p.sendMessage(Lang.msg("timeline.lobby-only"));
+            return false;
+        }
+        return true;
+    }
+
+    private void handleTimelineAdd(Player p, GuiHolder gh, int slot) {
+        SettingsHolder holder = resolveSettingsHolder(p, gh);
+        if (holder == null) return;
+        boolean adminView = gh.adminView();
+
+        if (slot == GuiStyle.slot("timeline-add.buttons.back")) {
+            gui.openTimeline(p, holder, adminView, null);
+            return;
+        }
+        if (!timelineEditable(p, holder)) return;
+
+        String id = gh.keyAt(slot);
+        if (id == null) return;
+
+        TimelineService timelines = plugin.getTimelineService();
+        TimelineService.Definition def = timelines.definition(id);
+        int time = def != null ? def.defaultSeconds() : 60;
+        if (!timelines.addEvent(holder.getSettings(), id, time)) {
+            p.sendMessage(Lang.msg("timeline.add-failed"));
+            return;
+        }
+        persist(holder);
+        p.sendMessage(Lang.msg("timeline.added", "%event%", def != null ? def.name() : id));
+        gui.openTimeline(p, holder, adminView, id);
     }
 
     /** Syncs a live session's settings across the network; a no-op for a not-yet-created draft. */
@@ -778,7 +966,7 @@ public final class GuiListener implements Listener {
             return;
         }
 
-        UUID targetId = gh.sessionAt(slot);
+        UUID targetId = gh.idAt(slot);
         if (targetId == null) return;
 
         Set<UUID> selected = new HashSet<>(gh.selectedPlayers());

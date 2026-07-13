@@ -109,9 +109,12 @@ public final class VersionedYaml {
 
         plugin.getLogger().info("Migrating " + resourceName + " from version "
                 + version + " → " + currentVersion);
-        if (migrator != null) migrator.migrate(config, version);
+        if (migrator != null && !migrator.migrate(config, version)) {
+            plugin.getLogger().info(resourceName + ": migrator made no key changes for this step "
+                    + "(only the version stamp advanced).");
+        }
         config.set(VERSION_KEY, currentVersion);
-        return true;
+        return true; // the version-stamp write above always needs saving, regardless of the migrator
     }
 
     /** Restores any key present in the bundled default but missing from the server's copy. */

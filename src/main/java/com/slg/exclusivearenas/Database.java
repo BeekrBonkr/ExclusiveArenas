@@ -42,7 +42,7 @@ public final class Database {
     /** A row of {@code <prefix>sessions}. {@code settings} is the JSON blob of host customizations. */
     public record SessionRow(UUID sessionId, UUID owner, String arenaName, String policy,
                              String joinCode, boolean isPublic, boolean autoSummon,
-                             String settings, String serverId, long createdAt) {}
+                             String settings, String serverId, long createdAt, long updatedAt) {}
 
     /** A row of {@code <prefix>tickets}. */
     public record TicketRow(UUID player, UUID sessionId, String arenaName, long expiresAt) {}
@@ -62,6 +62,7 @@ public final class Database {
     private final String ticketsTable;
     private final String commandsTable;
     private final String presetsTable;
+    private final String serversTable;
     private final HikariDataSource dataSource;
     private final ExecutorService writer = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "ExclusiveArenas-DB-Writer");
@@ -77,6 +78,7 @@ public final class Database {
         this.ticketsTable = settings.tablePrefix() + "tickets";
         this.commandsTable = settings.tablePrefix() + "commands";
         this.presetsTable = settings.tablePrefix() + "presets";
+        this.serversTable = settings.tablePrefix() + "servers";
 
         HikariConfig cfg = new HikariConfig();
         cfg.setPoolName("ExclusiveArenas-Hikari");
@@ -87,8 +89,11 @@ public final class Database {
         // The class literal is rewritten by shadow to the relocated driver, so getName()
         // returns the relocated FQCN at runtime.
         cfg.setDriverClassName(org.mariadb.jdbc.Driver.class.getName());
-        cfg.setJdbcUrl("jdbc:mariadb://" + settings.host() + ":" + settings.port() + "/"
-                + settings.database() + "?useSsl=" + settings.useSsl());
+        // useSsl is passed as a datasource property rather than appended as a URL query string,
+        // so a configured database name containing '?' or '&' can't be read as (or clobber) a
+        // connection parameter.
+        cfg.setJdbcUrl("jdbc:mariadb://" + settings.host() + ":" + settings.port() + "/" + settings.database());
+        cfg.addDataSourceProperty("useSsl", String.valueOf(settings.useSsl()));
         cfg.setUsername(settings.user());
         cfg.setPassword(settings.password());
         cfg.setMaximumPoolSize(5);
@@ -118,7 +123,8 @@ public final class Database {
                             + "is_public TINYINT(1) NOT NULL DEFAULT 0,"
                             + "auto_summon TINYINT(1) NOT NULL DEFAULT 0,"
                             + "server_id VARCHAR(64) NOT NULL,"
-                            + "created_at BIGINT NOT NULL"
+                            + "created_at BIGINT NOT NULL,"
+                            + "updated_at BIGINT NOT NULL DEFAULT 0"
                             + ")")) {
                 ps.executeUpdate();
             }
@@ -127,6 +133,9 @@ public final class Database {
             addColumnIfMissing(c, sessionsTable, "is_public", "TINYINT(1) NOT NULL DEFAULT 0");
             addColumnIfMissing(c, sessionsTable, "auto_summon", "TINYINT(1) NOT NULL DEFAULT 0");
             addColumnIfMissing(c, sessionsTable, "settings", "TEXT NULL");
+            // Lets callers tell a fresh row apart from one a lagging poll read before their own
+            // more recent write committed — see PrivateSessionService's pendingWriteAt guard.
+            addColumnIfMissing(c, sessionsTable, "updated_at", "BIGINT NOT NULL DEFAULT 0");
             try (PreparedStatement ps = c.prepareStatement(
                     "CREATE TABLE IF NOT EXISTS `" + ticketsTable + "` ("
                             + "player CHAR(36) NOT NULL PRIMARY KEY,"
@@ -157,6 +166,16 @@ public final class Database {
                             + ")")) {
                 ps.executeUpdate();
             }
+            // Liveness heartbeat — see heartbeat()/findDeadServers()/purgeDeadServer(). Lets any
+            // backend notice another one has crashed (no heartbeat in a while) and clean up its
+            // orphaned sessions/tickets/commands, instead of them sitting in the shared DB forever.
+            try (PreparedStatement ps = c.prepareStatement(
+                    "CREATE TABLE IF NOT EXISTS `" + serversTable + "` ("
+                            + "server_id VARCHAR(64) NOT NULL PRIMARY KEY,"
+                            + "last_heartbeat BIGINT NOT NULL"
+                            + ")")) {
+                ps.executeUpdate();
+            }
         }
         logger.info("ExclusiveArenas connected to database; tables '" + sessionsTable
                 + "' / '" + ticketsTable + "' / '" + commandsTable + "' ready.");
@@ -175,14 +194,23 @@ public final class Database {
 
     public void upsertSession(SessionRow row) {
         submit("upsert session " + row.arenaName(), c -> {
+            // arena_name carries its own UNIQUE index alongside the session_id primary key, so a
+            // new session for an arena whose old row hasn't been deleted yet (a session-end and a
+            // fresh create racing across servers) collides on arena_name, not session_id. Without
+            // updating session_id here too, that row would keep the OLD session's id paired with
+            // the NEW session's data — a mismatch that lets the old session's later DELETE (keyed
+            // by its session_id) wipe out the new session's row out from under it. Updating
+            // session_id on conflict means whichever session wins the row also fully claims its
+            // identity, so a stale DELETE for the old id becomes a harmless no-op instead.
             try (PreparedStatement ps = c.prepareStatement(
                     "INSERT INTO `" + sessionsTable + "` "
                             + "(session_id, owner, arena_name, policy, join_code, is_public, auto_summon, "
-                            + "settings, server_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?) "
-                            + "ON DUPLICATE KEY UPDATE owner=VALUES(owner), arena_name=VALUES(arena_name), "
-                            + "policy=VALUES(policy), join_code=VALUES(join_code), is_public=VALUES(is_public), "
-                            + "auto_summon=VALUES(auto_summon), settings=VALUES(settings), "
-                            + "server_id=VALUES(server_id)")) {
+                            + "settings, server_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+                            + "ON DUPLICATE KEY UPDATE session_id=VALUES(session_id), owner=VALUES(owner), "
+                            + "arena_name=VALUES(arena_name), policy=VALUES(policy), join_code=VALUES(join_code), "
+                            + "is_public=VALUES(is_public), auto_summon=VALUES(auto_summon), "
+                            + "settings=VALUES(settings), server_id=VALUES(server_id), "
+                            + "updated_at=VALUES(updated_at)")) {
                 ps.setString(1, row.sessionId().toString());
                 ps.setString(2, row.owner() == null ? null : row.owner().toString());
                 ps.setString(3, row.arenaName());
@@ -193,6 +221,7 @@ public final class Database {
                 ps.setString(8, row.settings());
                 ps.setString(9, settings.serverId()); // this server owns/stamps the write
                 ps.setLong(10, row.createdAt());
+                ps.setLong(11, row.updatedAt());
                 ps.executeUpdate();
             }
         });
@@ -323,7 +352,7 @@ public final class Database {
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
                      "SELECT session_id, owner, arena_name, policy, join_code, is_public, auto_summon, "
-                             + "settings, server_id, created_at FROM `" + sessionsTable + "`");
+                             + "settings, server_id, created_at, updated_at FROM `" + sessionsTable + "`");
              ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
                 String owner = rs.getString("owner");
@@ -337,7 +366,8 @@ public final class Database {
                         rs.getBoolean("auto_summon"),
                         rs.getString("settings"),
                         rs.getString("server_id"),
-                        rs.getLong("created_at")));
+                        rs.getLong("created_at"),
+                        rs.getLong("updated_at")));
             }
         }
         return out;
@@ -389,6 +419,91 @@ public final class Database {
             }
         }
         return out;
+    }
+
+    // ── Server liveness / crash cleanup ─────────────────────────────────────────────
+
+    /** Upserts this server's own heartbeat row. Call regularly (piggybacks on the session poll). */
+    public void heartbeat() {
+        submit("heartbeat", c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "INSERT INTO `" + serversTable + "` (server_id, last_heartbeat) VALUES (?,?) "
+                            + "ON DUPLICATE KEY UPDATE last_heartbeat=VALUES(last_heartbeat)")) {
+                ps.setString(1, settings.serverId());
+                ps.setLong(2, System.currentTimeMillis());
+                ps.executeUpdate();
+            }
+        });
+    }
+
+    /**
+     * Server ids (excluding this one, as a safety guard against ever self-purging) whose last
+     * heartbeat is older than {@code staleBeforeMillis}. Call from an async thread.
+     */
+    public List<String> findDeadServers(long staleBeforeMillis) throws SQLException {
+        List<String> out = new ArrayList<>();
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT server_id FROM `" + serversTable + "` WHERE last_heartbeat < ? AND server_id <> ?")) {
+            ps.setLong(1, staleBeforeMillis);
+            ps.setString(2, settings.serverId());
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) out.add(rs.getString(1));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Removes every trace of a dead server from the shared database: its sessions, and every
+     * ticket/command row for the arenas those sessions were on (tickets/commands don't carry
+     * their own server_id, but they're only ever meaningful for an arena a live session still
+     * references, so once found via that session they're dropped too). Safe to call from
+     * multiple servers concurrently — every statement is a plain DELETE, so a second call
+     * finding nothing left just does nothing.
+     */
+    public void purgeDeadServer(String deadServerId) {
+        submit("purge dead server " + deadServerId, c -> {
+            List<String> arenaNames = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement(
+                    "SELECT arena_name FROM `" + sessionsTable + "` WHERE server_id=?")) {
+                ps.setString(1, deadServerId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) arenaNames.add(rs.getString(1));
+                }
+            }
+
+            try (PreparedStatement ps = c.prepareStatement(
+                    "DELETE FROM `" + sessionsTable + "` WHERE server_id=?")) {
+                ps.setString(1, deadServerId);
+                ps.executeUpdate();
+            }
+            if (!arenaNames.isEmpty()) {
+                try (PreparedStatement ps = c.prepareStatement(
+                        "DELETE FROM `" + ticketsTable + "` WHERE arena_name=?")) {
+                    for (String arenaName : arenaNames) {
+                        ps.setString(1, arenaName);
+                        ps.addBatch();
+                    }
+                    ps.executeBatch();
+                }
+                try (PreparedStatement ps = c.prepareStatement(
+                        "DELETE FROM `" + commandsTable + "` WHERE arena_name=?")) {
+                    for (String arenaName : arenaNames) {
+                        ps.setString(1, arenaName);
+                        ps.addBatch();
+                    }
+                    ps.executeBatch();
+                }
+            }
+            try (PreparedStatement ps = c.prepareStatement(
+                    "DELETE FROM `" + serversTable + "` WHERE server_id=?")) {
+                ps.setString(1, deadServerId);
+                ps.executeUpdate();
+            }
+            logger.info("ExclusiveArenas: purged dead server '" + deadServerId + "' from the "
+                    + "shared database (" + arenaNames.size() + " orphaned session(s) removed).");
+        });
     }
 
     // ── Lifecycle ──────────────────────────────────────────────────────────────────

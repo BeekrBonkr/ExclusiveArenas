@@ -2,6 +2,7 @@ package com.slg.exclusivearenas;
 
 import de.marcely.bedwars.api.BedwarsAPI;
 import de.marcely.bedwars.api.arena.Arena;
+import de.marcely.bedwars.api.arena.Team;
 
 import java.util.List;
 import java.util.UUID;
@@ -20,7 +21,15 @@ public final class RemoteCommandService {
 
     public enum Type {
         START_MATCH, END_MATCH, KICK_ALL,
-        QUICK_REGEN, QUICK_HEAL, QUICK_DROP, QUICK_BEDS, QUICK_CLEAR, QUICK_SKIP_EVENT
+        QUICK_REGEN, QUICK_HEAL, QUICK_DROP, QUICK_BEDS, QUICK_CLEAR, QUICK_SKIP_EVENT,
+        /** payload = the winning team's name. */
+        QUICK_FORCE_WIN,
+        /** payload = "teamA:teamB". */
+        QUICK_SWAP_TEAMS,
+        QUICK_BALANCE_TEAMS, QUICK_TRIGGER_TRAP, QUICK_CLEAR_TRAPS, QUICK_RESET_UPGRADES,
+        /** payload = "POTION_TYPE:amplifier:seconds". */
+        QUICK_GRANT_EFFECT,
+        QUICK_TOGGLE_FREEZE, QUICK_FORCE_REJOIN
     }
 
     /** KICK_ALL payload marking the shift-click variant that spares the host. */
@@ -88,6 +97,44 @@ public final class RemoteCommandService {
             case QUICK_BEDS -> quick.destroyAllBeds(null, session, arena);
             case QUICK_CLEAR -> quick.clearGroundItems(null, session, arena);
             case QUICK_SKIP_EVENT -> quick.skipToNextEvent(null, session, arena);
+            case QUICK_FORCE_WIN -> {
+                Team team = teamByName(arena, row.payload());
+                if (team != null) quick.forceWin(null, session, arena, team);
+            }
+            case QUICK_SWAP_TEAMS -> {
+                String[] parts = row.payload() == null ? new String[0] : row.payload().split(":", 2);
+                if (parts.length == 2) {
+                    quick.swapTeams(null, session, arena, teamByName(arena, parts[0]), teamByName(arena, parts[1]));
+                }
+            }
+            case QUICK_BALANCE_TEAMS -> quick.balanceTeams(null, session, arena);
+            case QUICK_TRIGGER_TRAP -> quick.triggerRandomTrap(null, session, arena);
+            case QUICK_CLEAR_TRAPS -> quick.clearAllTrapQueues(null, session, arena);
+            case QUICK_RESET_UPGRADES -> quick.resetAllTeamUpgrades(null, session, arena);
+            case QUICK_GRANT_EFFECT -> applyGrantEffect(quick, session, arena, row.payload());
+            case QUICK_TOGGLE_FREEZE -> quick.toggleFreeze(null, session, arena);
+            case QUICK_FORCE_REJOIN -> quick.forceRejoinDisconnected(null, session, arena);
+        }
+    }
+
+    private static Team teamByName(Arena arena, String name) {
+        if (name == null) return null;
+        for (Team team : arena.getEnabledTeams()) {
+            if (team.name().equalsIgnoreCase(name)) return team;
+        }
+        return null;
+    }
+
+    private static void applyGrantEffect(QuickActionsService quick, PrivateSession session, Arena arena, String payload) {
+        if (payload == null) return;
+        String[] parts = payload.split(":");
+        if (parts.length < 3) return;
+        org.bukkit.potion.PotionEffectType type = org.bukkit.potion.PotionEffectType.getByName(parts[0]);
+        if (type == null) return;
+        try {
+            quick.grantEffect(null, session, arena, type, Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));
+        } catch (NumberFormatException ignored) {
+            // malformed payload — nothing to apply
         }
     }
 }

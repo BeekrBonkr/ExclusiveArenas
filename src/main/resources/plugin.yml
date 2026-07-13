@@ -1,6 +1,6 @@
 name: ExclusiveArenas
 main: com.slg.exclusivearenas.ExclusiveArenasPlugin
-version: 1.0.0
+version: 1.1.0
 api-version: 1.21
 
 depend: [MBedwars]
@@ -9,7 +9,7 @@ softdepend: [MBedwarsTweaks]
 commands:
   ea:
     description: ExclusiveArenas — private match creation and controls for MBedwars.
-    usage: /ea [menu|arena|list|help|join|start|end|summon|goto|kick|code|public|team|regen|heal|drop|beds|clearitems|skipevent|timeline|shop|preset|admin|reload]
+    usage: /ea [menu|arena|list|help|join|start|end|summon|goto|kick|code|public|team|teamsize|weather|time|regen|heal|drop|beds|clearitems|skipevent|balance|trigtrap|cleartraps|resetupgrades|freeze|rejoinall|forcewin|swapteams|buff|border|timeline|shop|preset|admin|reload]
     permission: exclusivearenas.command
 
 permissions:

@@ -82,14 +82,43 @@ public final class PresetService {
      * Saves (or overwrites) a preset and reports back on the main thread whether it actually
      * persisted — so a caller can message the player honestly instead of optimistically
      * claiming success before the write (async in database mode) has even happened.
+     *
+     * The {@link #MAX_PRESETS} cap is enforced here against a freshly-loaded count, not just by
+     * the caller checking a menu snapshot taken whenever it was opened — otherwise two saves
+     * issued back to back while already at the cap could both pass a stale client-side check
+     * and land one over, since database-mode writes are async round-trips spanning several
+     * ticks. Overwriting an existing name is never blocked by the cap.
      */
     public void save(UUID owner, String name, String settingsJson, Consumer<Boolean> callback) {
         Database db = plugin.getDatabase();
         if (db != null) {
-            db.upsertPreset(owner, name, settingsJson, ok -> Bukkit.getScheduler().runTask(plugin, () -> {
-                plugin.debug("presets: save(" + owner + ", " + name + ") [database] -> " + ok);
-                callback.accept(ok);
-            }));
+            Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                LinkedHashMap<String, String> existing;
+                try {
+                    existing = db.loadPresets(owner);
+                } catch (Exception e) {
+                    plugin.getLogger().warning("Could not check preset count for " + owner + ": " + e.getMessage());
+                    Bukkit.getScheduler().runTask(plugin, () -> callback.accept(false));
+                    return;
+                }
+                if (existingName(existing, name) == null && existing.size() >= MAX_PRESETS) {
+                    plugin.debug("presets: save(" + owner + ", " + name + ") [database] -> rejected, at cap");
+                    Bukkit.getScheduler().runTask(plugin, () -> callback.accept(false));
+                    return;
+                }
+                db.upsertPreset(owner, name, settingsJson, ok -> Bukkit.getScheduler().runTask(plugin, () -> {
+                    plugin.debug("presets: save(" + owner + ", " + name + ") [database] -> " + ok);
+                    callback.accept(ok);
+                }));
+            });
+            return;
+        }
+        // File mode runs entirely on the main thread (Bukkit is single-threaded), so a fresh
+        // count check right before writing is inherently race-free here, unlike database mode.
+        LinkedHashMap<String, String> currentFilePresets = loadFromFile(owner);
+        if (existingName(currentFilePresets, name) == null && currentFilePresets.size() >= MAX_PRESETS) {
+            plugin.debug("presets: save(" + owner + ", " + name + ") [file] -> rejected, at cap");
+            callback.accept(false);
             return;
         }
         YamlConfiguration store = fileStore();

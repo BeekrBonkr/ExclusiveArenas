@@ -3,6 +3,8 @@ package com.slg.exclusivearenas;
 import de.marcely.bedwars.api.BedwarsAPI;
 import de.marcely.bedwars.api.arena.Arena;
 import de.marcely.bedwars.api.arena.ArenaStatus;
+import de.marcely.bedwars.api.arena.ArenaTimeType;
+import de.marcely.bedwars.api.arena.ArenaWeatherType;
 import de.marcely.bedwars.api.arena.Team;
 import de.marcely.bedwars.api.game.shop.ShopItem;
 import de.marcely.bedwars.api.game.shop.ShopPage;
@@ -155,6 +157,13 @@ public final class GuiManager {
         Inventory inv = holder.getInventory();
         if (inv == null) return true;
 
+        // A menu carrying admin view (the network-wide Admin List, or Controls opened from it
+        // for a match this player doesn't own) must not keep passively re-rendering — and stay
+        // navigable — after the viewer's admin permission is revoked while it's still open.
+        boolean adminSurface = holder.type() == GuiHolder.Type.ADMIN_LIST
+                || (holder.type() == GuiHolder.Type.CONTROLS && holder.adminView());
+        if (adminSurface && !p.hasPermission(ADMIN_PERM)) return false;
+
         switch (holder.type()) {
             case CONTROLS -> {
                 PrivateSession session = sessions.getById(holder.sessionId());
@@ -255,11 +264,13 @@ public final class GuiManager {
     public void openQuickActions(Player p, PrivateSession session, boolean adminView) {
         GuiHolder holder = new GuiHolder(GuiHolder.Type.QUICK_ACTIONS)
                 .sessionId(session.getSessionId()).adminView(adminView);
-        Inventory inv = create(holder, GuiStyle.size("quick-actions", 36),
+        Inventory inv = create(holder, GuiStyle.size("quick-actions", 54),
                 GuiStyle.title("quick-actions", "%arena%", session.getArenaName()));
         frame(inv);
         fillInteriorRow(inv, 9, accentMaterial());
         fillInteriorRow(inv, 18, accentMaterial());
+        fillInteriorRow(inv, 27, accentMaterial());
+        fillInteriorRow(inv, 36, accentMaterial());
 
         GuiStyle.place(inv, "quick-actions.buttons.regenerate-map");
         GuiStyle.place(inv, "quick-actions.buttons.heal-all");
@@ -269,7 +280,59 @@ public final class GuiManager {
         if (plugin.getTimelineService().isEnabled()) {
             GuiStyle.place(inv, "quick-actions.buttons.skip-event");
         }
+        GuiStyle.place(inv, "quick-actions.buttons.force-win");
+        GuiStyle.place(inv, "quick-actions.buttons.swap-teams-info");
+        GuiStyle.place(inv, "quick-actions.buttons.balance-teams");
+        GuiStyle.place(inv, "quick-actions.buttons.trigger-trap");
+        GuiStyle.place(inv, "quick-actions.buttons.clear-traps");
+        GuiStyle.place(inv, "quick-actions.buttons.reset-upgrades");
+        GuiStyle.place(inv, "quick-actions.buttons.grant-effect");
+        GuiStyle.place(inv, "quick-actions.buttons.toggle-freeze");
+        GuiStyle.place(inv, "quick-actions.buttons.force-rejoin");
+        GuiStyle.place(inv, "quick-actions.buttons.reveal-border");
         GuiStyle.place(inv, "quick-actions.buttons.back");
+        p.openInventory(inv);
+    }
+
+    /** Quick Actions → Force Win: pick a team to instantly award the win to. */
+    public void openForceWin(Player p, PrivateSession session, boolean adminView) {
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        GuiHolder gh = new GuiHolder(GuiHolder.Type.QUICK_FORCE_WIN)
+                .sessionId(session.getSessionId()).adminView(adminView);
+        Inventory inv = create(gh, GuiStyle.size("quick-force-win", 27),
+                GuiStyle.title("quick-force-win", "%arena%", session.getArenaName()));
+        frame(inv);
+        fillInteriorRow(inv, 9, accentMaterial());
+
+        if (arena != null && arena.exists()) {
+            List<Team> teams = new ArrayList<>(arena.getEnabledTeams());
+            for (int i = 0; i < teams.size() && i < STRIP_SLOTS.length; i++) {
+                Team team = teams.get(i);
+                int slot = STRIP_SLOTS[i];
+                inv.setItem(slot, ItemUtil.button(Material.WHITE_BANNER,
+                        GuiStyle.name("quick-force-win.items.team", "%team%", team.getDisplayName(null)),
+                        GuiStyle.lore("quick-force-win.items.team", "%team%", team.getDisplayName(null))));
+                gh.mapKeySlot(slot, team.name());
+            }
+        }
+        GuiStyle.place(inv, "quick-force-win.buttons.back");
+        p.openInventory(inv);
+    }
+
+    /** Quick Actions → Buff Everyone: a fixed short list of practice/highlight-match buffs. */
+    public void openGrantEffect(Player p, PrivateSession session, boolean adminView) {
+        GuiHolder gh = new GuiHolder(GuiHolder.Type.QUICK_GRANT_EFFECT)
+                .sessionId(session.getSessionId()).adminView(adminView);
+        Inventory inv = create(gh, GuiStyle.size("quick-grant-effect", 27),
+                GuiStyle.title("quick-grant-effect", "%arena%", session.getArenaName()));
+        frame(inv);
+        fillInteriorRow(inv, 9, accentMaterial());
+
+        GuiStyle.place(inv, "quick-grant-effect.buttons.speed");
+        GuiStyle.place(inv, "quick-grant-effect.buttons.jump");
+        GuiStyle.place(inv, "quick-grant-effect.buttons.regen");
+        GuiStyle.place(inv, "quick-grant-effect.buttons.strength");
+        GuiStyle.place(inv, "quick-grant-effect.buttons.back");
         p.openInventory(inv);
     }
 
@@ -348,8 +411,17 @@ public final class GuiManager {
         int amount = override != null ? override : fallback;
         boolean locked = holder instanceof PrivateSession && !plugin.canChangeTeamSize(arena);
 
+        String statusLine;
+        if (locked) {
+            statusLine = "&cLocked — the match is running.";
+        } else if (holder instanceof PrivateSession && anyPlayerHasTeam(arena)) {
+            statusLine = "&eChanging this removes everyone from their team.";
+        } else {
+            statusLine = "";
+        }
+
         GuiStyle.place(inv, "team-size.buttons.display", "%amount%", String.valueOf(amount),
-                "%locked%", locked ? "&cLocked — a player has already joined." : "");
+                "%locked%", statusLine);
         if (!locked) {
             GuiStyle.place(inv, "team-size.buttons.minus-one");
             GuiStyle.place(inv, "team-size.buttons.plus-one");
@@ -357,6 +429,52 @@ public final class GuiManager {
         }
         GuiStyle.place(inv, "team-size.buttons.back");
         p.openInventory(inv);
+    }
+
+    private static boolean anyPlayerHasTeam(Arena arena) {
+        for (org.bukkit.entity.Player player : arena.getPlayers()) {
+            if (arena.getPlayerTeam(player) != null) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Arena Settings → Environment: cycles the arena's time/weather. Live-only (a not-yet
+     * -created draft has no arena to preview this on) and usable any time — unlike team size,
+     * this is a purely cosmetic per-player effect with no gameplay-balance reason to lock it.
+     */
+    public void openEnvironment(Player p, PrivateSession session, boolean adminView) {
+        GuiHolder gh = new GuiHolder(GuiHolder.Type.ENVIRONMENT)
+                .sessionId(session.getSessionId()).adminView(adminView);
+        Inventory inv = create(gh, GuiStyle.size("environment", 27),
+                GuiStyle.title("environment", "%arena%", session.getArenaName()));
+        frame(inv);
+        fillInteriorRow(inv, 9, accentMaterial());
+
+        ArenaWeatherType weather = ExclusiveArenasPlugin.parseWeatherType(session.getSettings().getWeatherType());
+        ArenaTimeType time = ExclusiveArenasPlugin.parseTimeType(session.getSettings().getTimeType());
+
+        GuiStyle.place(inv, "environment.buttons.weather", "%current%", weatherLabel(weather));
+        GuiStyle.place(inv, "environment.buttons.time", "%current%", timeLabel(time));
+        GuiStyle.place(inv, "environment.buttons.back");
+        p.openInventory(inv);
+    }
+
+    private static String weatherLabel(ArenaWeatherType type) {
+        return switch (type) {
+            case CLEAR -> "&fClear Skies";
+            case RAINING -> "&9Rain";
+            default -> "&7Untouched (default)";
+        };
+    }
+
+    private static String timeLabel(ArenaTimeType type) {
+        return switch (type) {
+            case NOON -> "&eNoon";
+            case SUNSET -> "&6Sunset";
+            case NIGHT -> "&9Night";
+            default -> "&7Untouched (default)";
+        };
     }
 
     // ── Saved configurations (presets) ────────────────────────────────────────────
@@ -458,10 +576,11 @@ public final class GuiManager {
         frame(inv);
 
         GuiStyle.place(inv, "timeline.buttons.info");
+        GuiStyle.place(inv, "timeline.buttons.add-event");
 
         for (int i = 0; i < timeline.size() && i < STRIP_SLOTS.length; i++) {
             SessionSettings.TimelineEntry entry = timeline.get(i);
-            TimelineService.Definition def = timelines.definition(entry.id());
+            TimelineService.Definition def = timelines.definitionFor(entry);
             if (def == null) continue;
 
             boolean isEnd = def.type() == TimelineService.Type.MATCH_END;
@@ -484,7 +603,7 @@ public final class GuiManager {
         }
 
         if (selectedEventId != null) {
-            TimelineService.Definition def = timelines.definition(selectedEventId);
+            TimelineService.Definition def = timelines.definitionFor(holder.getSettings(), selectedEventId);
             String eventName = def != null ? def.name() : selectedEventId;
             GuiStyle.place(inv, "timeline.buttons.minus-minute", "%event%", eventName);
             GuiStyle.place(inv, "timeline.buttons.minus-seconds", "%event%", eventName);
@@ -498,6 +617,52 @@ public final class GuiManager {
         GuiStyle.place(inv, "timeline.buttons.reset");
         GuiStyle.place(inv, "timeline.buttons.back");
         GuiStyle.place(inv, "timeline.buttons.close");
+        p.openInventory(inv);
+    }
+
+    /**
+     * Catalog definitions not currently on this match's timeline — either never scheduled by
+     * default ({@code default: false} in config.yml) or previously deleted by the host. Custom
+     * (host-authored, non-catalog) events are created via {@code /ea timeline custom} instead —
+     * see the "Want something else?" info item — a type + free-value picker isn't worth a
+     * multi-step GUI wizard when a single command line already does the job.
+     */
+    public void openTimelineAdd(Player p, SettingsHolder holder, boolean adminView) {
+        TimelineService timelines = plugin.getTimelineService();
+        java.util.Set<String> scheduled = new java.util.HashSet<>();
+        for (SessionSettings.TimelineEntry e : timelines.effectiveTimeline(holder.getSettings())) {
+            scheduled.add(e.id());
+        }
+
+        List<TimelineService.Definition> available = new ArrayList<>();
+        for (String id : timelines.definitionIds()) {
+            TimelineService.Definition def = timelines.definition(id);
+            if (def != null && def.type() != TimelineService.Type.MATCH_END && !scheduled.contains(id)) {
+                available.add(def);
+            }
+        }
+
+        UUID sessionId = holder instanceof PrivateSession ps ? ps.getSessionId() : null;
+        GuiHolder gh = new GuiHolder(GuiHolder.Type.TIMELINE_ADD).sessionId(sessionId).adminView(adminView);
+        Inventory inv = create(gh, GuiStyle.size("timeline-add", 54),
+                GuiStyle.title("timeline-add", "%arena%", holder.getArenaName()));
+        frame(inv);
+
+        for (int i = 0; i < available.size() && i < LIST_SLOTS.length; i++) {
+            TimelineService.Definition def = available.get(i);
+            int slot = LIST_SLOTS[i];
+            inv.setItem(slot, ItemUtil.button(def.icon(),
+                    GuiStyle.name("timeline-add.items.event", "%event%", def.name()),
+                    GuiStyle.lore("timeline-add.items.event", "%event%", def.name(), "%effect%", def.description())));
+            gh.mapKeySlot(slot, def.id());
+        }
+        if (available.isEmpty()) {
+            GuiStyle.place(inv, "timeline-add.buttons.empty", "%reason%",
+                    "&8Every catalog event is already scheduled.");
+        }
+
+        GuiStyle.place(inv, "timeline-add.buttons.custom-info");
+        GuiStyle.place(inv, "timeline-add.buttons.back");
         p.openInventory(inv);
     }
 
@@ -920,6 +1085,10 @@ public final class GuiManager {
                             "%location%", entry.remote() ? "Remote" : "Local",
                             "%teams%", String.valueOf(entry.teamCount()),
                             "%per_team%", String.valueOf(entry.playersPerTeam()))));
+            // Slot -> canonical name, so the click handler resolves the arena from this map
+            // instead of parsing the clicked item's display text — which the "no arenas match"
+            // empty-state pane (below) would otherwise satisfy just as well as a real entry.
+            holder.mapKeySlot(slot, entry.name());
         }
 
         if (entries.isEmpty()) {
@@ -1024,8 +1193,7 @@ public final class GuiManager {
 
     private String ownerName(PrivateSession session) {
         if (session.getOwner() == null) return "?";
-        var off = Bukkit.getOfflinePlayer(session.getOwner());
-        return off.getName() != null ? off.getName() : "?";
+        return ItemUtil.offlineName(session.getOwner(), "?");
     }
 
     private String limitLabel(int limit) {

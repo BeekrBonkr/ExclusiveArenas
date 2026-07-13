@@ -29,11 +29,17 @@ public final class PrivacyLifecycleListener implements Listener {
     private static final String BYPASS_PERM = "exclusivearenas.bypass";
 
     // Quit reasons that represent a legitimate end/transition, not an unwanted removal —
-    // rejoining the player here would be pointless or actively wrong.
+    // rejoining the player here would be pointless or actively wrong. KICK and PLUGIN are
+    // included deliberately: arena.kickPlayer(Player) — used by staff-facing kick commands,
+    // other plugins, and this plugin's own AutoSummonTask — always reports KickReason.PLUGIN,
+    // which is indistinguishable from MBedwars' internal "kicked right after joining" bug this
+    // safety net exists for. Reversing an explicit kick is worse than occasionally missing that
+    // bug, so any deliberate removal wins over the rejoin heuristic.
     private static final Set<KickReason> IGNORED_QUIT_REASONS = EnumSet.of(
             KickReason.SERVER_DISCONNECT, KickReason.ARENA_STOP, KickReason.PLUGIN_STOP,
             KickReason.GAME_LOSE, KickReason.GAME_END, KickReason.VOTING_SWITCH_ARENA,
-            KickReason.FORCE_SWITCH_ARENA, KickReason.SPECTATE, KickReason.SPECTATE_ITEM_NEXT_ROUND);
+            KickReason.FORCE_SWITCH_ARENA, KickReason.SPECTATE, KickReason.SPECTATE_ITEM_NEXT_ROUND,
+            KickReason.KICK, KickReason.PLUGIN);
 
     private final ExclusiveArenasPlugin plugin;
     private final PrivateSessionService sessions;
@@ -109,7 +115,8 @@ public final class PrivacyLifecycleListener implements Listener {
      * this patches around it: anyone whose quit follows one of our own authorised joins
      * (owner, ticket, or party) within {@link #REJOIN_WINDOW} is sent straight back in,
      * regardless of policy — this only ever fires within a few seconds of joining, so it can't
-     * be mistaken for a deliberate leave later in the match.
+     * be mistaken for a deliberate leave later in the match. Explicit KICK/PLUGIN removals are
+     * excluded via {@link #IGNORED_QUIT_REASONS} so a real kick is never silently undone.
      */
     private void rejoinIfKickedRightAfterJoining(Arena arena, Player player, KickReason reason) {
         if (arena == null || IGNORED_QUIT_REASONS.contains(reason)) return;

@@ -6,8 +6,12 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Every menu's look — titles, sizes, and each button's slot, material, name, lore, and
@@ -35,6 +39,29 @@ public final class GuiStyle {
 
     public static void init(VersionedYaml y) {
         yaml = y;
+    }
+
+    /**
+     * A handful of buttons are two different "looks" of the same click handler and are only
+     * ever wired up correctly if they share a slot (see the header comment in guis.yml) —
+     * nothing at load time enforces that, so an admin edit that moves one half without the
+     * other silently breaks the pairing. Called once after {@link #init} to catch that early
+     * with a log warning instead of a confusing "wrong button did something else" report.
+     */
+    public static void warnIfPairedSlotsMismatched(java.util.logging.Logger logger) {
+        checkPair(logger, "controls.buttons.public-on", "controls.buttons.public-off");
+        checkPair(logger, "controls.buttons.public-on", "controls.buttons.summon-party");
+        checkPair(logger, "builder.buttons.public-on", "builder.buttons.public-off");
+    }
+
+    private static void checkPair(java.util.logging.Logger logger, String a, String b) {
+        int slotA = slot(a);
+        int slotB = slot(b);
+        // A button hidden with slot: -1 is deliberately opted out — only flag a real mismatch.
+        if (slotA < 0 || slotB < 0 || slotA == slotB) return;
+        logger.warning("guis.yml: '" + a + "' (slot " + slotA + ") and '" + b + "' (slot " + slotB
+                + ") are paired state buttons and should share a slot — only one will ever be "
+                + "shown/clickable as configured.");
     }
 
     // ── Menu-level ───────────────────────────────────────────────────────────────
@@ -123,13 +150,33 @@ public final class GuiStyle {
         return yaml == null ? def : yaml.config().getString(key, def);
     }
 
+    /**
+     * Substitutes every placeholder in a single pass over the original text. Doing it
+     * sequentially (repeated {@code String.replace}) risks a substituted value that happens to
+     * contain a later placeholder's token text being corrupted by that later substitution —
+     * e.g. an arena name containing the literal substring "%owner%".
+     */
     private static String apply(String value, String... ph) {
         if (value == null) return "";
-        if (ph != null) {
-            for (int i = 0; i + 1 < ph.length; i += 2) {
-                value = value.replace(ph[i], ph[i + 1] == null ? "" : ph[i + 1]);
-            }
+        if (ph == null || ph.length < 2) return value;
+
+        StringBuilder pattern = new StringBuilder();
+        Map<String, String> replacements = new HashMap<>();
+        for (int i = 0; i + 1 < ph.length; i += 2) {
+            String token = ph[i];
+            if (token == null || token.isEmpty()) continue;
+            if (pattern.length() > 0) pattern.append('|');
+            pattern.append(Pattern.quote(token));
+            replacements.put(token, ph[i + 1] == null ? "" : ph[i + 1]);
         }
-        return value;
+        if (pattern.length() == 0) return value;
+
+        Matcher m = Pattern.compile(pattern.toString()).matcher(value);
+        StringBuilder out = new StringBuilder();
+        while (m.find()) {
+            m.appendReplacement(out, Matcher.quoteReplacement(replacements.get(m.group())));
+        }
+        m.appendTail(out);
+        return out.toString();
     }
 }

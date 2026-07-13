@@ -30,6 +30,19 @@ public final class PrivateSessionService {
     // never reconcile-removed, so a fresh local create can't be evicted by an early poll.
     private final Set<UUID> pendingWrite = ConcurrentHashMap.newKeySet();
 
+    // Mirror of pendingWrite for the opposite race: a session ended locally whose async DELETE
+    // hasn't committed yet. Without this, a poll whose SELECT ran before that DELETE lands would
+    // see the still-present row and reconcile() would re-index (resurrect) the ended session.
+    private final Set<UUID> pendingDelete = ConcurrentHashMap.newKeySet();
+
+    // Timestamp of the most recent not-yet-confirmed local edit to an EXISTING session (join
+    // code regen, public/auto-summon toggle, settings save). Unlike pendingWrite (which only
+    // guards a brand-new session against early eviction), this guards against the opposite
+    // problem: a poll whose SELECT ran before that edit's UPSERT committed would otherwise
+    // return the pre-edit row and silently overwrite the fresh local state with it. A row is
+    // only trusted to update local state once its own updated_at catches up to this timestamp.
+    private final Map<UUID, Long> pendingWriteAt = new ConcurrentHashMap<>();
+
     // Soft "someone's got this picked in their builder" lock — local to this server only
     // (the builder itself is local), so two hosts on it can't both select the same free
     // arena before either actually finishes creating. Self-expires so an abandoned draft
@@ -45,8 +58,12 @@ public final class PrivateSessionService {
         this.db = db;
     }
 
+    // Matches the sessions table's join_code VARCHAR(96) — a longer configured length would
+    // silently truncate (or fail to insert) once persisted.
+    private static final int MAX_CODE_LENGTH = 96;
+
     public void setCodeLength(int codeLength) {
-        if (codeLength >= 4) this.codeLength = codeLength;
+        if (codeLength >= 4 && codeLength <= MAX_CODE_LENGTH) this.codeLength = codeLength;
     }
 
     public boolean isArenaReserved(String arenaName) {
@@ -186,7 +203,7 @@ public final class PrivateSessionService {
         // Write-through: mark pending so a poll can't evict it before it lands in the DB.
         if (db != null) {
             pendingWrite.add(session.getSessionId());
-            db.upsertSession(toRow(session));
+            writeThrough(session);
         }
         return session;
     }
@@ -201,7 +218,7 @@ public final class PrivateSessionService {
         session.setJoinCode(fresh);
         byCode.put(fresh.toLowerCase(Locale.ROOT), session.getSessionId());
 
-        if (db != null) db.upsertSession(toRow(session));
+        writeThrough(session);
         return fresh;
     }
 
@@ -209,14 +226,14 @@ public final class PrivateSessionService {
     public void setSessionPublic(PrivateSession session, boolean isPublic) {
         if (session == null) return;
         session.setPublic(isPublic);
-        if (db != null) db.upsertSession(toRow(session));
+        writeThrough(session);
     }
 
     /** Toggles auto-summon of new party members and persists it network-wide. */
     public void setSessionAutoSummon(PrivateSession session, boolean autoSummon) {
         if (session == null) return;
         session.setAutoSummon(autoSummon);
-        if (db != null) db.upsertSession(toRow(session));
+        writeThrough(session);
     }
 
     /**
@@ -225,7 +242,7 @@ public final class PrivateSessionService {
      */
     public void saveSettings(PrivateSession session) {
         if (session == null) return;
-        if (db != null) db.upsertSession(toRow(session));
+        writeThrough(session);
     }
 
     /** Re-writes every in-memory session to the DB. Used after a reconnect on reload. */
@@ -233,14 +250,29 @@ public final class PrivateSessionService {
         if (db == null) return;
         for (PrivateSession s : byId.values()) {
             pendingWrite.add(s.getSessionId());
-            db.upsertSession(toRow(s));
+            writeThrough(s);
         }
+    }
+
+    /**
+     * Fire-and-forget write-through with a staleness guard: records the write's timestamp
+     * before sending it, so {@link #reconcile} can tell a poll's row that predates this write
+     * apart from one that reflects it (or a later edit), and skip applying the stale one.
+     */
+    private void writeThrough(PrivateSession session) {
+        if (db == null) return;
+        long now = System.currentTimeMillis();
+        pendingWriteAt.put(session.getSessionId(), now);
+        db.upsertSession(toRow(session, now));
     }
 
     public void endSession(PrivateSession session) {
         if (session == null) return;
         removeLocal(session);
-        if (db != null) db.deleteSession(session.getSessionId());
+        if (db != null) {
+            pendingDelete.add(session.getSessionId());
+            db.deleteSession(session.getSessionId());
+        }
     }
 
     /** Generates a short join code that is not currently in use. */
@@ -259,19 +291,35 @@ public final class PrivateSessionService {
      * Reconciles the session cache against the authoritative DB rows: refreshes existing
      * sessions, adds rows this server has not seen yet, and drops sessions no longer present
      * — except ids still pending a write confirmation, so a freshly created local session is
-     * never evicted early.
+     * never evicted early. Symmetrically, an id pending a local delete is never re-added, so a
+     * poll that raced ahead of that delete's commit can't resurrect a session we just ended.
      */
     public void reconcile(List<Database.SessionRow> rows) {
         Set<UUID> present = new HashSet<>();
-        for (Database.SessionRow row : rows) {
-            present.add(row.sessionId());
-            pendingWrite.remove(row.sessionId()); // confirmed in DB
+        for (Database.SessionRow row : rows) present.add(row.sessionId());
+        pendingDelete.removeIf(id -> !present.contains(id)); // confirmed gone from the DB
 
-            PrivateSession existing = byId.get(row.sessionId());
-            if (existing == null) {
-                indexLocal(fromRow(row));
-            } else {
-                updateLocalFromRow(existing, row);
+        for (Database.SessionRow row : rows) {
+            UUID id = row.sessionId();
+            if (pendingDelete.contains(id)) continue; // ended locally; the DELETE just hasn't landed yet
+            pendingWrite.remove(id); // confirmed in DB
+
+            Long pendingAt = pendingWriteAt.get(id);
+            if (pendingAt != null) {
+                if (row.updatedAt() < pendingAt) continue; // stale row predates our last local edit
+                pendingWriteAt.remove(id, pendingAt); // caught up — don't clear a newer pending write
+            }
+
+            try {
+                PrivateSession existing = byId.get(id);
+                if (existing == null) {
+                    indexLocal(fromRow(row));
+                } else {
+                    updateLocalFromRow(existing, row);
+                }
+            } catch (Exception e) {
+                // One malformed/unexpected row must not abort reconciliation for every other
+                // session in this poll batch — skip it; the next poll gets another chance.
             }
         }
 
@@ -314,11 +362,11 @@ public final class PrivateSessionService {
         return session;
     }
 
-    private Database.SessionRow toRow(PrivateSession s) {
+    private Database.SessionRow toRow(PrivateSession s, long updatedAt) {
         return new Database.SessionRow(
                 s.getSessionId(), s.getOwner(), s.getArenaName(), s.getJoinPolicy().name(),
                 s.getJoinCode(), s.isPublic(), s.isAutoSummon(), s.getSettings().toJson(),
-                db != null ? db.serverId() : null, s.getCreatedAt().toEpochMilli());
+                db != null ? db.serverId() : null, s.getCreatedAt().toEpochMilli(), updatedAt);
     }
 
     // ── Cache index helpers (no DB side effects) ────────────────────────────────────
@@ -351,6 +399,8 @@ public final class PrivateSessionService {
         if (code != null) byCode.remove(code.toLowerCase(Locale.ROOT));
 
         pendingWrite.remove(session.getSessionId());
+        pendingDelete.remove(session.getSessionId());
+        pendingWriteAt.remove(session.getSessionId());
     }
 
     private static String randomChunk(int len) {

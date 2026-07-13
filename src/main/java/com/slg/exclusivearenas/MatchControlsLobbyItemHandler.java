@@ -34,6 +34,9 @@ public final class MatchControlsLobbyItemHandler extends LobbyItemHandler {
     public void handleUse(Player player, Arena arena, LobbyItem item) {
         PrivateSession session = sessions.getByArena(arena);
         if (session == null) return;
+        // isVisible() gates who sees this item, but nothing in LobbyItemHandler's dispatch
+        // guarantees it ran before handleUse — re-check ownership here too.
+        if (!player.getUniqueId().equals(session.getOwner())) return;
         gui.openControls(player, session, player.hasPermission(GuiManager.ADMIN_PERM));
     }
 }

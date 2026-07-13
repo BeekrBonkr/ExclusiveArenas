@@ -2,8 +2,11 @@
 
 An MBedwars add-on that lets players host **private, gated BedWars matches** — restricted to
 party members or to players holding a join code — with a full in-game GUI for managing them:
-a customizable event timeline, per-match shop overrides, saved configurations, one-click quick
-actions, optional cross-server control, and a handful of extra lobby hotbar items.
+a fully customizable event timeline (add events from a catalog, or author your own — weather
+changes, timed buffs, trap chaos, scripted announcements, and more), per-match shop overrides,
+flexible team size and environment (time/weather) controls, saved configurations, over a dozen
+one-click quick actions, optional cross-server control with automatic crash cleanup, continuous
+arena health monitoring, and a handful of extra lobby hotbar items.
 
 ---
 
@@ -62,13 +65,26 @@ with its default value automatically on startup, and every key is commented inli
 | `/ea code` | Regenerate the join code (Join Code policy) |
 | `/ea public [on\|off]` | Open or lock joining by code (Join Code policy) |
 | `/ea team <player> <team>` | Move a lobby player onto a team (arena's server only) |
+| `/ea teamsize <amount\|reset>` | Change how many players fit on each team this match |
+| `/ea weather <clear\|rain\|off>` | Set the arena's weather |
+| `/ea time <noon\|sunset\|night\|off>` | Set the arena's time of day |
 | `/ea regen` | Regenerate the map, keeping everyone in the match on their teams |
 | `/ea heal` | Heal every player in the match |
 | `/ea drop` | Make every generator drop immediately |
 | `/ea beds` | Sudden death — destroy every remaining bed |
 | `/ea clearitems` | Clear all dropped items off the ground |
 | `/ea skipevent` | Fire the next timeline event right now |
-| `/ea timeline list\|move\|set\|delete\|reset` | Edit this match's event timings, e.g. `/ea timeline set diamond2 7:30`, `/ea timeline move match_end -5:00` |
+| `/ea balance` | Re-shuffle everyone evenly across the enabled teams |
+| `/ea trigtrap` | Force-trigger a random team's queued trap |
+| `/ea cleartraps` | Clear every team's queued traps |
+| `/ea resetupgrades` | Reset every team's generator/shop upgrades |
+| `/ea freeze` | Toggle locking everyone in the arena in place |
+| `/ea rejoinall` | Rejoin any disconnected players who are back online |
+| `/ea forcewin <team>` | Instantly end the match, awarding `<team>` the win |
+| `/ea swapteams <team-a> <team-b>` | Swap two teams' entire rosters |
+| `/ea buff <speed\|jump\|regen\|strength\|potion_type> [amplifier] [seconds]` | Grant everyone in the arena a timed potion effect |
+| `/ea border` | Show yourself the arena's match-area border |
+| `/ea timeline list\|add\|custom\|move\|set\|delete\|reset` | Edit this match's event timeline — see [Event Timeline](#event-timeline) |
 | `/ea shop list\|disable\|enable\|price\|resetprice\|reset` | Customize this match's shop, e.g. `/ea shop disable blocks-wool`, `/ea shop price blocks-wool 8 iron` |
 | `/ea preset list\|save\|apply\|delete` | Saved arena configurations, e.g. `/ea preset save sweats`, `/ea preset apply sweats` |
 | `/ea admin` | Admin Panel — every active match on the network (`exclusivearenas.admin`) |
@@ -128,11 +144,14 @@ Open via the arena's entry in **Arena Management**, `/ea lobby`, or the host-onl
 - **Go to Arena** — teleport/connect to the match yourself.
 - **Kick All Players** — clears the arena; shift-click keeps you (the host) in it.
 - **Arena Settings** — opens [Event Timeline](#event-timeline), [Shop Items](#shop-overrides),
-  [Team Size](#team-size), and [Saved Configurations](#saved-configurations-presets) for this
-  match. All are editable any time the match hasn't started yet (and Event Timeline/Shop Items
-  again once it has, taking effect from the next round).
-- **Quick Actions** — one-click shortcuts for a *live* (running) match, recreated through the
-  stable MBedwars API so they can't silently break with an update:
+  [Team Size](#team-size), [Environment](#environment-time--weather), and
+  [Saved Configurations](#saved-configurations-presets) for this match. Event Timeline/Shop
+  Items/Team Size are editable any time the match hasn't started yet (Event Timeline/Shop Items
+  again once it has, taking effect from the next round); Environment is editable any time,
+  match running or not.
+- **Quick Actions** — one-click shortcuts, recreated through the stable MBedwars API so they
+  can't silently break with an update. Most work on a *live* (running) match; team/trap/upgrade
+  actions work any time:
   - **Regenerate Map** — rebuilds the arena to a pristine state without anyone leaving. Everyone
     is switched to a spectator (teams snapshotted first) so the round ends and MBedwars
     regenerates the map on its own; the moment the arena is back in its lobby, everyone is
@@ -143,6 +162,26 @@ Open via the arena's entry in **Arena Management**, `/ea lobby`, or the host-onl
   - **Sudden Death** — destroys every remaining bed.
   - **Clear Ground Items** — removes every dropped item in the arena (lag cleanup).
   - **Skip to Next Event** — fires the next timeline event immediately instead of waiting for it.
+  - **Force Win** — pick a team from a sub-menu to instantly end the match, awarding them the win.
+  - **Swap Teams** — exchange two teams' rosters. Two teams is one click too many for a button —
+    use `/ea swapteams <team-a> <team-b>`; the menu item just points you at the command.
+  - **Balance Teams** — re-shuffles everyone currently in the arena evenly across the enabled
+    teams.
+  - **Trigger Random Trap** — force-triggers a random team's queued trap, if any team has one
+    queued — a chaos/wildcard button.
+  - **Clear Trap Queues** — clears every team's queued (not yet triggered) traps.
+  - **Reset Team Upgrades** — resets every team's generator/shop upgrades to nothing purchased —
+    handy for a practice or showcase match.
+  - **Buff Everyone** — pick a short-list effect (Speed II, Jump Boost II, Regeneration II,
+    Strength II, 60 seconds each) to grant everyone in the arena; `/ea buff` also accepts any
+    Bukkit potion type with a custom amplifier/duration.
+  - **Freeze / Unfreeze All** — locks everyone in the arena in place (looking around still
+    works) — a "hold on a second" button for streamers or screenshots. Toggles back on a second
+    click.
+  - **Force-Rejoin Disconnected** — sweeps players who disconnected mid-match and are back
+    online, and rejoins them to the arena.
+  - **Reveal Arena Border** — shows *you only* the arena's match-area border — a debug/QoL aid
+    with zero gameplay effect. Only works while you're on the arena's own server.
 - **End Match** — closes the session and kicks everyone, players and spectators alike.
 
 #### Manage Teams
@@ -174,27 +213,71 @@ the shorter match). **Match End**'s lore shows the *total* match time, not a del
   stay accurate) while showing the host's edits. Tweaks' Sudden Death tier spawns dragons that
   threaten players but never register a bed as destroyed with MBedwars; if a host's customized
   timeline could let Sudden Death fire without a preceding real bed-break, ExclusiveArenas forces
-  one itself at the moment Sudden Death actually triggers.
+  one itself at the moment Sudden Death actually triggers. New event types below that have no
+  Tweaks gen-tier equivalent (weather, buffs, announcements, …) are simply skipped on this
+  backend rather than breaking the schedule — use `timeline.backend: internal` if you want them
+  to actually fire alongside Tweaks-driven matches.
 - **Match length is capped** at `timeline.max_match_time` (default `60:00`/1 hour) — however
   Match End is edited (the GUI, `/ea timeline set`, or `/ea timeline move`), it can never be
   pushed past this.
-- Also editable via `/ea timeline list|move|set|delete|reset` (see [Commands](#commands)).
+- Also editable via `/ea timeline list|add|custom|move|set|delete|reset` (see
+  [Commands](#commands)).
+
+#### Adding events
+
+**Add Event** (top-right of the editor) lists every catalog event not currently on this match's
+timeline — either previously deleted, or one an admin defined with `default: false` in
+`config.yml` so it's an optional extra rather than part of every match's starting schedule.
+Click one to add it at its configured default time, then move it like any other event.
+
+For something the catalog doesn't have at all, create a one-off custom event:
+
+```
+/ea timeline custom <type> <value> <time>
+```
+
+| Type | Value | Effect |
+|---|---|---|
+| `resource_burst` | a drop type id (e.g. `diamond`) | One-time bonus drop from every generator of that type, right now |
+| `team_buff` | `POTION_TYPE:amplifier:seconds` (e.g. `SPEED:1:30`) | Grants everyone in the arena a timed potion effect |
+| `trap_chaos` | — | Force-triggers a random team's queued trap, if any are queued |
+| `weather_change` | `CLEAR`, `RAINING`, or `UNTOUCHED` | Scripted weather change |
+| `time_change` | `NOON`, `SUNSET`, `NIGHT`, or `UNTOUCHED` | Scripted time-of-day change |
+| `announcement` | any message | Pure broadcast, no gameplay effect — script your own callouts |
+| `fireworks` | — | Cosmetic firework show over the arena |
+
+Custom events are capped at 15 per session and can be moved/deleted like any other entry once
+created (reference them by the id `/ea timeline list` shows for them).
 
 ### Shop Overrides
 
 Disable individual shop items for just this match, or change what they cost (amount + currency),
 from Arena Settings → **Shop Items**. Click an item to toggle it on/off; shift-click to open the
 price editor (±1/±10 buttons, cycle currency, reset to default). Also editable via
-`/ea shop list|disable|enable|price|resetprice|reset`.
+`/ea shop list|disable|enable|price|resetprice|reset`. Disabled items are re-skinned to red dye
+wherever the shop is opened — the normal category pages and MBedwars' Quick Buy home screen
+alike — or hidden entirely if `shop.disabled_display: remove`.
 
 ### Team Size
 
 Change how many players fit on each team for this match from Arena Settings → **Team Size**
-(±1 buttons, 1–8, reset to the arena's own default). **Only editable before anyone but the host
-has joined the lobby** — once a second player is in, the controls disappear and any attempt to
-change it is refused, since reshuffling capacity out from under players already sorted onto
-teams would be disruptive. The override is temporary to this match; the arena's own value is
-restored once it ends.
+(±1 buttons, 1–8, reset to the arena's own default) or `/ea teamsize <amount|reset>`. Editable
+for the whole lobby phase, regardless of how many players are already in — only locked once the
+match is actually `RUNNING`. Changing it while players already hold teams **unassigns everyone
+from their team** (they stay in the lobby, not kicked from the arena) with a message explaining
+why, since a roster picked under the old cap may no longer fit the new one. The override is
+temporary to this match; the arena's own value is restored once it ends.
+
+### Environment (Time & Weather)
+
+Set the arena's time of day and weather for this match from Arena Settings → **Environment**
+(cycle buttons) or `/ea weather <clear|rain|off>` / `/ea time <noon|sunset|night|off>`. Purely
+cosmetic — a per-player visual effect with no gameplay-balance impact — so it's editable any
+time, match running or not, and applies instantly to everyone currently in the arena plus anyone
+who joins afterward. Resets to untouched once the match ends, so it never carries over into
+whatever match (private or public) uses the arena next. The same weather/time changes are also
+available as scripted [timeline events](#event-timeline) (`weather_change`/`time_change`) if you
+want them to happen automatically partway through a match instead of being set up front.
 
 ### Saved Configurations (Presets)
 
@@ -299,6 +382,28 @@ inactive, so forgotten private matches don't pile up:
 
 ---
 
+## Stability & Health Monitoring
+
+A separate background task (every `stability.health_check_seconds`, default 30) continuously
+checks every active session against MBedwars' *actual* live arena state — not just trusted to
+stay in sync — and self-heals what it finds, logging every corrective action so admins can audit
+what the plugin did on its own:
+
+- A session whose arena has silently gone `STOPPED` (crashed reset, a manual admin action,
+  anything not routed through ExclusiveArenas) is ended instead of lingering.
+- A match `RUNNING` far longer than the timeline's own match-length cap plus
+  `stability.stuck_match_grace_seconds` (default 300) is logged as possibly stuck. It's only
+  ever force-ended if `stability.force_end_stuck_matches` is explicitly turned on (default off)
+  — until then it's just logged, never touched automatically.
+- A generator whose drop timer stops ticking is flagged as a possible desync (warn-only —
+  auto-"fixing" a spawner is riskier than reporting it).
+- MBedwars' own arena configuration issues (missing bed/spawn/lobby, etc.) are surfaced as a log
+  warning instead of silently misbehaving.
+
+This task never messages players — only the console.
+
+---
+
 ## Hiding Private Arenas from MBedwars' ArenasGUI
 
 ExclusiveArenas registers an MBedwars arena-picker condition variable named
@@ -357,6 +462,17 @@ itself:
 - **Manage Teams** is the one exception — it requires being on the arena's own server, since
   MBedwars' RemoteAPI doesn't expose per-player team assignments for a remote arena.
 
+### Crash Resilience
+
+Every server stamps its own heartbeat row on every session poll. Separately, every server also
+periodically (`database.dead_server_sweep_seconds`, default 120) sweeps for other servers that
+have gone quiet for longer than `database.dead_server_after_seconds` (default 90) and purges
+their orphaned sessions, tickets, and commands from the shared database — so a crashed backend's
+private matches don't sit around the network looking "active" forever. Safe for multiple
+servers to notice and purge the same dead server concurrently. Keep `dead_server_after_seconds`
+a generous multiple of `session_poll_seconds` (the default is ~22x) so a slow poll or brief
+network blip is never mistaken for an actual crash.
+
 ### Party plugins across multiple hubs
 
 Party-policy gating and auto-summon rely entirely on MBedwars' `PartiesHook`. If your party
@@ -376,6 +492,10 @@ as one party — this is a property of the party plugin, not something Exclusive
 - **Auto-summon isn't exposed anywhere.** The continuous party-sync machinery
   (`private.auto_summon_enabled`) still exists internally but has no command or menu right now —
   use **Summon Party** for a one-time pull instead.
+- **Swap Teams has no GUI team-picker.** Two teams is one click too many for a menu button —
+  it's `/ea swapteams <team-a> <team-b>` only; the Quick Actions menu item just points you at it.
+- **Reveal Border only works on the arena's own server.** The border particles are shown to you
+  directly and can't be relayed cross-server, unlike most other quick actions.
 
 ---
 

@@ -24,6 +24,7 @@ public final class SyncService {
     private BukkitTask sessionTask;
     private BukkitTask ticketTask;
     private BukkitTask commandTask;
+    private BukkitTask deadServerTask;
 
     public SyncService(ExclusiveArenasPlugin plugin, Database db,
                        PrivateSessionService sessions, JoinTicketService tickets,
@@ -37,11 +38,26 @@ public final class SyncService {
 
     /** Starts all three pollers. Intervals are in ticks (20 ticks = 1 second). */
     public void start(long sessionPollTicks, long ticketPollTicks, long commandPollTicks) {
+        start(sessionPollTicks, ticketPollTicks, commandPollTicks, 0, 0);
+    }
+
+    /**
+     * Starts all three pollers, plus (when {@code deadServerSweepTicks > 0}) a periodic sweep
+     * that notices another backend has stopped sending heartbeats and purges its orphaned
+     * sessions/tickets/commands from the shared database — see {@link Database#heartbeat()} /
+     * {@link Database#findDeadServers}/{@link Database#purgeDeadServer}. Intervals are in ticks
+     * (20 ticks = 1 second).
+     */
+    public void start(long sessionPollTicks, long ticketPollTicks, long commandPollTicks,
+                      long deadServerSweepTicks, long deadServerStaleMillis) {
         this.sessionTask = Bukkit.getScheduler().runTaskTimerAsynchronously(plugin, () -> {
             try {
                 List<Database.SessionRow> rows = db.loadSessions();
                 plugin.debug("session poll: " + rows.size() + " row(s)");
                 Bukkit.getScheduler().runTask(plugin, () -> sessions.reconcile(rows));
+                // Piggybacked here rather than its own task — this poll already runs on exactly
+                // the cadence a heartbeat needs, so a separate scheduled task would be redundant.
+                db.heartbeat();
             } catch (Throwable t) {
                 plugin.getLogger().log(Level.WARNING, "Session sync failed: " + t.getMessage());
             }
@@ -66,11 +82,28 @@ public final class SyncService {
                 plugin.getLogger().log(Level.WARNING, "Command sync failed: " + t.getMessage());
             }
         }, commandPollTicks, commandPollTicks);
+
+        if (deadServerSweepTicks > 0) {
+            this.deadServerTask = Bukkit.getScheduler().runTaskTimerAsynchronously(plugin, () -> {
+                try {
+                    long staleBefore = System.currentTimeMillis() - deadServerStaleMillis;
+                    for (String deadServerId : db.findDeadServers(staleBefore)) {
+                        plugin.getLogger().warning("ExclusiveArenas: server '" + deadServerId
+                                + "' hasn't sent a heartbeat in over " + (deadServerStaleMillis / 1000)
+                                + "s — treating it as crashed and purging its sessions.");
+                        db.purgeDeadServer(deadServerId);
+                    }
+                } catch (Throwable t) {
+                    plugin.getLogger().log(Level.WARNING, "Dead-server sweep failed: " + t.getMessage());
+                }
+            }, deadServerSweepTicks, deadServerSweepTicks);
+        }
     }
 
     public void stop() {
         if (sessionTask != null) sessionTask.cancel();
         if (ticketTask != null) ticketTask.cancel();
         if (commandTask != null) commandTask.cancel();
+        if (deadServerTask != null) deadServerTask.cancel();
     }
 }
