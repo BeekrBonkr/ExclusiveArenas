@@ -10,6 +10,19 @@ config-version: 7
 # to the console. Leave false for normal operation — errors are always logged regardless.
 debug: false
 
+# Continuous health checking: every health_check_seconds, every active private session is
+# checked against MBedwars' actual live arena state (not just trusted to stay in sync) and
+# self-healed if it's drifted — a session whose arena silently went STOPPED is ended, a
+# spawner that's stopped ticking is flagged, and MBedwars' own arena config issues are logged.
+stability:
+  health_check_seconds: 30
+  # A match RUNNING for longer than timeline.max_match_time plus this many seconds of grace is
+  # logged as possibly stuck. It's only actually force-ended if force_end_stuck_matches is true.
+  stuck_match_grace_seconds: 300
+  # Off by default — force-ending a match automatically is a real action worth opting into
+  # deliberately, not a surprise. Until enabled, a stuck match is only ever logged, never touched.
+  force_end_stuck_matches: false
+
 # Set true on your HUB/lobby server(s). When true, ExclusiveArenas prefixes the arena name
 # with '@' when routing a player to a match on another backend (MBedwars' remote-arena marker),
 # so cross-server joins work without you editing join_command_template by hand.
@@ -37,6 +50,17 @@ database:
   # How often each backend checks for remote commands queued against arenas it hosts (e.g. a
   # host clicking Start/End Match from another server). Lower = more responsive remote control.
   command_poll_seconds: 2
+  # Crash resilience: every backend stamps its own heartbeat on every session poll. Any backend
+  # can then notice another one hasn't been heard from in a while and purge its orphaned
+  # sessions/tickets/commands — so a crashed server's private matches don't sit in the shared
+  # database forever, looking "active" to the rest of the network.
+  #
+  # How often (seconds) any one backend sweeps for other servers that have gone quiet.
+  dead_server_sweep_seconds: 120
+  # How long (seconds) with no heartbeat before a server is considered dead. Keep this a
+  # generous multiple of session_poll_seconds so a slow poll or brief network blip is never
+  # mistaken for a crash — the default is roughly 22x the default 4s poll interval.
+  dead_server_after_seconds: 90
 
 network:
   # Command dispatched (as the player) to transfer them to the backend hosting an arena that
@@ -157,6 +181,28 @@ timeline:
   # Hosts can drag Match End out via the timeline editor or /ea timeline set/move — this
   # caps how long a match can ever be pushed to, however it's edited. "m:ss" or plain seconds.
   max_match_time: "60:00"
+  #
+  # Every entry below is an event definition. Beyond the original set of types
+  # (spawner_speed, destroy_beds, sudden_death, match_end), hosts can now also add:
+  #   resource_burst   — one-time bonus drop from every generator of drop_type, right now.
+  #   team_buff        — grants everyone in the arena a timed potion effect.
+  #                       drop_type = "POTION_TYPE:amplifier:seconds", e.g. "SPEED:1:30".
+  #   trap_chaos       — force-triggers a random team's queued trap, if any are queued.
+  #   weather_change   — changes the arena's weather. drop_type = an ArenaWeatherType name
+  #                       (CLEAR, RAINING, UNTOUCHED).
+  #   time_change      — changes the arena's time of day. drop_type = an ArenaTimeType name
+  #                       (NOON, SUNSET, NIGHT, UNTOUCHED).
+  #   announcement     — pure broadcast, no gameplay effect. drop_type = the message.
+  #   fireworks        — cosmetic firework show over the arena.
+  #
+  # 'default: false' marks an event as an optional extra that ISN'T part of a fresh match's
+  # starting schedule — hosts add it themselves later via the timeline editor's "Add Event"
+  # button (or /ea timeline add <id>) when they actually want it. Omit it (or set true) for
+  # anything that should just always be there by default, as every event below already is.
+  #
+  # A host isn't limited to this catalog either — /ea timeline custom <type> <value> <time>
+  # lets them create a one-off event of any of the seven types above from scratch, without
+  # an admin needing to pre-configure it here at all.
   events:
     diamond2:
       name: "Diamond II"
@@ -202,6 +248,15 @@ timeline:
       time: "30:00"
       type: match_end
       description: "&7The match ends (draw if no winner)."
+    # Example optional catalog event (default: false) — not scheduled unless a host adds it
+    # via the timeline editor's "Add Event" button or /ea timeline add fireworks_finale.
+    fireworks_finale:
+      name: "Fireworks Finale"
+      icon: FIREWORK_ROCKET
+      time: "25:00"
+      type: fireworks
+      default: false
+      description: "&dA celebratory firework show over the arena."
 
 # ── Quick actions ─────────────────────────────────────────────────────────────
 quick_actions:

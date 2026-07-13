@@ -163,7 +163,7 @@ public final class TweaksTimelineBridge implements Listener {
             }
 
             defs.put(id, new TimelineService.Definition(id, level.getTierName(), icon,
-                    (int) Math.min(cumulative, Integer.MAX_VALUE), type, dropTypeId, 1.0, description));
+                    (int) Math.min(cumulative, Integer.MAX_VALUE), type, dropTypeId, 1.0, description, true));
         }
 
         // A Tweaks config without a game-over tier still needs a movable, non-deletable Match End.
@@ -171,7 +171,7 @@ public final class TweaksTimelineBridge implements Listener {
             endId = TimelineService.MATCH_END_ID_FALLBACK;
             defs.put(endId, new TimelineService.Definition(endId, "Match End", Material.CLOCK,
                     (int) Math.max(30 * 60, cumulative + 300), TimelineService.Type.MATCH_END,
-                    null, 1.0, Lang.raw("timeline.tweaks-game-over")));
+                    null, 1.0, Lang.raw("timeline.tweaks-game-over"), true));
         }
 
         timelines.setTweaksDefaults(defs, endId);
@@ -203,7 +203,7 @@ public final class TweaksTimelineBridge implements Listener {
         TimelineService.Definition def = timelines.definition(TIER_ID_PREFIX + next.getTier());
         if (def != null) return def;
         return new TimelineService.Definition(TIER_ID_PREFIX + next.getTier(), next.getTierName(),
-                Material.CLOCK, 0, TimelineService.Type.SPAWNER_SPEED, null, 1.0, "");
+                Material.CLOCK, 0, TimelineService.Type.SPAWNER_SPEED, null, 1.0, "", true);
     }
 
     // ── The actual interception ───────────────────────────────────────────────────
@@ -229,10 +229,19 @@ public final class TweaksTimelineBridge implements Listener {
             SessionSettings.TimelineEntry next = null;
             while (!state.queue.isEmpty()) {
                 SessionSettings.TimelineEntry candidate = state.queue.pollFirst();
-                if (timelines.definition(candidate.id()) != null) {
-                    next = candidate; // stale ids (config changed since the edit) are dropped
-                    break;
+                TimelineService.Definition candidateDef = timelines.definitionFor(candidate);
+                if (candidateDef == null) continue; // stale id (config changed since the edit)
+                if (!isTweaksRepresentable(candidateDef.type())) {
+                    // Weather/buff/announcement/etc. events have no equivalent Tweaks gen-tier to
+                    // substitute in — Tweaks' scheduling model only understands "which tier comes
+                    // next", so there's nothing to hand back for these. Skip rather than crash or
+                    // cancel the whole schedule; timeline.backend: internal supports every type.
+                    plugin.debug("Timeline event '" + candidate.id() + "' (" + candidateDef.type()
+                            + ") has no MBedwarsTweaks equivalent — skipped on this backend.");
+                    continue;
                 }
+                next = candidate;
+                break;
             }
             state.lastScheduled = next;
         }
@@ -250,7 +259,18 @@ public final class TweaksTimelineBridge implements Listener {
             return;
         }
 
-        TimelineService.Definition def = timelines.definition(entry.id());
+        TimelineService.Definition def = timelines.definitionFor(entry);
+        if (def == null) {
+            // The definition vanished (e.g. a config reload) after this entry was queued —
+            // nothing valid left to hand back for it.
+            event.setCancelled(true);
+            try {
+                event.getArenaState().cancelTiers();
+            } catch (Throwable ignored) {
+                // display cleanup only
+            }
+            return;
+        }
         long elapsed = Math.max(0, arena.getRunningTime().getSeconds());
         long delay = Math.max(0, entry.seconds() - elapsed);
 
@@ -322,6 +342,14 @@ public final class TweaksTimelineBridge implements Listener {
     }
 
     // ── Internals ────────────────────────────────────────────────────────────────
+
+    /** The only event types Tweaks' tier-substitution scheduling model can represent. */
+    private static boolean isTweaksRepresentable(TimelineService.Type type) {
+        return switch (type) {
+            case SPAWNER_SPEED, DESTROY_BEDS, SUDDEN_DEATH, MATCH_END -> true;
+            default -> false;
+        };
+    }
 
     private static GenTierLevel levelFor(String defId) {
         if (defId == null || !defId.startsWith(TIER_ID_PREFIX)) return null;

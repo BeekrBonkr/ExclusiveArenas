@@ -315,10 +315,11 @@ controls:
       name: "&c&lKick All Players"
       lore:
         - "&7Remove every player and spectator"
-        - "&7from the arena (except you)."
-        - "&7The match itself keeps running."
+        - "&7from the arena. The match itself"
+        - "&7keeps running."
         - "&8"
-        - "&8▶ Click to kick everyone"
+        - "&8▶ Click to kick everyone, you included"
+        - "&8▶ Shift-click to kick everyone but you"
       glint: false
     end-match:
       slot: 32
@@ -347,7 +348,7 @@ controls:
 # commands, driven safely through its API. Title placeholders: %arena%
 quick-actions:
   title: "&1&lQuick Actions &8· %arena%"
-  size: 36
+  size: 54
   buttons:
     regenerate-map:
       slot: 10
@@ -365,7 +366,7 @@ quick-actions:
         - "&8▶ Click to regenerate"
       glint: false
     heal-all:
-      slot: 12
+      slot: 11
       material: GOLDEN_APPLE
       name: "&6&lHeal Everyone"
       lore:
@@ -376,7 +377,7 @@ quick-actions:
         - "&8▶ Click to heal"
       glint: false
     drop-spawners:
-      slot: 14
+      slot: 12
       material: DIAMOND
       name: "&b&lTrigger All Generators"
       lore:
@@ -387,7 +388,7 @@ quick-actions:
         - "&8▶ Click to drop"
       glint: false
     destroy-beds:
-      slot: 16
+      slot: 13
       material: RED_BED
       name: "&c&lSudden Death"
       lore:
@@ -398,7 +399,7 @@ quick-actions:
         - "&8▶ Click to destroy all beds"
       glint: true
     clear-items:
-      slot: 21
+      slot: 14
       material: HOPPER
       name: "&e&lClear Ground Items"
       lore:
@@ -408,7 +409,7 @@ quick-actions:
         - "&8▶ Click to clear"
       glint: false
     skip-event:
-      slot: 23
+      slot: 15
       material: ENDER_EYE
       name: "&d&lSkip to Next Event"
       lore:
@@ -418,11 +419,171 @@ quick-actions:
         - "&8"
         - "&8▶ Click to skip ahead"
       glint: false
+    force-win:
+      slot: 19
+      material: NETHER_STAR
+      name: "&e&lForce Win"
+      lore:
+        - "&7Instantly end the match, awarding"
+        - "&7a team the win."
+        - "&8"
+        - "&8▶ Click to pick a team"
+      glint: false
+    swap-teams-info:
+      slot: 20
+      material: PISTON
+      name: "&b&lSwap Teams"
+      lore:
+        - "&7Exchange two teams' rosters."
+        - "&8"
+        - "&7Use &f/ea swapteams <a> <b>&7 — two"
+        - "&7teams is one click too many for a"
+        - "&7button."
+      glint: false
+    balance-teams:
+      slot: 21
+      material: COMPASS
+      name: "&a&lBalance Teams"
+      lore:
+        - "&7Re-shuffle every current player"
+        - "&7evenly across the enabled teams."
+        - "&8"
+        - "&8▶ Click to balance"
+      glint: false
+    trigger-trap:
+      slot: 28
+      material: TRIPWIRE_HOOK
+      name: "&5&lTrigger Random Trap"
+      lore:
+        - "&7Force-triggers a random team's"
+        - "&7queued trap, if any are queued."
+        - "&8"
+        - "&8▶ Click to trigger"
+      glint: false
+    clear-traps:
+      slot: 29
+      material: STRING
+      name: "&7&lClear Trap Queues"
+      lore:
+        - "&7Clears every team's queued"
+        - "&7(not yet triggered) traps."
+        - "&8"
+        - "&8▶ Click to clear"
+      glint: false
+    reset-upgrades:
+      slot: 30
+      material: ANVIL
+      name: "&c&lReset Team Upgrades"
+      lore:
+        - "&7Resets every team's generator"
+        - "&7and shop upgrades to nothing"
+        - "&7purchased."
+        - "&8"
+        - "&8▶ Click to reset"
+      glint: false
+    grant-effect:
+      slot: 37
+      material: BREWING_STAND
+      name: "&d&lBuff Everyone"
+      lore:
+        - "&7Grant every player in the arena"
+        - "&7a temporary potion effect."
+        - "&8"
+        - "&8▶ Click to pick an effect"
+      glint: false
+    toggle-freeze:
+      slot: 38
+      material: PACKED_ICE
+      name: "&b&lFreeze / Unfreeze All"
+      lore:
+        - "&7Locks everyone in place — a"
+        - "&7\"hold on a second\" button. Looking"
+        - "&7around still works."
+        - "&8"
+        - "&8▶ Click to toggle"
+      glint: false
+    force-rejoin:
+      slot: 39
+      material: ENDER_PEARL
+      name: "&a&lForce-Rejoin Disconnected"
+      lore:
+        - "&7Sweeps players who disconnected"
+        - "&7mid-match and are back online, and"
+        - "&7rejoins them to the arena."
+        - "&8"
+        - "&8▶ Click to sweep"
+      glint: false
+    reveal-border:
+      slot: 40
+      material: MAP
+      name: "&e&lReveal Arena Border"
+      lore:
+        - "&7Shows you (only) the arena's"
+        - "&7match-area border."
+        - "&8"
+        - "&8▶ Click to reveal"
+      glint: false
     back:
-      slot: 31
+      slot: 49
       material: ARROW
       name: "&7◀ Back"
       lore: ["&8Return to match controls."]
+      glint: false
+
+# ── Quick Actions → Force Win team picker ─────────────────────────────────────
+# Title placeholders: %arena%
+quick-force-win:
+  title: "&1&lForce Win &8· %arena%"
+  size: 27
+  buttons:
+    back:
+      slot: 22
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to Quick Actions."]
+      glint: false
+  items:
+    # %team%
+    team:
+      name: "&a&l%team%"
+      lore: ["&8▶ Click to award this team the win"]
+      glint: false
+
+# ── Quick Actions → Buff Everyone effect picker ───────────────────────────────
+# Title placeholders: %arena%
+quick-grant-effect:
+  title: "&1&lBuff Everyone &8· %arena%"
+  size: 27
+  buttons:
+    speed:
+      slot: 10
+      material: SUGAR
+      name: "&b&lSpeed II"
+      lore: ["&760 seconds.", "&8▶ Click to apply"]
+      glint: false
+    jump:
+      slot: 11
+      material: RABBIT_FOOT
+      name: "&a&lJump Boost II"
+      lore: ["&760 seconds.", "&8▶ Click to apply"]
+      glint: false
+    regen:
+      slot: 15
+      material: GHAST_TEAR
+      name: "&d&lRegeneration II"
+      lore: ["&760 seconds.", "&8▶ Click to apply"]
+      glint: false
+    strength:
+      slot: 16
+      material: BLAZE_POWDER
+      name: "&c&lStrength II"
+      lore: ["&760 seconds.", "&8▶ Click to apply"]
+      glint: false
+    back:
+      slot: 22
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to Quick Actions."]
       glint: false
 
 # ── Arena settings hub ───────────────────────────────────────────────────────
@@ -474,11 +635,52 @@ arena-config:
         - "&8"
         - "&8▶ Click to configure"
       glint: false
+    environment:
+      slot: 18
+      material: SUNFLOWER
+      name: "&b&lEnvironment"
+      lore:
+        - "&7Change the arena's time of day"
+        - "&7and weather."
+        - "&8"
+        - "&8▶ Click to configure"
+      glint: false
     back:
       slot: 22
       material: ARROW
       name: "&7◀ Back"
       lore: ["&8Return to match controls."]
+      glint: false
+
+# ── Arena Settings → Environment (time / weather) ────────────────────────────
+# Title placeholders: %arena%
+environment:
+  title: "&1&lEnvironment &8· %arena%"
+  size: 27
+  buttons:
+    weather:
+      slot: 11
+      material: PAINTING
+      name: "&b&lWeather"
+      lore:
+        - "&7Current: %current%"
+        - "&8"
+        - "&8▶ Click to cycle"
+      glint: false
+    time:
+      slot: 15
+      material: CLOCK
+      name: "&e&lTime of Day"
+      lore:
+        - "&7Current: %current%"
+        - "&8"
+        - "&8▶ Click to cycle"
+      glint: false
+    back:
+      slot: 22
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to Arena Settings."]
       glint: false
 
 # ── Arena settings hub, during creation (before the match exists) ────────────
@@ -682,8 +884,22 @@ timeline:
         - "&7  time&7 instead — it can be moved but"
         - "&7  never deleted, and shortening the"
         - "&7  match rescales every other event."
+        - "&7• &fAdd Event&7 (top-right) adds more —"
+        - "&7  from the server's catalog, or your"
+        - "&7  own custom event."
         - "&8"
         - "&7Changes apply when the match starts."
+      glint: false
+    add-event:
+      slot: 8
+      material: LIME_DYE
+      name: "&a&lAdd Event"
+      lore:
+        - "&7Add another event to this match's"
+        - "&7timeline — from the server's catalog,"
+        - "&7or your own custom event."
+        - "&8"
+        - "&8▶ Click to add"
       glint: false
     minus-minute:
       slot: 37
@@ -782,6 +998,46 @@ timeline:
         - "&8"
         - "&8Use the buttons below to move it."
       glint: true
+
+# ── Event timeline: Add Event ─────────────────────────────────────────────────
+# Title placeholders: %arena%
+timeline-add:
+  title: "&1&lAdd Event &8· %arena%"
+  size: 54
+  buttons:
+    custom-info:
+      slot: 49
+      material: WRITABLE_BOOK
+      name: "&d&lWant something else?"
+      lore:
+        - "&7Create your own event with"
+        - "&7&f/ea timeline custom <type> <value> <time>&7."
+        - "&8"
+        - "&7Types: &fresource_burst, team_buff,"
+        - "&7trap_chaos, weather_change, time_change,"
+        - "&7announcement, fireworks"
+      glint: false
+    empty:
+      slot: 22
+      material: BARRIER
+      name: "&cNothing to add"
+      lore: ["%reason%"]
+      glint: false
+    back:
+      slot: 45
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to the timeline."]
+      glint: false
+  items:
+    # A catalog definition not currently on this match's timeline. %event%, %effect%
+    event:
+      name: "&a&l%event%"
+      lore:
+        - "&7Effect: %effect%"
+        - "&8"
+        - "&8▶ Click to add"
+      glint: false
 
 # ── Shop configuration: page list ────────────────────────────────────────────
 # Title placeholders: %arena%

@@ -89,9 +89,19 @@ public final class PrivateSession implements SettingsHolder {
     public Integer getOriginalPlayersPerTeam() { return originalPlayersPerTeam; }
     public void setOriginalPlayersPerTeam(Integer originalPlayersPerTeam) { this.originalPlayersPerTeam = originalPlayersPerTeam; }
 
+    // Above this size, markRecentJoin starts opportunistically dropping long-stale entries
+    // instead of letting the map grow for a session's entire lifetime — matters only for a
+    // long-lived, high-churn PARTY session with many distinct players cycling through it.
+    private static final int PRUNE_THRESHOLD = 64;
+    private static final Duration PRUNE_AFTER = Duration.ofMinutes(10);
+
     /** Records that this player was just authorised into the arena (owner, ticket, or party). */
     public void markRecentJoin(UUID playerId) {
         recentJoins.put(playerId, Instant.now());
+        if (recentJoins.size() > PRUNE_THRESHOLD) {
+            Instant cutoff = Instant.now().minus(PRUNE_AFTER);
+            recentJoins.values().removeIf(t -> t.isBefore(cutoff));
+        }
     }
 
     /** True if {@link #markRecentJoin} fired for this player within the given window. */

@@ -3,6 +3,8 @@ package com.slg.exclusivearenas;
 import de.marcely.bedwars.api.BedwarsAPI;
 import de.marcely.bedwars.api.arena.Arena;
 import de.marcely.bedwars.api.arena.ArenaStatus;
+import de.marcely.bedwars.api.arena.ArenaTimeType;
+import de.marcely.bedwars.api.arena.ArenaWeatherType;
 import de.marcely.bedwars.api.arena.Team;
 import de.marcely.bedwars.api.game.spectator.KickSpectatorReason;
 import de.marcely.bedwars.api.game.spectator.SpectateReason;
@@ -19,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -30,8 +33,10 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     private VersionedYaml guisYaml;
     private DraftService draftService;
     /** Players with a create-and-join in flight (past the async party check) — guards against a
-     *  double-click or double-command firing two overlapping creations for the same player. */
-    private final Set<UUID> creatingSessionFor = java.util.concurrent.ConcurrentHashMap.newKeySet();
+     *  double-click or double-command firing two overlapping creations for the same player.
+     *  Keyed to a per-attempt token (rather than a plain Set) so a timed-out attempt's late
+     *  callback can never clobber a newer attempt that started after the timeout released it. */
+    private final Map<UUID, Object> creatingSessionFor = new java.util.concurrent.ConcurrentHashMap<>();
     private PrivateSessionService sessionService;
     private JoinTicketService ticketService;
     private GuiManager guiManager;
@@ -42,6 +47,10 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     private PresetService presetService;
     private org.bukkit.scheduler.BukkitTask guiRefreshTask;
     private Database database;   // null when running single-server (database.enabled = false)
+    // Bumped by every setupDatabase()/teardownDatabase() call; lets a setupDatabase() attempt
+    // still connecting asynchronously recognize it's been superseded and discard its result
+    // instead of clobbering newer state (e.g. two /ea reload calls in quick succession).
+    private volatile long dbSetupGeneration = 0;
     private SyncService syncService;
     private RemoteCommandService remoteCommandService;
     private org.bukkit.scheduler.BukkitTask autoSummonTask;
@@ -104,6 +113,11 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
         // Periodic cleanup (every 30 seconds)
         new SessionCleanupTask(this, sessionService).runTaskTimer(this, 600L, 600L);
+
+        // Continuously checks live sessions against MBedwars' actual arena state and self-heals
+        // drift (stuck sessions, stuck matches, spawner desync, arena config issues).
+        long healthTicks = Math.max(200L, eaConfig.intNum("stability.health_check_seconds", 30) * 20L);
+        new ArenaHealthMonitorTask(this, sessionService).runTaskTimer(this, healthTicks, healthTicks);
 
         // Finishes the join for anyone who ends up physically inside a private arena (e.g. after
         // a cross-server transfer) without MBedwars having actually registered them as playing.
@@ -304,6 +318,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         });
         this.guisYaml.load();
         GuiStyle.init(guisYaml);
+        GuiStyle.warnIfPairedSlotsMismatched(getLogger());
     }
 
     /** Moves {@code path} from {@code oldSlot} to {@code newSlot}, but only if it's still there. */
@@ -322,13 +337,26 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
      * to force the built-in engine even with Tweaks installed.
      */
     private void setupTweaksBridge() {
-        teardownTweaksBridge();
-        if ("internal".equalsIgnoreCase(eaConfig.str("timeline.backend", "auto"))) return;
-        if (Bukkit.getPluginManager().getPlugin("MBedwarsTweaks") == null) return;
+        if ("internal".equalsIgnoreCase(eaConfig.str("timeline.backend", "auto"))
+                || Bukkit.getPluginManager().getPlugin("MBedwarsTweaks") == null) {
+            teardownTweaksBridge();
+            return;
+        }
 
-        this.tweaksBridge = TweaksTimelineBridge.tryCreate(this, sessionService, timelineService);
         if (tweaksBridge != null) {
-            Bukkit.getPluginManager().registerEvents(tweaksBridge, this);
+            // A bridge is already active (e.g. this is a /ea reload, not the initial enable) —
+            // just re-read Tweaks' gen-tier config into the timeline defaults. Tearing down and
+            // rebuilding a fresh instance here would wipe every in-flight arena's per-round
+            // schedule state, causing already-fired events to replay for any match currently
+            // RUNNING. Keep the existing instance, and its live queues, in place.
+            if (!tweaksBridge.rebuildDefaults()) teardownTweaksBridge();
+            return;
+        }
+
+        TweaksTimelineBridge bridge = TweaksTimelineBridge.tryCreate(this, sessionService, timelineService);
+        if (bridge != null) {
+            this.tweaksBridge = bridge;
+            Bukkit.getPluginManager().registerEvents(bridge, this);
             getLogger().info("MBedwarsTweaks detected — its gen tiers now provide the default "
                     + "event timeline, and custom timings will show on the scoreboard.");
         }
@@ -374,6 +402,13 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         }
     }
 
+    /**
+     * Connects to the database and runs schema setup off the main thread — opening the
+     * connection pool and running DDL can block for the full connection timeout if the DB host
+     * is slow or unreachable, and this runs on every plugin enable and every {@code /ea reload}.
+     * The actual field wiring and sync-task startup happen back on the main thread once the
+     * connection attempt finishes (success or failure).
+     */
     private void setupDatabase() {
         if (!eaConfig.bool("database.enabled", false)) return;
 
@@ -387,34 +422,68 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                 eaConfig.str("database.table_prefix", "ea_"),
                 eaConfig.bool("database.use_ssl", false),
                 serverId);
+        boolean verbose = isVerbose();
+        long generation = ++dbSetupGeneration;
 
-        try {
-            Database db = new Database(getLogger(), settings, isVerbose());
-            db.initSchema();
-            this.database = db;
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            Database db = null;
+            Throwable failure = null;
+            try {
+                db = new Database(getLogger(), settings, verbose);
+                db.initSchema();
+            } catch (Throwable t) {
+                failure = t;
+            }
+            Database connectedDb = db;
+            Throwable connectFailure = failure;
+            Bukkit.getScheduler().runTask(this,
+                    () -> finishDatabaseSetup(generation, connectedDb, connectFailure));
+        });
+    }
 
-            sessionService.setDatabase(db);
-            ticketService.setDatabase(db);
-            remoteCommandService.setDatabase(db);
+    private void finishDatabaseSetup(long generation, Database db, Throwable failure) {
+        if (generation != dbSetupGeneration) {
+            // A later setupDatabase()/teardownDatabase() call superseded this attempt while it
+            // was connecting — discard the result instead of clobbering newer state.
+            if (db != null) db.shutdown();
+            return;
+        }
 
-            long sessionTicks = Math.max(20L, eaConfig.intNum("database.session_poll_seconds", 4) * 20L);
-            long ticketTicks  = Math.max(20L, eaConfig.intNum("database.ticket_poll_seconds", 1) * 20L);
-            long commandTicks = Math.max(20L, eaConfig.intNum("database.command_poll_seconds", 2) * 20L);
-            this.syncService = new SyncService(this, db, sessionService, ticketService, remoteCommandService);
-            this.syncService.start(sessionTicks, ticketTicks, commandTicks);
-        } catch (Throwable t) {
+        if (failure != null) {
             getLogger().severe("Could not connect to the ExclusiveArenas database — falling back to "
-                    + "single-server in-memory mode. Cause: " + t.getMessage());
+                    + "single-server in-memory mode. Cause: " + failure.getMessage());
             this.database = null;
             this.syncService = null;
             sessionService.setDatabase(null);
             ticketService.setDatabase(null);
             remoteCommandService.setDatabase(null);
+            return;
         }
+
+        this.database = db;
+        sessionService.setDatabase(db);
+        ticketService.setDatabase(db);
+        remoteCommandService.setDatabase(db);
+
+        long sessionTicks = Math.max(20L, eaConfig.intNum("database.session_poll_seconds", 4) * 20L);
+        long ticketTicks  = Math.max(20L, eaConfig.intNum("database.ticket_poll_seconds", 1) * 20L);
+        long commandTicks = Math.max(20L, eaConfig.intNum("database.command_poll_seconds", 2) * 20L);
+        long deadServerSweepTicks = Math.max(200L, eaConfig.intNum("database.dead_server_sweep_seconds", 120) * 20L);
+        long deadServerStaleMillis = Math.max(30_000L,
+                eaConfig.intNum("database.dead_server_after_seconds", 90) * 1000L);
+        this.syncService = new SyncService(this, db, sessionService, ticketService, remoteCommandService);
+        this.syncService.start(sessionTicks, ticketTicks, commandTicks,
+                deadServerSweepTicks, deadServerStaleMillis);
+
+        // Push current in-memory state back to the (possibly just-(re)connected) database so a
+        // poll does not evict live matches that predate the connection. Harmless no-op on the
+        // very first connect, since there's nothing in-memory yet at that point.
+        sessionService.resyncAll();
     }
 
     /** Cleanly tears down the database + sync tasks (safe to call when already down). */
     private void teardownDatabase() {
+        dbSetupGeneration++; // invalidate any setupDatabase() attempt still connecting
         if (syncService != null) {
             syncService.stop();
             syncService = null;
@@ -441,14 +510,10 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         timelineService.load(eaConfig);
         setupTweaksBridge(); // re-applies Tweaks-derived defaults over the config ones
         applyTunables();
-        setupDatabase();
+        setupDatabase(); // connects asynchronously; resyncAll() runs once it lands (see finishDatabaseSetup)
         startAutoSummon(); // restart to pick up a changed poll interval
         startBossBar();    // restart to pick up a changed enabled/disabled setting
         startGuiRefresh();
-
-        // Push current in-memory state back to the (possibly reconnected) database so a poll
-        // does not evict live matches that predate the reconnect.
-        sessionService.resyncAll();
 
         for (Player online : Bukkit.getOnlinePlayers()) {
             if (online.getOpenInventory() != null
@@ -456,8 +521,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                 online.closeInventory();
             }
         }
-        getLogger().info("ExclusiveArenas reloaded ("
-                + (database != null ? "database mode" : "single-server mode") + ").");
+        getLogger().info("ExclusiveArenas reloaded.");
     }
 
     @Override
@@ -512,6 +576,37 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                 case QUICK_BEDS -> quickActions.destroyAllBeds(actor, session, local);
                 case QUICK_CLEAR -> quickActions.clearGroundItems(actor, session, local);
                 case QUICK_SKIP_EVENT -> quickActions.skipToNextEvent(actor, session, local);
+                case QUICK_FORCE_WIN -> {
+                    Team team = teamByName(local, payload);
+                    if (team != null) quickActions.forceWin(actor, session, local, team);
+                }
+                case QUICK_SWAP_TEAMS -> {
+                    String[] parts = payload == null ? new String[0] : payload.split(":", 2);
+                    if (parts.length == 2) {
+                        quickActions.swapTeams(actor, session, local,
+                                teamByName(local, parts[0]), teamByName(local, parts[1]));
+                    }
+                }
+                case QUICK_BALANCE_TEAMS -> quickActions.balanceTeams(actor, session, local);
+                case QUICK_TRIGGER_TRAP -> quickActions.triggerRandomTrap(actor, session, local);
+                case QUICK_CLEAR_TRAPS -> quickActions.clearAllTrapQueues(actor, session, local);
+                case QUICK_RESET_UPGRADES -> quickActions.resetAllTeamUpgrades(actor, session, local);
+                case QUICK_GRANT_EFFECT -> {
+                    String[] parts = payload == null ? new String[0] : payload.split(":");
+                    if (parts.length >= 3) {
+                        var potionType = org.bukkit.potion.PotionEffectType.getByName(parts[0]);
+                        try {
+                            if (potionType != null) {
+                                quickActions.grantEffect(actor, session, local, potionType,
+                                        Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));
+                            }
+                        } catch (NumberFormatException ignored) {
+                            // malformed payload — nothing to apply
+                        }
+                    }
+                }
+                case QUICK_TOGGLE_FREEZE -> quickActions.toggleFreeze(actor, session, local);
+                case QUICK_FORCE_REJOIN -> quickActions.forceRejoinDisconnected(actor, session, local);
             }
             return;
         }
@@ -521,6 +616,14 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         }
         remoteCommandService.enqueue(type, session, payload);
         actor.sendMessage(Lang.msg("quick.sent", "%arena%", session.getArenaName()));
+    }
+
+    private static Team teamByName(Arena arena, String name) {
+        if (name == null) return null;
+        for (Team team : arena.getEnabledTeams()) {
+            if (team.name().equalsIgnoreCase(name)) return team;
+        }
+        return null;
     }
 
     // ── Debug / limits ──────────────────────────────────────────────────────────
@@ -653,34 +756,45 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
         // Guards a double-click on Create & Join (or a repeated /ea create) from racing two
         // overlapping creations while the first is still waiting on the async party check below.
-        if (!creatingSessionFor.add(host.getUniqueId())) return;
+        // Keyed to a token rather than just present/absent so a timed-out attempt's late
+        // callback (below) can't clobber a newer attempt that started after the timeout.
+        Object token = new Object();
+        if (creatingSessionFor.putIfAbsent(host.getUniqueId(), token) != null) return;
+
+        // Safety net: if the party hook throws before registering its callback, or simply never
+        // calls back, the guard above would otherwise never clear and this player could never
+        // create a match again without a server restart.
+        Bukkit.getScheduler().runTaskLater(this,
+                () -> creatingSessionFor.remove(host.getUniqueId(), token), 20L * 15);
 
         // Party-membership rules depend on an async party lookup, so validate that first and
-        // only continue on to the actual creation once it's confirmed OK.
+        // only continue on to the actual creation once it's confirmed OK. The lookup itself may
+        // resolve off the main thread, so every branch below (including the failure messages)
+        // is hopped onto the main thread rather than assuming the callback already is.
         JoinPolicy policy = draft.getJoinPolicy() == null ? JoinPolicy.PARTY : draft.getJoinPolicy();
-        PartyResolver.getPartyMember(host, opt -> {
-            if (policy == JoinPolicy.CODE && opt.isPresent()) {
-                creatingSessionFor.remove(host.getUniqueId());
-                host.sendMessage(Lang.msg("create.code-while-in-party"));
-                return;
-            }
-            if (policy == JoinPolicy.PARTY) {
-                boolean isLeader = opt.isPresent() && opt.get().getParty().getLeaders().stream()
-                        .anyMatch(leader -> leader.getUniqueId().equals(host.getUniqueId()));
-                if (!isLeader) {
-                    creatingSessionFor.remove(host.getUniqueId());
-                    host.sendMessage(Lang.msg("create.must-be-leader"));
+        PartyResolver.getPartyMember(host, opt -> Bukkit.getScheduler().runTask(this, () -> {
+            // The safety net above may have already released this attempt's guard (and let a
+            // newer one claim it) by the time this callback finally arrives — if so, this
+            // callback is stale and must not act.
+            if (creatingSessionFor.get(host.getUniqueId()) != token) return;
+            try {
+                if (policy == JoinPolicy.CODE && opt.isPresent()) {
+                    host.sendMessage(Lang.msg("create.code-while-in-party"));
                     return;
                 }
-            }
-            Bukkit.getScheduler().runTask(this, () -> {
-                try {
-                    finishCreateAndJoin(host, draft, joinAfterCreate);
-                } finally {
-                    creatingSessionFor.remove(host.getUniqueId());
+                if (policy == JoinPolicy.PARTY) {
+                    boolean isLeader = opt.isPresent() && opt.get().getParty().getLeaders().stream()
+                            .anyMatch(leader -> leader.getUniqueId().equals(host.getUniqueId()));
+                    if (!isLeader) {
+                        host.sendMessage(Lang.msg("create.must-be-leader"));
+                        return;
+                    }
                 }
-            });
-        });
+                finishCreateAndJoin(host, draft, joinAfterCreate);
+            } finally {
+                creatingSessionFor.remove(host.getUniqueId(), token);
+            }
+        }));
     }
 
     private void finishCreateAndJoin(Player host, DraftPrivateMatch draft, boolean joinAfterCreate) {
@@ -829,9 +943,13 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
      */
     public void requestEndMatch(Player actor, PrivateSession session) {
         Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
-        if (local != null && local.exists() || !remoteCommandService.isAvailable()) {
+        if (local != null && local.exists()) {
             endMatch(session);
             actor.sendMessage(Lang.msg("match.ended", "%arena%", session.getArenaName()));
+            return;
+        }
+        if (!remoteCommandService.isAvailable()) {
+            actor.sendMessage(Lang.msg("general.arena-other-server"));
             return;
         }
         remoteCommandService.enqueue(RemoteCommandService.Type.END_MATCH, session);
@@ -844,6 +962,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
         restoreArenaMinPlayers(session, arena);
         restoreArenaPlayersPerTeam(session, arena);
+        resetArenaEnvironment(session, arena);
         sessionService.endSession(session);
         if (arena != null && arena.exists()) {
             arena.broadcast(Lang.msg("match.ended-broadcast"));
@@ -871,6 +990,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         if (!arena.getStatus().isLobby()) return;
         relaxMinPlayers(arena, session);
         applyPlayersPerTeamOverride(arena, session);
+        applyEnvironmentOverride(arena, session);
         try {
             arena.setLobbyTimeRemaining(3600, false);
         } catch (Throwable ignored) {
@@ -944,9 +1064,14 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         }
     }
 
-    /** Only the host is in the arena so far — the one point a team-size change can't disrupt anyone. */
+    /**
+     * Team size is changeable for the whole lobby phase, not just while the host is alone —
+     * only actually starting the match closes the window. A change while players already hold
+     * teams unassigns everyone (see {@link #applyPlayersPerTeamOverride}) rather than leaving a
+     * roster that may no longer fit the new cap.
+     */
     public boolean canChangeTeamSize(Arena arena) {
-        return arena == null || !arena.exists() || arena.getPlayers().size() <= 1;
+        return arena != null && arena.exists() && arena.getStatus().isLobby();
     }
 
     /**
@@ -954,6 +1079,10 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
      * arena, snapshotting its original value on first use so it can be restored once the match
      * ends via {@link #restoreArenaPlayersPerTeam}. A no-op override just keeps the arena at its
      * original value — mirrors {@link #relaxMinPlayers}, including being safe to call repeatedly.
+     * A genuine change to the value unassigns every current player from their team (see
+     * {@link #unassignAllTeams}) — this only fires when the arena's actual value is about to
+     * change, not on every routine lobby-prepare call, so an unrelated player joining doesn't
+     * repeatedly bounce everyone else off their teams.
      */
     public void applyPlayersPerTeamOverride(Arena arena, PrivateSession session) {
         if (session.getOriginalPlayersPerTeam() == null) {
@@ -964,8 +1093,29 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         if (arena.getPlayersPerTeam() != target) {
             try {
                 arena.setPlayersPerTeam(target);
+                unassignAllTeams(arena);
             } catch (Throwable ignored) {
                 // best effort
+            }
+        }
+    }
+
+    /**
+     * Clears every current player's team assignment — used when the team-size cap changes,
+     * since an existing roster (picked under the old cap) may no longer make sense under the
+     * new one. Players stay in the lobby and simply need to pick a team again.
+     */
+    private void unassignAllTeams(Arena arena) {
+        for (Player player : arena.getPlayers()) {
+            try {
+                if (arena.getPlayerTeam(player) == null) continue;
+                arena.setPlayerTeam(player, null);
+                player.sendMessage(Lang.msg("teamsize.reassign"));
+            } catch (Throwable t) {
+                // One player failing to unassign shouldn't leave everyone else stuck on a
+                // roster built for the old team cap.
+                getLogger().warning("Could not unassign " + player.getName() + " from their team in "
+                        + arena.getName() + ": " + t.getMessage());
             }
         }
     }
@@ -979,6 +1129,72 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             arena.setPlayersPerTeam(original);
         } catch (Throwable ignored) {
             // best effort — the arena will pick its configured value back up on the next reset anyway
+        }
+    }
+
+    // ── Environment (time / weather) ─────────────────────────────────────────────
+
+    /**
+     * Applies the session's time/weather override (Arena Settings → Environment) to the live
+     * arena. Unlike team size, there's no "original value" to snapshot/restore — UNTOUCHED
+     * (MBedwars' own neutral default) is itself the un-set state, so ending a match just leaves
+     * nothing further to undo. {@code setWeatherType}/{@code setTimeType} push to everyone
+     * currently viewing the arena; a player joining later needs {@link #syncPlayerClimate}
+     * separately, since they wouldn't have received that original push.
+     */
+    public void applyEnvironmentOverride(Arena arena, PrivateSession session) {
+        ArenaWeatherType weather = parseWeatherType(session.getSettings().getWeatherType());
+        ArenaTimeType time = parseTimeType(session.getSettings().getTimeType());
+        try {
+            if (arena.getWeatherType() != weather) arena.setWeatherType(weather);
+            if (arena.getTimeType() != time) arena.setTimeType(time);
+        } catch (Throwable ignored) {
+            // best effort
+        }
+    }
+
+    /** Re-sends the arena's current time/weather to one player — for a player joining after
+     *  the arena-wide push in {@link #applyEnvironmentOverride} already happened. */
+    public void syncPlayerClimate(Arena arena, Player player) {
+        try {
+            arena.applyPlayerClimate(player);
+        } catch (Throwable ignored) {
+            // best effort
+        }
+    }
+
+    /**
+     * Puts the arena's time/weather back to UNTOUCHED once a private match ends — unlike team
+     * size there's no prior "arena default" to restore, but leaving a host's RAINING/NIGHT
+     * choice in place would otherwise leak into whatever match (private or public) uses this
+     * arena next.
+     */
+    private void resetArenaEnvironment(PrivateSession session, Arena arena) {
+        if (arena == null || !arena.exists()) return;
+        if (session.getSettings().getWeatherType() == null && session.getSettings().getTimeType() == null) return;
+        try {
+            arena.setWeatherType(ArenaWeatherType.UNTOUCHED);
+            arena.setTimeType(ArenaTimeType.UNTOUCHED);
+        } catch (Throwable ignored) {
+            // best effort
+        }
+    }
+
+    public static ArenaWeatherType parseWeatherType(String name) {
+        if (name == null) return ArenaWeatherType.UNTOUCHED;
+        try {
+            return ArenaWeatherType.valueOf(name);
+        } catch (IllegalArgumentException e) {
+            return ArenaWeatherType.UNTOUCHED;
+        }
+    }
+
+    public static ArenaTimeType parseTimeType(String name) {
+        if (name == null) return ArenaTimeType.UNTOUCHED;
+        try {
+            return ArenaTimeType.valueOf(name);
+        } catch (IllegalArgumentException e) {
+            return ArenaTimeType.UNTOUCHED;
         }
     }
 

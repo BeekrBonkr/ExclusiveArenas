@@ -28,11 +28,37 @@ public final class TimelineService {
     /** Editing granularity; rescaled times snap to this. */
     private static final int SNAP_SECONDS = 5;
 
-    public enum Type { SPAWNER_SPEED, DESTROY_BEDS, SUDDEN_DEATH, MATCH_END }
+    public enum Type {
+        SPAWNER_SPEED, DESTROY_BEDS, SUDDEN_DEATH, MATCH_END,
+        /** One-time immediate extra drop from every spawner of a drop type — value = drop type id. */
+        RESOURCE_BURST,
+        /** Timed potion effect for every player currently in the arena — value = "TYPE:AMPLIFIER:SECONDS". */
+        TEAM_BUFF,
+        /** Force-triggers a random team's queued trap, if any are queued. No value. */
+        TRAP_CHAOS,
+        /** Scripted weather change — value = an {@code ArenaWeatherType} name. */
+        WEATHER_CHANGE,
+        /** Scripted time-of-day change — value = an {@code ArenaTimeType} name. */
+        TIME_CHANGE,
+        /** Pure broadcast, no gameplay effect — value = the message. */
+        ANNOUNCEMENT,
+        /** Cosmetic firework show over the arena. No value. */
+        FIREWORKS
+    }
 
-    /** A configured event definition (the "what"); sessions store only id + time. */
+    /**
+     * A configured event definition (the "what"); sessions store only id + time (or, for a
+     * host-authored custom event, id + time + type + value — see
+     * {@link SessionSettings.TimelineEntry}). {@code dropTypeId} is reused as a generic
+     * single-value slot for the newer types above (weather/time name, potion spec, message
+     * text, …) — named for its original SPAWNER_SPEED-only purpose, but not renamed everywhere
+     * to keep this change minimal. {@code includeByDefault} (config key {@code default},
+     * defaults to true) lets an admin define a catalog entry that ISN'T part of every match's
+     * starting schedule — an optional extra hosts can add via the timeline editor instead.
+     */
     public record Definition(String id, String name, Material icon, int defaultSeconds,
-                             Type type, String dropTypeId, double multiplier, String description) {}
+                             Type type, String dropTypeId, double multiplier, String description,
+                             boolean includeByDefault) {}
 
     private final Logger logger;
     private Map<String, Definition> definitions = new LinkedHashMap<>();
@@ -70,6 +96,11 @@ public final class TimelineService {
                 Material icon = Material.matchMaterial(e.getString("icon", "CLOCK"));
                 if (icon == null) icon = Material.CLOCK;
 
+                // default: false marks an event as an optional catalog extra — not part of a
+                // fresh match's starting schedule, but available for a host to add later via
+                // the timeline editor's "Add Event" flow.
+                boolean includeByDefault = e.getBoolean("default", true) || type == Type.MATCH_END;
+
                 defs.put(id, new Definition(
                         id,
                         e.getString("name", id),
@@ -78,7 +109,8 @@ public final class TimelineService {
                         type,
                         e.getString("drop_type", null),
                         e.getDouble("multiplier", 1.0),
-                        e.getString("description", "")));
+                        e.getString("description", ""),
+                        includeByDefault));
             }
         }
 
@@ -89,7 +121,7 @@ public final class TimelineService {
             logger.warning("timeline.events has no match_end-type event; adding a 30:00 default.");
             endId = MATCH_END_ID_FALLBACK;
             defs.put(endId, new Definition(endId, "Match End", Material.CLOCK, 30 * 60,
-                    Type.MATCH_END, null, 1.0, "The match ends."));
+                    Type.MATCH_END, null, 1.0, "The match ends.", true));
         }
         this.matchEndId = endId;
         this.definitions = defs;
@@ -117,6 +149,7 @@ public final class TimelineService {
         return enabled;
     }
 
+    /** Catalog-only lookup — null for a host-authored custom entry's id, use {@link #definitionFor} instead. */
     public Definition definition(String id) {
         return definitions.get(id);
     }
@@ -130,11 +163,121 @@ public final class TimelineService {
         return matchEndId;
     }
 
+    /**
+     * Resolves a timeline entry's definition regardless of whether it references the catalog
+     * or is a host-authored custom event (synthesized on the fly from its own type + value —
+     * nothing to look up, it's entirely self-contained).
+     */
+    public Definition definitionFor(SessionSettings.TimelineEntry entry) {
+        if (entry.isCustom()) return syntheticDefinition(entry);
+        return definitions.get(entry.id());
+    }
+
+    /** Same as {@link #definitionFor(SessionSettings.TimelineEntry)}, resolved by id against a session's current timeline. */
+    public Definition definitionFor(SessionSettings settings, String id) {
+        for (SessionSettings.TimelineEntry e : effectiveTimeline(settings)) {
+            if (e.id().equals(id)) return definitionFor(e);
+        }
+        return definitions.get(id);
+    }
+
+    private Definition syntheticDefinition(SessionSettings.TimelineEntry entry) {
+        Type type;
+        try {
+            type = Type.valueOf(entry.customType());
+        } catch (IllegalArgumentException | NullPointerException e) {
+            type = Type.ANNOUNCEMENT;
+        }
+        String value = entry.customValue() == null ? "" : entry.customValue();
+
+        return switch (type) {
+            case RESOURCE_BURST -> new Definition(entry.id(), "Resource Burst: " + value, Material.CHEST,
+                    entry.seconds(), type, value, 1.0,
+                    "One-time bonus drop from every " + value + " generator.", true);
+            case TEAM_BUFF -> new Definition(entry.id(), "Buff: " + value, Material.POTION,
+                    entry.seconds(), type, value, 1.0,
+                    "Grants everyone in the arena a temporary " + value + " effect.", true);
+            case TRAP_CHAOS -> new Definition(entry.id(), "Trap Chaos", Material.TRIPWIRE_HOOK,
+                    entry.seconds(), type, value, 1.0,
+                    "Force-triggers a random team's queued trap.", true);
+            case WEATHER_CHANGE -> new Definition(entry.id(), "Weather: " + value, Material.PAINTING,
+                    entry.seconds(), type, value, 1.0,
+                    "Changes the arena's weather to " + value + ".", true);
+            case TIME_CHANGE -> new Definition(entry.id(), "Time: " + value, Material.CLOCK,
+                    entry.seconds(), type, value, 1.0,
+                    "Changes the arena's time of day to " + value + ".", true);
+            case FIREWORKS -> new Definition(entry.id(), "Fireworks", Material.FIREWORK_ROCKET,
+                    entry.seconds(), type, value, 1.0,
+                    "A celebratory firework show over the arena.", true);
+            default -> new Definition(entry.id(), "Announcement", Material.PAPER,
+                    entry.seconds(), Type.ANNOUNCEMENT, value, 1.0, value, true);
+        };
+    }
+
+    /** Presets per player are capped to keep the timeline from becoming unmanageable. */
+    public static final int MAX_CUSTOM_EVENTS = 15;
+
+    /**
+     * Adds a catalog definition to the session's timeline at the given time, if it isn't
+     * already present. Returns false when the id is unknown or already scheduled.
+     */
+    public boolean addEvent(SessionSettings settings, String id, int seconds) {
+        Definition def = definitions.get(id);
+        if (def == null) return false;
+
+        List<SessionSettings.TimelineEntry> timeline = effectiveTimeline(settings);
+        if (indexOf(timeline, id) >= 0) return false;
+
+        timeline.add(new SessionSettings.TimelineEntry(id,
+                clamp(seconds, MIN_EVENT_SECONDS, timeOf(timeline, matchEndId) - SNAP_SECONDS)));
+        sortWithEndLast(timeline);
+        settings.setTimeline(timeline);
+        return true;
+    }
+
+    /**
+     * Adds a host-authored custom event — its own type + value, not a catalog reference — at
+     * the given time. Returns the generated entry, or null when the session is already at
+     * {@link #MAX_CUSTOM_EVENTS} or {@code type}/{@code value} don't make sense together.
+     */
+    public SessionSettings.TimelineEntry addCustomEvent(SessionSettings settings, Type type, String value, int seconds) {
+        if (type == null || !isCustomCreatable(type)) return null;
+
+        List<SessionSettings.TimelineEntry> timeline = effectiveTimeline(settings);
+        long customCount = timeline.stream().filter(SessionSettings.TimelineEntry::isCustom).count();
+        if (customCount >= MAX_CUSTOM_EVENTS) return null;
+
+        String id = "custom:" + java.util.UUID.randomUUID();
+        int clampedTime = clamp(seconds, MIN_EVENT_SECONDS, timeOf(timeline, matchEndId) - SNAP_SECONDS);
+        SessionSettings.TimelineEntry entry = new SessionSettings.TimelineEntry(id, clampedTime, type.name(), value);
+
+        timeline.add(entry);
+        sortWithEndLast(timeline);
+        settings.setTimeline(timeline);
+        return entry;
+    }
+
+    /**
+     * Only the newer, self-contained types can be host-authored from scratch. The original four
+     * (SPAWNER_SPEED, DESTROY_BEDS, SUDDEN_DEATH, MATCH_END) need admin-configured semantics a
+     * bare id+time+value can't express (a validated drop_type + multiplier for SPAWNER_SPEED,
+     * MATCH_END's special non-deletable/rescale-anchor status, …) — they stay catalog-only.
+     */
+    public static boolean isCustomCreatable(Type type) {
+        return switch (type) {
+            case RESOURCE_BURST, TEAM_BUFF, TRAP_CHAOS, WEATHER_CHANGE, TIME_CHANGE, ANNOUNCEMENT, FIREWORKS -> true;
+            case SPAWNER_SPEED, DESTROY_BEDS, SUDDEN_DEATH, MATCH_END -> false;
+        };
+    }
+
     // ── Effective timeline of a session ─────────────────────────────────────────────
 
     /**
-     * The session's timeline sorted by time, Match End guaranteed present and last.
-     * Custom entries whose definition no longer exists in config are dropped.
+     * The session's timeline sorted by time, Match End guaranteed present and last. An entry
+     * referencing a catalog id that no longer exists in config is dropped; a host-authored
+     * entry (its own type + value, not a catalog reference — see
+     * {@link SessionSettings.TimelineEntry#isCustom()}) is always kept, since it's entirely
+     * self-contained and doesn't depend on the catalog at all.
      */
     public List<SessionSettings.TimelineEntry> effectiveTimeline(SessionSettings settings) {
         List<SessionSettings.TimelineEntry> custom = settings.getTimeline();
@@ -142,12 +285,13 @@ public final class TimelineService {
         List<SessionSettings.TimelineEntry> out = new ArrayList<>();
         if (custom == null) {
             for (Definition d : definitions.values()) {
+                if (!d.includeByDefault()) continue; // optional catalog extra — not scheduled unless added
                 out.add(new SessionSettings.TimelineEntry(d.id(), d.defaultSeconds()));
             }
         } else {
             boolean hasEnd = false;
             for (SessionSettings.TimelineEntry e : custom) {
-                if (definitions.containsKey(e.id())) {
+                if (e.isCustom() || definitions.containsKey(e.id())) {
                     out.add(e);
                     hasEnd |= e.id().equals(matchEndId);
                 }
@@ -239,7 +383,11 @@ public final class TimelineService {
         return (seconds / 60) + ":" + String.format("%02d", seconds % 60);
     }
 
-    /** Accepts "m:ss" or plain seconds. */
+    /**
+     * Accepts "m:ss" or plain seconds. Same grammar as {@code EaCommand.parseDuration}, kept as
+     * a separate method because that one returns null on bad input (a command can just reject
+     * it) while config parsing always needs a usable fallback value instead.
+     */
     public static int parseTime(String raw) {
         if (raw == null) return 600;
         raw = raw.trim();
@@ -248,7 +396,9 @@ public final class TimelineService {
             if (colon < 0) return Math.max(0, Integer.parseInt(raw));
             int minutes = Integer.parseInt(raw.substring(0, colon));
             int seconds = Integer.parseInt(raw.substring(colon + 1));
-            return Math.max(0, minutes * 60 + seconds);
+            if (minutes < 0 || seconds < 0 || seconds > 59) return 600;
+            long total = (long) minutes * 60 + seconds; // long math so a huge minutes can't wrap the int
+            return total > Integer.MAX_VALUE ? 600 : (int) total;
         } catch (NumberFormatException e) {
             return 600;
         }

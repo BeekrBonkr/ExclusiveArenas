@@ -41,6 +41,10 @@ public final class PartySummonLobbyItemHandler extends LobbyItemHandler {
     public void handleUse(Player player, Arena arena, LobbyItem item) {
         PrivateSession session = sessions.getByArena(arena);
         if (session == null) return;
+        // isVisible() gates who sees this item, but nothing in LobbyItemHandler's dispatch
+        // guarantees it ran before handleUse — re-check ownership here too, since this action
+        // summons the CLICKING player's own party, not the session owner's.
+        if (!player.getUniqueId().equals(session.getOwner())) return;
         plugin.summonPartyToArena(player, session);
     }
 

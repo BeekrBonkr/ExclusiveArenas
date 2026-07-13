@@ -4,7 +4,6 @@ import de.marcely.bedwars.api.BedwarsAPI;
 import de.marcely.bedwars.api.arena.Arena;
 import de.marcely.bedwars.api.hook.PartiesHook;
 import org.bukkit.Bukkit;
-import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitRunnable;
 
@@ -105,7 +104,6 @@ public final class AutoSummonTask extends BukkitRunnable {
     }
 
     private String ownerName(PrivateSession session) {
-        OfflinePlayer off = Bukkit.getOfflinePlayer(session.getOwner());
-        return off.getName() != null ? off.getName() : "the host";
+        return ItemUtil.offlineName(session.getOwner(), "the host");
     }
 }

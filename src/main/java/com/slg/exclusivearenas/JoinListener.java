@@ -9,7 +9,6 @@ import de.marcely.bedwars.api.game.spectator.SpectateReason;
 import de.marcely.bedwars.api.hook.PartiesHook;
 import de.marcely.bedwars.api.remote.RemotePlayer;
 import org.bukkit.Bukkit;
-import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -53,24 +52,33 @@ public final class JoinListener implements Listener {
         if (playerId.equals(session.getOwner())) {
             session.setHostLeftAt(null);
             session.markRecentJoin(playerId);
+            plugin.syncPlayerClimate(arena, player);
             return;
         }
 
         // Valid join ticket (granted by /ea join, party summon, or network message)
         if (tickets.consumeIfValid(playerId, session.getSessionId(), arena.getName())) {
             session.markRecentJoin(playerId);
+            plugin.syncPlayerClimate(arena, player);
             return;
         }
 
-        // Party policy: allow if player is in the owner's party (async callback)
+        // Party policy: the membership check is async but this event is not — MBedwars reads
+        // getIssues() the instant this method returns, so we must deny synchronously first and
+        // only correct the decision (by re-summoning the player) once the async check actually
+        // confirms they're allowed. This also means a hook that throws or never calls back simply
+        // leaves the join denied, instead of silently admitting the player.
         if (session.getJoinPolicy() == JoinPolicy.PARTY) {
+            event.addIssue(buildIssue(session, arena, IssueKind.PARTY));
             final PrivateSession finalSession = session;
             PartyResolver.isInLeadersParty(player, session.getOwner(), allowed -> {
-                if (!allowed) {
-                    event.addIssue(buildIssue(finalSession, arena, "party"));
-                    return;
-                }
-                finalSession.markRecentJoin(playerId);
+                if (!allowed) return; // already denied above
+                Bukkit.getScheduler().runTask(plugin, () -> {
+                    if (!player.isOnline()) return;
+                    finalSession.markRecentJoin(playerId);
+                    plugin.forceSummon(finalSession, playerId);
+                    plugin.syncPlayerClimate(arena, player);
+                });
             });
             return;
         }
@@ -82,8 +90,12 @@ public final class JoinListener implements Listener {
                 return;
             }
             // Public code session — player didn't use /ea join so they don't have a ticket
-            event.addIssue(buildIssue(session, arena, "code"));
+            event.addIssue(buildIssue(session, arena, IssueKind.CODE));
+            return;
         }
+
+        // Unrecognized/future join policy: deny by default instead of silently falling through.
+        event.addIssue(buildLockedIssue(arena));
     }
 
     // ── Spectator join (same gating as a regular join) ─────────────────────────
@@ -106,10 +118,18 @@ public final class JoinListener implements Listener {
         if (tickets.consumeIfValid(playerId, session.getSessionId(), arena.getName())) return;
 
         if (session.getJoinPolicy() == JoinPolicy.PARTY) {
+            // Same deny-first-then-correct shape as onLocalJoin, for the same reason: the async
+            // party check must never be the thing standing between "denied" and "admitted".
+            event.setCancelled(true);
+            player.sendMessage(Lang.msg("locked.hint-party", "%owner%", ownerName(session)));
+            final PrivateSession finalSession = session;
             PartyResolver.isInLeadersParty(player, session.getOwner(), allowed -> {
-                if (allowed) return;
-                event.setCancelled(true);
-                player.sendMessage(Lang.msg("locked.hint-party", "%owner%", ownerName(session)));
+                if (!allowed) return;
+                Bukkit.getScheduler().runTask(plugin, () -> {
+                    if (!player.isOnline()) return;
+                    finalSession.markRecentJoin(playerId);
+                    plugin.forceSummon(finalSession, playerId);
+                });
             });
             return;
         }
@@ -137,10 +157,14 @@ public final class JoinListener implements Listener {
 
         if (playerId.equals(session.getOwner())) {
             session.setHostLeftAt(null);
+            session.markRecentJoin(playerId);
             return;
         }
 
-        if (tickets.consumeIfValid(playerId, session.getSessionId(), arena.getName())) return;
+        if (tickets.consumeIfValid(playerId, session.getSessionId(), arena.getName())) {
+            session.markRecentJoin(playerId);
+            return;
+        }
 
         // We cannot check party membership for a player on another server, so a ticket is required.
         if (!session.isPublic()) {
@@ -148,7 +172,7 @@ public final class JoinListener implements Listener {
             return;
         }
         event.setIssue(buildIssue(session, arena,
-                session.getJoinPolicy() == JoinPolicy.PARTY ? "party" : "code"));
+                session.getJoinPolicy() == JoinPolicy.PARTY ? IssueKind.PARTY : IssueKind.CODE));
     }
 
     // ── Server join: auto-summon to active party session ──────────────────────
@@ -164,34 +188,46 @@ public final class JoinListener implements Listener {
 
     private void checkPartySession(Player player) {
         if (!player.isOnline()) return;
+        UUID playerId = player.getUniqueId();
 
         PartyResolver.getPartyMember(player, opt -> {
             if (opt.isEmpty()) return;
             PartiesHook.Party party = opt.get().getParty();
 
             // Find if any leader in the party has an active private session with PARTY policy
+            PrivateSession target = null;
             outer:
             for (PartiesHook.Member leader : party.getLeaders()) {
                 for (PrivateSession session : sessions.getSessionsByOwner(leader.getUniqueId())) {
                     if (session.getJoinPolicy() != JoinPolicy.PARTY) continue;
-
-                    tickets.grant(player.getUniqueId(), session.getSessionId(), session.getArenaName());
-                    plugin.sendPlayerToArena(player, session.getArenaName());
+                    target = session;
                     break outer; // only summon to one session
                 }
             }
+            if (target == null) return;
+
+            // The lookup above may have resolved off the main thread (or after this player
+            // disconnected); re-check both before touching Bukkit API or granting a ticket.
+            final PrivateSession finalTarget = target;
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                Player online = Bukkit.getPlayer(playerId);
+                if (online == null || !online.isOnline()) return;
+                tickets.grant(playerId, finalTarget.getSessionId(), finalTarget.getArenaName());
+                plugin.sendPlayerToArena(online, finalTarget.getArenaName());
+            });
         });
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private AddPlayerIssue buildIssue(PrivateSession session, Arena arena, String type) {
-        String key = type.equals("party") ? "locked.hint-party" : "locked.hint-code";
+    private enum IssueKind { PARTY, CODE }
+
+    private AddPlayerIssue buildIssue(PrivateSession session, Arena arena, IssueKind kind) {
+        String key = kind == IssueKind.PARTY ? "locked.hint-party" : "locked.hint-code";
         String msg = Lang.raw(key, "%arena%", arena.getName());
 
-        if (type.equals("party")) {
-            OfflinePlayer off = Bukkit.getOfflinePlayer(session.getOwner());
-            msg = msg.replace("%owner%", off.getName() != null ? off.getName() : "?");
+        if (kind == IssueKind.PARTY) {
+            msg = msg.replace("%owner%", ownerName(session));
         } else {
             msg = msg.replace("%code%", session.getJoinCode() != null ? session.getJoinCode() : "");
         }
@@ -200,8 +236,7 @@ public final class JoinListener implements Listener {
     }
 
     private String ownerName(PrivateSession session) {
-        OfflinePlayer off = Bukkit.getOfflinePlayer(session.getOwner());
-        return off.getName() != null ? off.getName() : "?";
+        return ItemUtil.offlineName(session.getOwner(), "?");
     }
 
     private AddPlayerIssue buildLockedIssue(Arena arena) {

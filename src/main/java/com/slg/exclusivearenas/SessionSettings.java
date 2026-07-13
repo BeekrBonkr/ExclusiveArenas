@@ -22,8 +22,23 @@ import java.util.Objects;
  */
 public final class SessionSettings {
 
-    /** One scheduled event: which definition it is and when (seconds after round start). */
-    public record TimelineEntry(String id, int seconds) {}
+    /**
+     * One scheduled event: which definition it is and when (seconds after round start).
+     * {@code customType}/{@code customValue} are null for a catalog-referenced entry (the
+     * usual case); non-null for a host-authored custom event — its own
+     * {@link TimelineService.Type} name and a single type-specific value string, entirely
+     * self-contained (see {@link TimelineService#definitionFor(TimelineEntry)}) rather than
+     * pointing at a config-defined id.
+     */
+    public record TimelineEntry(String id, int seconds, String customType, String customValue) {
+        public TimelineEntry(String id, int seconds) {
+            this(id, seconds, null, null);
+        }
+
+        public boolean isCustom() {
+            return customType != null;
+        }
+    }
 
     /** A host's override for one shop item. */
     public static final class ShopOverride {
@@ -51,6 +66,9 @@ public final class SessionSettings {
     private List<TimelineEntry> timeline; // null = defaults from config
     private final Map<String, ShopOverride> shop = new LinkedHashMap<>();
     private Integer playersPerTeam; // null = the arena's own default
+    // ArenaWeatherType/ArenaTimeType enum names; null = UNTOUCHED (arena's own default climate)
+    private String weatherType;
+    private String timeType;
 
     // ── Team size ────────────────────────────────────────────────────────────────
 
@@ -61,6 +79,26 @@ public final class SessionSettings {
 
     public void setPlayersPerTeam(Integer playersPerTeam) {
         this.playersPerTeam = playersPerTeam;
+    }
+
+    // ── Environment (time / weather) ────────────────────────────────────────────
+
+    /** {@code de.marcely.bedwars.api.arena.ArenaWeatherType} name, or null for UNTOUCHED. */
+    public String getWeatherType() {
+        return weatherType;
+    }
+
+    public void setWeatherType(String weatherType) {
+        this.weatherType = weatherType;
+    }
+
+    /** {@code de.marcely.bedwars.api.arena.ArenaTimeType} name, or null for UNTOUCHED. */
+    public String getTimeType() {
+        return timeType;
+    }
+
+    public void setTimeType(String timeType) {
+        this.timeType = timeType;
     }
 
     // ── Timeline ─────────────────────────────────────────────────────────────────
@@ -111,11 +149,20 @@ public final class SessionSettings {
 
     /** Serializes to the JSON blob stored in the sessions table; null when nothing is set. */
     public String toJson() {
-        if (timeline == null && shop.isEmpty() && playersPerTeam == null) return null;
+        if (timeline == null && shop.isEmpty() && playersPerTeam == null
+                && weatherType == null && timeType == null) {
+            return null;
+        }
 
         JsonObject root = new JsonObject();
         if (playersPerTeam != null) {
             root.addProperty("ppt", playersPerTeam);
+        }
+        if (weatherType != null) {
+            root.addProperty("weather", weatherType);
+        }
+        if (timeType != null) {
+            root.addProperty("time", timeType);
         }
         if (timeline != null) {
             JsonArray arr = new JsonArray();
@@ -123,6 +170,8 @@ public final class SessionSettings {
                 JsonObject o = new JsonObject();
                 o.addProperty("id", e.id());
                 o.addProperty("t", e.seconds());
+                if (e.customType() != null) o.addProperty("ct", e.customType());
+                if (e.customValue() != null) o.addProperty("cv", e.customValue());
                 arr.add(o);
             }
             root.add("timeline", arr);
@@ -154,11 +203,21 @@ public final class SessionSettings {
             if (root.has("ppt")) {
                 s.playersPerTeam = root.get("ppt").getAsInt();
             }
+            if (root.has("weather")) {
+                s.weatherType = root.get("weather").getAsString();
+            }
+            if (root.has("time")) {
+                s.timeType = root.get("time").getAsString();
+            }
             if (root.has("timeline")) {
                 List<TimelineEntry> entries = new ArrayList<>();
                 for (JsonElement el : root.getAsJsonArray("timeline")) {
                     JsonObject o = el.getAsJsonObject();
-                    entries.add(new TimelineEntry(o.get("id").getAsString(), o.get("t").getAsInt()));
+                    entries.add(new TimelineEntry(
+                            o.get("id").getAsString(),
+                            o.get("t").getAsInt(),
+                            o.has("ct") ? o.get("ct").getAsString() : null,
+                            o.has("cv") ? o.get("cv").getAsString() : null));
                 }
                 s.timeline = entries;
             }
@@ -177,6 +236,12 @@ public final class SessionSettings {
         } catch (Exception ignored) {
             // A malformed blob (old version, manual edit) falls back to defaults rather
             // than poisoning the session.
+        } catch (StackOverflowError ignored) {
+            // Gson's recursive-descent parser can blow the stack on deeply nested/malicious
+            // JSON. Exception doesn't catch Error, so this needs its own clause — otherwise an
+            // uncaught StackOverflowError here would abort the whole reconcile() batch it's
+            // called from, repeating every poll cycle until the row is fixed.
+            return new SessionSettings();
         }
         return s;
     }

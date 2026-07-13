@@ -50,19 +50,23 @@ public final class JoinTicketService {
         }
     }
 
+    /**
+     * Atomically checks and consumes a ticket: the check and the removal happen inside one
+     * {@code computeIfPresent} call so two concurrent callers (e.g. a local join racing a
+     * network join for the same player) can never both observe the same ticket as valid.
+     */
     public boolean consumeIfValid(UUID player, UUID sessionId, String arenaName) {
-        Ticket t = tickets.get(player);
-        if (t == null) return false;
-        if (System.currentTimeMillis() > t.expiresAt) {
-            tickets.remove(player);
-            return false;
-        }
-        if (!t.sessionId.equals(sessionId)) return false;
-        if (arenaName == null || t.arenaName == null) return false;
-        if (!t.arenaName.equalsIgnoreCase(arenaName)) return false;
-        tickets.remove(player);
-        if (db != null) db.deleteTicket(player);
-        return true;
+        if (arenaName == null) return false;
+        boolean[] consumed = {false};
+        tickets.computeIfPresent(player, (id, t) -> {
+            boolean expired = System.currentTimeMillis() > t.expiresAt;
+            boolean matches = !expired && t.sessionId.equals(sessionId)
+                    && t.arenaName != null && t.arenaName.equalsIgnoreCase(arenaName);
+            if (matches) consumed[0] = true;
+            return (expired || matches) ? null : t; // drop on expiry or a successful consume, else keep
+        });
+        if (consumed[0] && db != null) db.deleteTicket(player);
+        return consumed[0];
     }
 
     /** Returns true if the player has any non-expired ticket (used for network pre-join check). */
