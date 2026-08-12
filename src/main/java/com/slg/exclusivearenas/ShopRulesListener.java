@@ -68,7 +68,8 @@ public final class ShopRulesListener implements Listener {
         PrivateSession session = sessions.getByArena(event.getArena());
         if (session == null) return;
         Map<String, SessionSettings.ShopOverride> overrides = session.getSettings().getShopOverrides();
-        if (overrides.isEmpty()) return;
+        double multiplier = session.getSettings().getModifiers().getShopCurrencyMultiplier();
+        if (overrides.isEmpty() && multiplier == 1.0) return;
 
         // The Quick Buy home screen fires this event with a null cloned page (getItems() then
         // returns null too) — nothing to re-skin here on that screen; onShopGuiPostProcess
@@ -80,10 +81,9 @@ public final class ShopRulesListener implements Listener {
 
         for (ShopItem item : new ArrayList<>(event.getItems())) {
             SessionSettings.ShopOverride override = overrides.get(item.getId());
-            if (override == null) continue;
 
             try {
-                if (override.isDisabled()) {
+                if (override != null && override.isDisabled()) {
                     if (removeDisabled) {
                         event.removeShopItem(item);
                         continue;
@@ -94,17 +94,26 @@ public final class ShopRulesListener implements Listener {
                     item.setConfigDescription(Lang.raw("shop.disabled-lore"));
                     continue;
                 }
-                if (override.hasPriceOverride()) {
+                if (override != null && override.hasPriceOverride()) {
                     DropType currency = BedwarsAPI.getGameAPI().getDropTypeById(override.getCurrency());
                     if (currency == null) continue; // buy-time pass logs this case
                     for (ShopPrice price : new ArrayList<>(item.getPrices())) {
                         item.removePrice(price);
                     }
                     item.addPriceSpawner(currency, Math.max(1, override.getPrice()));
+                } else if (multiplier != 1.0) {
+                    applyCurrencyMultiplier(item, multiplier);
                 }
             } catch (Throwable t) {
                 plugin.debug("Shop display override failed for '" + item.getId() + "': " + t.getMessage());
             }
+        }
+    }
+
+    /** Match Rules → Shop Currency Multiplier: scales every price on the item in place. */
+    private static void applyCurrencyMultiplier(ShopItem item, double multiplier) {
+        for (ShopPrice price : item.getPrices()) {
+            price.setGeneralAmount(Math.max(1, (int) Math.round(price.getGeneralAmount() * multiplier)));
         }
     }
 
@@ -168,7 +177,12 @@ public final class ShopRulesListener implements Listener {
         if (original == null) return;
         SessionSettings.ShopOverride override =
                 session.getSettings().getShopOverride(original.getId());
-        if (override == null) return;
+        double multiplier = session.getSettings().getModifiers().getShopCurrencyMultiplier();
+
+        if (override == null) {
+            if (multiplier != 1.0) applyCurrencyMultiplier(event.getClonedItem(), multiplier);
+            return;
+        }
 
         if (override.isDisabled()) {
             event.addProblem(disabledProblem);
@@ -187,6 +201,8 @@ public final class ShopRulesListener implements Listener {
                 clone.removePrice(price);
             }
             clone.addPriceSpawner(currency, Math.max(1, override.getPrice()));
+        } else if (multiplier != 1.0) {
+            applyCurrencyMultiplier(event.getClonedItem(), multiplier);
         }
     }
 }

@@ -15,13 +15,21 @@ public final class DraftPrivateMatch implements SettingsHolder {
     private boolean isPublic = true; // only relevant for CODE policy
     private boolean autoSummon = false; // auto-pull new party members into the arena
 
-    // Event timeline / shop / team-size customizations chosen in the builder's Arena Settings
+    // Event timeline / shop / team-size customizations chosen in the builder's Arena Modifiers
     // before the match even exists — copied onto the real PrivateSession once it's created.
     private SessionSettings settings = new SessionSettings();
 
-    // Cached at builder-open time: true when the player is a member (not leader) of someone
-    // else's party, in which case the whole creation menu is locked.
-    private boolean partyBlocked = false;
+    /** Why the whole creation menu is locked for this player, cached at builder-open time. */
+    public enum BlockReason {
+        /** Not blocked. */
+        NONE,
+        /** A member (not leader) of someone else's party — they should join, not host. */
+        NOT_LEADER,
+        /** A leader whose party already contains someone hosting their own match. */
+        MEMBER_HOSTING
+    }
+
+    private BlockReason blockReason = BlockReason.NONE;
 
     public DraftPrivateMatch(UUID owner) {
         this.owner = owner;
@@ -52,8 +60,12 @@ public final class DraftPrivateMatch implements SettingsHolder {
     public boolean isAutoSummon() { return autoSummon; }
     public void setAutoSummon(boolean autoSummon) { this.autoSummon = autoSummon; }
 
-    public boolean isPartyBlocked() { return partyBlocked; }
-    public void setPartyBlocked(boolean partyBlocked) { this.partyBlocked = partyBlocked; }
+    public boolean isPartyBlocked() { return blockReason != BlockReason.NONE; }
+
+    public BlockReason getBlockReason() { return blockReason; }
+    public void setBlockReason(BlockReason blockReason) {
+        this.blockReason = blockReason == null ? BlockReason.NONE : blockReason;
+    }
 
     public boolean isReadyToCreate() {
         if (arenaName == null || arenaName.isBlank()) return false;

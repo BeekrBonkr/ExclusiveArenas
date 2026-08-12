@@ -12,7 +12,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Per-match customizations a host makes through Arena Settings: the event timeline and
+ * Per-match customizations a host makes through Arena Modifiers: the event timeline and
  * shop item overrides. Lives on the {@link PrivateSession} and is persisted as one JSON
  * blob in the sessions table, so the server that actually hosts the arena enforces
  * settings even when they were edited from a hub.
@@ -69,6 +69,76 @@ public final class SessionSettings {
     // ArenaWeatherType/ArenaTimeType enum names; null = UNTOUCHED (arena's own default climate)
     private String weatherType;
     private String timeType;
+    private final ArenaModifiers modifiers = new ArenaModifiers();
+
+    /**
+     * Standing per-match rule changes a host sets from Arena Modifiers → Match Rules —
+     * unlike the timeline (one-shot scheduled events), these apply for the whole match.
+     * Every field defaults to "vanilla MBedwars behaviour, untouched".
+     */
+    public static final class ArenaModifiers {
+        private boolean friendlyFire;
+        private boolean noFallDamage;
+        private boolean noExplosionBlockDamage;
+        private int killBountyMultiplier;      // 0 = off
+        private double shopCurrencyMultiplier = 1.0;
+        private boolean bonusStartingKit;
+        private int pvpGraceSeconds;           // 0 = off
+        private double healthMultiplier = 1.0;
+        private boolean worldBorderShrink;
+        private boolean bedRespawnOnce;
+        private int spawnProtectionSeconds;    // 0 = off
+        private int killGoal;                  // 0 = off (normal last-team-standing)
+
+        public boolean isFriendlyFire() { return friendlyFire; }
+        public void setFriendlyFire(boolean v) { friendlyFire = v; }
+
+        public boolean isNoFallDamage() { return noFallDamage; }
+        public void setNoFallDamage(boolean v) { noFallDamage = v; }
+
+        public boolean isNoExplosionBlockDamage() { return noExplosionBlockDamage; }
+        public void setNoExplosionBlockDamage(boolean v) { noExplosionBlockDamage = v; }
+
+        public int getKillBountyMultiplier() { return killBountyMultiplier; }
+        public void setKillBountyMultiplier(int v) { killBountyMultiplier = v; }
+
+        public double getShopCurrencyMultiplier() { return shopCurrencyMultiplier; }
+        public void setShopCurrencyMultiplier(double v) { shopCurrencyMultiplier = v; }
+
+        public boolean isBonusStartingKit() { return bonusStartingKit; }
+        public void setBonusStartingKit(boolean v) { bonusStartingKit = v; }
+
+        public int getPvpGraceSeconds() { return pvpGraceSeconds; }
+        public void setPvpGraceSeconds(int v) { pvpGraceSeconds = v; }
+
+        public double getHealthMultiplier() { return healthMultiplier; }
+        public void setHealthMultiplier(double v) { healthMultiplier = v; }
+
+        public boolean isWorldBorderShrink() { return worldBorderShrink; }
+        public void setWorldBorderShrink(boolean v) { worldBorderShrink = v; }
+
+        public boolean isBedRespawnOnce() { return bedRespawnOnce; }
+        public void setBedRespawnOnce(boolean v) { bedRespawnOnce = v; }
+
+        public int getSpawnProtectionSeconds() { return spawnProtectionSeconds; }
+        public void setSpawnProtectionSeconds(int v) { spawnProtectionSeconds = v; }
+
+        public int getKillGoal() { return killGoal; }
+        public void setKillGoal(int v) { killGoal = v; }
+
+        /** True when every field is still at its vanilla default — nothing to persist/enforce. */
+        public boolean isDefault() {
+            return !friendlyFire && !noFallDamage && !noExplosionBlockDamage
+                    && killBountyMultiplier == 0 && shopCurrencyMultiplier == 1.0
+                    && !bonusStartingKit && pvpGraceSeconds == 0 && healthMultiplier == 1.0
+                    && !worldBorderShrink && !bedRespawnOnce && spawnProtectionSeconds == 0
+                    && killGoal == 0;
+        }
+    }
+
+    public ArenaModifiers getModifiers() {
+        return modifiers;
+    }
 
     // ── Team size ────────────────────────────────────────────────────────────────
 
@@ -150,7 +220,7 @@ public final class SessionSettings {
     /** Serializes to the JSON blob stored in the sessions table; null when nothing is set. */
     public String toJson() {
         if (timeline == null && shop.isEmpty() && playersPerTeam == null
-                && weatherType == null && timeType == null) {
+                && weatherType == null && timeType == null && modifiers.isDefault()) {
             return null;
         }
 
@@ -189,6 +259,22 @@ public final class SessionSettings {
                 shopObj.add(e.getKey(), item);
             }
             root.add("shop", shopObj);
+        }
+        if (!modifiers.isDefault()) {
+            JsonObject mods = new JsonObject();
+            if (modifiers.friendlyFire) mods.addProperty("ff", true);
+            if (modifiers.noFallDamage) mods.addProperty("nfd", true);
+            if (modifiers.noExplosionBlockDamage) mods.addProperty("ned", true);
+            if (modifiers.killBountyMultiplier != 0) mods.addProperty("kbm", modifiers.killBountyMultiplier);
+            if (modifiers.shopCurrencyMultiplier != 1.0) mods.addProperty("scm", modifiers.shopCurrencyMultiplier);
+            if (modifiers.bonusStartingKit) mods.addProperty("bsk", true);
+            if (modifiers.pvpGraceSeconds != 0) mods.addProperty("pvg", modifiers.pvpGraceSeconds);
+            if (modifiers.healthMultiplier != 1.0) mods.addProperty("hpm", modifiers.healthMultiplier);
+            if (modifiers.worldBorderShrink) mods.addProperty("wbs", true);
+            if (modifiers.bedRespawnOnce) mods.addProperty("bro", true);
+            if (modifiers.spawnProtectionSeconds != 0) mods.addProperty("sps", modifiers.spawnProtectionSeconds);
+            if (modifiers.killGoal != 0) mods.addProperty("kg", modifiers.killGoal);
+            root.add("mods", mods);
         }
         return root.toString();
     }
@@ -232,6 +318,21 @@ public final class SessionSettings {
                     }
                     if (!o.isNoop()) s.shop.put(itemId, o);
                 }
+            }
+            if (root.has("mods")) {
+                JsonObject mods = root.getAsJsonObject("mods");
+                if (mods.has("ff")) s.modifiers.friendlyFire = mods.get("ff").getAsBoolean();
+                if (mods.has("nfd")) s.modifiers.noFallDamage = mods.get("nfd").getAsBoolean();
+                if (mods.has("ned")) s.modifiers.noExplosionBlockDamage = mods.get("ned").getAsBoolean();
+                if (mods.has("kbm")) s.modifiers.killBountyMultiplier = mods.get("kbm").getAsInt();
+                if (mods.has("scm")) s.modifiers.shopCurrencyMultiplier = mods.get("scm").getAsDouble();
+                if (mods.has("bsk")) s.modifiers.bonusStartingKit = mods.get("bsk").getAsBoolean();
+                if (mods.has("pvg")) s.modifiers.pvpGraceSeconds = mods.get("pvg").getAsInt();
+                if (mods.has("hpm")) s.modifiers.healthMultiplier = mods.get("hpm").getAsDouble();
+                if (mods.has("wbs")) s.modifiers.worldBorderShrink = mods.get("wbs").getAsBoolean();
+                if (mods.has("bro")) s.modifiers.bedRespawnOnce = mods.get("bro").getAsBoolean();
+                if (mods.has("sps")) s.modifiers.spawnProtectionSeconds = mods.get("sps").getAsInt();
+                if (mods.has("kg")) s.modifiers.killGoal = mods.get("kg").getAsInt();
             }
         } catch (Exception ignored) {
             // A malformed blob (old version, manual edit) falls back to defaults rather

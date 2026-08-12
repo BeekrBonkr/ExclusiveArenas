@@ -43,7 +43,27 @@ public final class TimelineService {
         /** Pure broadcast, no gameplay effect — value = the message. */
         ANNOUNCEMENT,
         /** Cosmetic firework show over the arena. No value. */
-        FIREWORKS
+        FIREWORKS,
+        /** Fully heals/feeds every player currently in the arena. No value. */
+        HEAL_ALL,
+        /** Removes every dropped item lying in the arena. No value. */
+        CLEAR_ITEMS,
+        /** Re-shuffles every current player evenly across the enabled teams. No value. */
+        BALANCE_TEAMS,
+        /** Clears every team's queued (not yet triggered) traps. No value. */
+        CLEAR_TRAPS,
+        /** Resets every team's generator/shop upgrades to nothing purchased. No value. */
+        RESET_UPGRADES
+    }
+
+    /** Types that don't need a {@code value} — {@code /ea timeline custom <type> <time>} skips it, and the
+     *  GUI's "Add Event" list is the primary way hosts reach these (as pre-configured catalog entries). */
+    public static boolean requiresValue(Type type) {
+        return switch (type) {
+            case RESOURCE_BURST, TEAM_BUFF, WEATHER_CHANGE, TIME_CHANGE, ANNOUNCEMENT -> true;
+            case SPAWNER_SPEED, DESTROY_BEDS, SUDDEN_DEATH, MATCH_END, TRAP_CHAOS, FIREWORKS,
+                 HEAL_ALL, CLEAR_ITEMS, BALANCE_TEAMS, CLEAR_TRAPS, RESET_UPGRADES -> false;
+        };
     }
 
     /**
@@ -209,6 +229,21 @@ public final class TimelineService {
             case FIREWORKS -> new Definition(entry.id(), "Fireworks", Material.FIREWORK_ROCKET,
                     entry.seconds(), type, value, 1.0,
                     "A celebratory firework show over the arena.", true);
+            case HEAL_ALL -> new Definition(entry.id(), "Heal Pulse", Material.GOLDEN_APPLE,
+                    entry.seconds(), type, value, 1.0,
+                    "Fully heals and feeds every player in the arena.", true);
+            case CLEAR_ITEMS -> new Definition(entry.id(), "Item Cleanup", Material.HOPPER,
+                    entry.seconds(), type, value, 1.0,
+                    "Removes every dropped item lying in the arena.", true);
+            case BALANCE_TEAMS -> new Definition(entry.id(), "Team Reshuffle", Material.COMPASS,
+                    entry.seconds(), type, value, 1.0,
+                    "Re-shuffles every current player evenly across the enabled teams.", true);
+            case CLEAR_TRAPS -> new Definition(entry.id(), "Trap Purge", Material.STRING,
+                    entry.seconds(), type, value, 1.0,
+                    "Clears every team's queued (not yet triggered) traps.", true);
+            case RESET_UPGRADES -> new Definition(entry.id(), "Upgrade Reset", Material.ANVIL,
+                    entry.seconds(), type, value, 1.0,
+                    "Resets every team's generator and shop upgrades to nothing purchased.", true);
             default -> new Definition(entry.id(), "Announcement", Material.PAPER,
                     entry.seconds(), Type.ANNOUNCEMENT, value, 1.0, value, true);
         };
@@ -265,7 +300,8 @@ public final class TimelineService {
      */
     public static boolean isCustomCreatable(Type type) {
         return switch (type) {
-            case RESOURCE_BURST, TEAM_BUFF, TRAP_CHAOS, WEATHER_CHANGE, TIME_CHANGE, ANNOUNCEMENT, FIREWORKS -> true;
+            case RESOURCE_BURST, TEAM_BUFF, TRAP_CHAOS, WEATHER_CHANGE, TIME_CHANGE, ANNOUNCEMENT, FIREWORKS,
+                 HEAL_ALL, CLEAR_ITEMS, BALANCE_TEAMS, CLEAR_TRAPS, RESET_UPGRADES -> true;
             case SPAWNER_SPEED, DESTROY_BEDS, SUDDEN_DEATH, MATCH_END -> false;
         };
     }

@@ -13,7 +13,9 @@ public final class PrivateSession implements SettingsHolder {
     private final UUID sessionId;
     private final UUID owner;
     private final String arenaName;
-    private final JoinPolicy joinPolicy;
+    // Mutable (volatile): a PARTY session converts to CODE when its host leaves/loses
+    // leadership of their party — see PrivateSessionService#convertToCodePolicy.
+    private volatile JoinPolicy joinPolicy;
     private String joinCode;
     private boolean isPublic; // CODE policy only: when false, no one can join even with code
     private boolean autoSummon; // pull new party members into the arena automatically
@@ -57,6 +59,9 @@ public final class PrivateSession implements SettingsHolder {
     public UUID getOwner() { return owner; }
     public String getArenaName() { return arenaName; }
     public JoinPolicy getJoinPolicy() { return joinPolicy; }
+    public void setJoinPolicy(JoinPolicy joinPolicy) {
+        if (joinPolicy != null) this.joinPolicy = joinPolicy;
+    }
 
     public String getJoinCode() { return joinCode; }
     public void setJoinCode(String joinCode) { this.joinCode = joinCode; }

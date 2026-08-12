@@ -37,7 +37,10 @@ public final class SpectatorRejoinHandler extends LobbyItemHandler {
     @Override
     public boolean isVisible(Player player, Arena arena, LobbyItem item) {
         if (!arena.isSpectating(player)) return false;
-        if (arena.getStatus() == ArenaStatus.RUNNING) return false;
+        // Strictly lobby-only: not while RUNNING (a player who died mid-round is a spectator
+        // too, but has a respawn/elimination flow of their own), and not during END_LOBBY /
+        // RESETTING either — "/bw join" can't seat anyone there and the round is over anyway.
+        if (!arena.getStatus().isLobby()) return false;
         if (arena.getPlayers().size() >= arena.getMaxPlayers()) return false;
         if (sessions.getByArena(arena) == null) return false;
         item.setItem(buildIcon());

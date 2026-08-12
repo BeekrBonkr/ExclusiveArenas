@@ -6,6 +6,7 @@ import de.marcely.bedwars.api.arena.ArenaStatus;
 import de.marcely.bedwars.api.arena.ArenaTimeType;
 import de.marcely.bedwars.api.arena.ArenaWeatherType;
 import de.marcely.bedwars.api.arena.Team;
+import de.marcely.bedwars.api.game.scoreboard.ScoreboardUpdateCause;
 import de.marcely.bedwars.api.game.spectator.KickSpectatorReason;
 import de.marcely.bedwars.api.game.spectator.SpectateReason;
 import de.marcely.bedwars.api.hook.PartiesHook;
@@ -54,6 +55,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     private SyncService syncService;
     private RemoteCommandService remoteCommandService;
     private org.bukkit.scheduler.BukkitTask autoSummonTask;
+    private org.bukkit.scheduler.BukkitTask partyIntegrityTask;
     private PrivacyConditionVariable privacyConditionVariable;
     private ArenaBossBarTask bossBarTask;
     private org.bukkit.scheduler.BukkitTask bossBarSchedulerTask;
@@ -110,6 +112,8 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(quickActions, this);
         Bukkit.getPluginManager().registerEvents(
                 new ShopRulesListener(this, sessionService), this);
+        Bukkit.getPluginManager().registerEvents(
+                new ArenaModifiersListener(this, sessionService), this);
 
         // Periodic cleanup (every 30 seconds)
         new SessionCleanupTask(this, sessionService).runTaskTimer(this, 600L, 600L);
@@ -129,13 +133,51 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         new ArenaEntryGuardTask(sessionService, ticketService).runTaskTimer(this, entryGuardTicks, entryGuardTicks);
 
         startAutoSummon();
+        startPartyMonitor();
         startBossBar();
         startGuiRefresh();
         registerConditionVariable();
         registerLobbyItemHandlers();
+        logEnvironment();
 
         getLogger().info("ExclusiveArenas v" + getDescription().getVersion() + " enabled ("
                 + (database != null ? "database mode" : "single-server mode") + ").");
+    }
+
+    /**
+     * Detects how the surrounding MBedwars setup is put together — parties hook, RemoteAPI,
+     * MBedwarsTweaks — and logs one clear summary so an admin can see at a glance which
+     * features are live. The plugin also adapts at runtime: with no parties hook everything
+     * is join-code gated, and remote arenas are hidden from the map selector whenever the
+     * shared database (the only way to gate/control them network-wide) isn't connected.
+     */
+    private void logEnvironment() {
+        boolean parties = PartyResolver.hasPartiesHook();
+        boolean remoteApi = isRemoteApiActive();
+        boolean tweaks = Bukkit.getPluginManager().getPlugin("MBedwarsTweaks") != null;
+
+        getLogger().info("MBedwars environment: parties hook "
+                + (parties ? "present" : "absent (every private match will be join-code gated)")
+                + ", RemoteAPI " + (remoteApi ? "active" : "inactive")
+                + ", MBedwarsTweaks " + (tweaks ? ("present (timeline backend: "
+                        + (tweaksBridge != null ? "tweaks" : "internal") + ")") : "absent") + ".");
+
+        if (remoteApi && !eaConfig.bool("database.enabled", false)) {
+            getLogger().warning("MBedwars' RemoteAPI is active but ExclusiveArenas' shared database is "
+                    + "disabled — a private match on a remote arena could not be gated on the server that "
+                    + "actually hosts it, so remote arenas are hidden from the map selector. Enable "
+                    + "database.* in config.yml to host private matches across the network.");
+        }
+    }
+
+    /** True when MBedwars' RemoteAPI (proxy/network mode) is up on this server. */
+    public boolean isRemoteApiActive() {
+        try {
+            RemoteAPI api = BedwarsAPI.getRemoteAPI();
+            return api != null && api.isAPIActive();
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     /**
@@ -403,6 +445,50 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     }
 
     /**
+     * Starts the periodic check that every PARTY-gated session's host still leads a party —
+     * converting the session to a CODE-gated one when they don't (see {@link PartyIntegrityTask}).
+     */
+    private void startPartyMonitor() {
+        stopPartyMonitor();
+        long period = Math.max(20L, eaConfig.intNum("private.party_check_seconds", 5) * 20L);
+        this.partyIntegrityTask = new PartyIntegrityTask(this, sessionService)
+                .runTaskTimer(this, period, period);
+    }
+
+    private void stopPartyMonitor() {
+        if (partyIntegrityTask != null) {
+            partyIntegrityTask.cancel();
+            partyIntegrityTask = null;
+        }
+    }
+
+    /**
+     * Converts a (still-live) PARTY session to CODE gating and tells the host and the arena.
+     * Called on the main thread by {@link PartyIntegrityTask} once the async party lookup
+     * confirmed the host no longer leads a party; re-validates by id since the session may
+     * have ended (or already been converted) while that lookup was in flight.
+     */
+    public void convertSessionToCode(UUID sessionId) {
+        PrivateSession session = sessionService.getById(sessionId);
+        if (session == null || session.getJoinPolicy() != JoinPolicy.PARTY) return;
+
+        String code = sessionService.convertToCodePolicy(session);
+        if (code == null) return;
+        getLogger().info("Party-gated match on '" + session.getArenaName() + "' converted to a "
+                + "join-code gate — its host no longer leads a party.");
+
+        Player host = Bukkit.getPlayer(session.getOwner());
+        if (host != null && host.isOnline()) {
+            host.sendMessage(Lang.msg("party.converted-to-code", "%arena%", session.getArenaName()));
+            host.sendMessage(Lang.msg("create.code-line", "%code%", code));
+        }
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        if (arena != null && arena.exists()) {
+            arena.broadcast(Lang.msg("party.converted-broadcast"));
+        }
+    }
+
+    /**
      * Connects to the database and runs schema setup off the main thread — opening the
      * connection pool and running DDL can block for the full connection timeout if the DB host
      * is slow or unreachable, and this runs on every plugin enable and every {@code /ea reload}.
@@ -512,6 +598,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         applyTunables();
         setupDatabase(); // connects asynchronously; resyncAll() runs once it lands (see finishDatabaseSetup)
         startAutoSummon(); // restart to pick up a changed poll interval
+        startPartyMonitor(); // restart to pick up a changed check interval
         startBossBar();    // restart to pick up a changed enabled/disabled setting
         startGuiRefresh();
 
@@ -527,6 +614,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     @Override
     public void onDisable() {
         stopAutoSummon();
+        stopPartyMonitor();
         stopBossBar();
         stopGuiRefresh();
         teardownTweaksBridge();
@@ -551,6 +639,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     public TweaksTimelineBridge getTweaksBridge()   { return tweaksBridge; }
     public PresetService getPresetService()         { return presetService; }
     public Database getDatabase()                   { return database; }
+    public RemoteCommandService getRemoteCommandService() { return remoteCommandService; }
 
     /**
      * Runs a host action against the session's arena: directly when the arena is on this
@@ -607,6 +696,22 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                 }
                 case QUICK_TOGGLE_FREEZE -> quickActions.toggleFreeze(actor, session, local);
                 case QUICK_FORCE_REJOIN -> quickActions.forceRejoinDisconnected(actor, session, local);
+                case QUICK_ADJUST_TIMER -> {
+                    try {
+                        quickActions.adjustMatchTimer(actor, session, local, Integer.parseInt(payload));
+                    } catch (NumberFormatException ignored) {
+                        // malformed payload — nothing to apply
+                    }
+                }
+                case QUICK_TOGGLE_PVP -> quickActions.togglePvp(actor, session, local);
+                case QUICK_STRIP_INVENTORIES -> quickActions.stripInventories(actor, session, local);
+                case QUICK_COMEBACK_BUFF -> quickActions.comebackBuff(actor, session, local);
+                case QUICK_RANDOM_SCATTER -> quickActions.randomScatter(actor, session, local);
+                case QUICK_KICK_AFK -> quickActions.kickAfkPlayers(actor, session, local);
+                case QUICK_RESET_SHOP_PRICES -> quickActions.resetShopPrices(actor, session, local);
+                case QUICK_GIVE_COMPASS -> quickActions.giveTrackingCompass(actor, session, local);
+                case QUICK_ANNOUNCE_STATS -> quickActions.announceStats(actor, session, local);
+                case QUICK_TOGGLE_PAUSE -> quickActions.togglePause(actor, session, local);
             }
             return;
         }
@@ -671,12 +776,17 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
      * at all (they should join their leader's match instead; see {@code /ea join}).
      */
     public void openBuilderMenu(Player p) {
-        resolveDraftPolicy(p, blocked -> {
+        resolveDraftPolicy(p, reason -> {
             guiManager.openBuilder(p);
-            if (blocked) {
-                p.sendMessage(Lang.msg("create.party-blocked"));
+            if (reason != DraftPrivateMatch.BlockReason.NONE) {
+                p.sendMessage(Lang.msg(blockReasonKey(reason)));
             }
         });
+    }
+
+    private static String blockReasonKey(DraftPrivateMatch.BlockReason reason) {
+        return reason == DraftPrivateMatch.BlockReason.MEMBER_HOSTING
+                ? "create.member-hosting" : "create.party-blocked";
     }
 
     /**
@@ -684,20 +794,38 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
      * their draft — shared by the builder GUI and the headless {@code /ea create <map>}
      * command so both derive the same Party/Join-Code/blocked outcome the same way.
      *
-     * @param then receives {@code true} if the player is a non-leader party member (creation
-     *             blocked; they should join their leader's match instead), run on the main thread
+     * Blocked outcomes: a non-leader party member can't host at all (they should join their
+     * leader's match instead), and a leader whose party already contains someone hosting a
+     * match of their own is blocked until those members' matches end.
+     *
+     * @param then receives the block reason ({@code NONE} when creation may proceed), run on
+     *             the main thread
      */
-    private void resolveDraftPolicy(Player p, java.util.function.Consumer<Boolean> then) {
+    private void resolveDraftPolicy(Player p, java.util.function.Consumer<DraftPrivateMatch.BlockReason> then) {
         PartyResolver.getPartyMember(p, opt -> {
             boolean inParty = opt.isPresent();
             boolean isLeader = inParty && opt.get().getParty().getLeaders().stream()
                     .anyMatch(leader -> leader.getUniqueId().equals(p.getUniqueId()));
-            boolean blocked = inParty && !isLeader;
+
+            // Snapshot the member ids here — the hook object must not be touched again once
+            // we've hopped threads below.
+            java.util.Set<UUID> memberIds = new java.util.HashSet<>();
+            if (isLeader) {
+                for (PartiesHook.Member m : opt.get().getParty().getMembers(true)) {
+                    memberIds.add(m.getUniqueId());
+                }
+            }
 
             Bukkit.getScheduler().runTask(this, () -> {
                 DraftPrivateMatch draft = draftService.getOrCreate(p.getUniqueId());
-                draft.setPartyBlocked(blocked);
-                if (!blocked) {
+                DraftPrivateMatch.BlockReason reason = DraftPrivateMatch.BlockReason.NONE;
+                if (inParty && !isLeader) {
+                    reason = DraftPrivateMatch.BlockReason.NOT_LEADER;
+                } else if (isLeader && isAnyPartyMemberHosting(p.getUniqueId(), memberIds)) {
+                    reason = DraftPrivateMatch.BlockReason.MEMBER_HOSTING;
+                }
+                draft.setBlockReason(reason);
+                if (reason == DraftPrivateMatch.BlockReason.NONE) {
                     draft.setJoinPolicy(isLeader ? JoinPolicy.PARTY : JoinPolicy.CODE);
                     if (draft.getJoinPolicy() == JoinPolicy.CODE) {
                         draft.setAutoSummon(false); // only meaningful for Party policy
@@ -706,9 +834,17 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                         }
                     }
                 }
-                then.accept(blocked);
+                then.accept(reason);
             });
         });
+    }
+
+    /** True when anyone in the party other than the leader currently hosts a private match. */
+    private boolean isAnyPartyMemberHosting(UUID leader, java.util.Set<UUID> memberIds) {
+        for (UUID id : memberIds) {
+            if (!id.equals(leader) && sessionService.countByOwner(id) > 0) return true;
+        }
+        return false;
     }
 
     /**
@@ -717,9 +853,9 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
      * {@code mapName}, and creates + joins immediately. Backs {@code /ea create <map>}.
      */
     public void createAndJoinByMapName(Player host, String mapName, boolean joinAfterCreate) {
-        resolveDraftPolicy(host, blocked -> {
-            if (blocked) {
-                host.sendMessage(Lang.msg("create.party-blocked"));
+        resolveDraftPolicy(host, reason -> {
+            if (reason != DraftPrivateMatch.BlockReason.NONE) {
+                host.sendMessage(Lang.msg(blockReasonKey(reason)));
                 return;
             }
             DraftPrivateMatch draft = draftService.getOrCreate(host.getUniqueId());
@@ -789,6 +925,16 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                         host.sendMessage(Lang.msg("create.must-be-leader"));
                         return;
                     }
+                    // A leader whose party already contains someone hosting their own match may
+                    // not create one until those members' matches end.
+                    java.util.Set<UUID> memberIds = new java.util.HashSet<>();
+                    for (PartiesHook.Member m : opt.get().getParty().getMembers(true)) {
+                        memberIds.add(m.getUniqueId());
+                    }
+                    if (isAnyPartyMemberHosting(host.getUniqueId(), memberIds)) {
+                        host.sendMessage(Lang.msg("create.member-hosting"));
+                        return;
+                    }
                 }
                 finishCreateAndJoin(host, draft, joinAfterCreate);
             } finally {
@@ -805,6 +951,24 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             host.sendMessage(Lang.msg("create.limit-reached", "%limit%", String.valueOf(limit)));
             return;
         }
+
+        // Hosting several matches at once is only allowed while every one of them (including
+        // the one being created) is CODE-gated — a PARTY-gated match is always the host's only
+        // match, since one party can't meaningfully gate two arenas at once.
+        List<PrivateSession> owned = sessionService.getSessionsByOwner(host.getUniqueId());
+        if (!owned.isEmpty()) {
+            JoinPolicy newPolicy = draft.getJoinPolicy() == null ? JoinPolicy.PARTY : draft.getJoinPolicy();
+            if (newPolicy == JoinPolicy.PARTY) {
+                host.sendMessage(Lang.msg("create.party-single"));
+                return;
+            }
+            for (PrivateSession existing : owned) {
+                if (existing.getJoinPolicy() != JoinPolicy.CODE) {
+                    host.sendMessage(Lang.msg("create.multi-code-only"));
+                    return;
+                }
+            }
+        }
         if (sessionService.isArenaReserved(arenaName, host.getUniqueId())) {
             host.sendMessage(Lang.msg("create.arena-reserved"));
             return;
@@ -815,7 +979,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         }
 
         PrivateSession session = sessionService.createSession(draft);
-        session.setSettings(draft.getSettings()); // carries over any Arena Settings chosen pre-creation
+        session.setSettings(draft.getSettings()); // carries over any Arena Modifiers chosen pre-creation
         sessionService.releaseDraftArena(arenaName, host.getUniqueId()); // now reserved for real
         draftService.clear(host.getUniqueId());
 
@@ -910,6 +1074,10 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         if (local != null && local.exists()) {
             return local.getStatus().isLobby() && local.getPlayers().isEmpty();
         }
+        // A remote arena can only be reserved when the shared database is connected — without
+        // it the server actually hosting that arena would never learn a session exists there,
+        // leaving the "private" match completely ungated on its own server.
+        if (database == null) return false;
         RemoteArena ra = ArenaNames.findRemote(arenaName);
         if (ra != null) {
             return ra.getStatus().isLobby() && ra.getPlayersCount() == 0;
@@ -1075,7 +1243,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     }
 
     /**
-     * Applies the session's players-per-team override (Arena Settings → Team Size) to the live
+     * Applies the session's players-per-team override (Arena Modifiers → Team Size) to the live
      * arena, snapshotting its original value on first use so it can be restored once the match
      * ends via {@link #restoreArenaPlayersPerTeam}. A no-op override just keeps the arena at its
      * original value — mirrors {@link #relaxMinPlayers}, including being safe to call repeatedly.
@@ -1094,6 +1262,13 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             try {
                 arena.setPlayersPerTeam(target);
                 unassignAllTeams(arena);
+                // MBedwars' scoreboard only redraws itself off specific events (a player's team
+                // changing, joining, etc.) — unassignAllTeams only fires those when a player
+                // actually HAD a team, so a second size change in a row (everyone already sits
+                // at team=null from the first one) changes the backing value but leaves the
+                // scoreboard showing the stale team-size line. Force a redraw unconditionally.
+                BedwarsAPI.getGameAPI().getDefaultScoreboardHandler()
+                        .update(ScoreboardUpdateCause.COMPLETE_REFRESH, arena, null);
             } catch (Throwable ignored) {
                 // best effort
             }
@@ -1135,7 +1310,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     // ── Environment (time / weather) ─────────────────────────────────────────────
 
     /**
-     * Applies the session's time/weather override (Arena Settings → Environment) to the live
+     * Applies the session's time/weather override (Arena Modifiers → Environment) to the live
      * arena. Unlike team size, there's no "original value" to snapshot/restore — UNTOUCHED
      * (MBedwars' own neutral default) is itself the un-set state, so ending a match just leaves
      * nothing further to undo. {@code setWeatherType}/{@code setTimeType} push to everyone
@@ -1292,6 +1467,18 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
         List<Player> players = new ArrayList<>(arena.getPlayers());
         Collections.shuffle(players);
+
+        // Free every seat first — a player keeping their old team would otherwise block the
+        // even round-robin below (their still-occupied seat makes a team look full to the
+        // capacity check even though this pass is about to redistribute it).
+        for (Player target : players) {
+            try {
+                if (arena.getPlayerTeam(target) != null) arena.setPlayerTeam(target, null);
+            } catch (Throwable t) {
+                getLogger().warning("Could not unassign " + target.getName() + " before distributing in "
+                        + arena.getName() + ": " + t.getMessage());
+            }
+        }
 
         int cap = arena.getPlayersPerTeam();
         int moved = 0, idx = 0;

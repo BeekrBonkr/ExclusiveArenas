@@ -31,9 +31,19 @@ global:
   accent-material: CYAN_STAINED_GLASS_PANE
   # Flanks the Kick All / End Match row in Match Controls — a visual "danger zone" cue.
   danger-material: RED_STAINED_GLASS_PANE
+  # Appended to a button's lore when its action can't be performed from this server:
+  # remote-unavailable — the action is strictly local to the arena's own server.
+  # relay-unavailable  — the action could be relayed, but no shared database is connected.
+  remote-unavailable-lore: "&c✖ Unavailable — the arena is on another server."
+  relay-unavailable-lore: "&c✖ Unavailable — no shared database to relay through."
 
 # ── Main menu (/ea) ──────────────────────────────────────────────────────────
 # Placeholders: %hosting% (matches hosted), %limit% (max allowed)
+#
+# arena-management / create-arena / match-controls are three looks of ONE
+# context-sensitive button and should keep the same slot: create-arena shows
+# while the player hosts nothing, match-controls while they host their single
+# allowed match (limit 1), arena-management otherwise.
 main:
   title: "&1&lExclusiveArenas"
   size: 27
@@ -47,6 +57,27 @@ main:
         - "&7private matches."
         - "&8"
         - "&7Hosting: &f%hosting%&7/&f%limit%"
+        - "&8"
+        - "&8▶ Click to open"
+      glint: false
+    create-arena:
+      slot: 10
+      material: EMERALD
+      name: "&a&lCreate New Arena"
+      lore:
+        - "&7You aren't hosting anything yet —"
+        - "&7set up a new private match."
+        - "&8"
+        - "&8▶ Click to build"
+      glint: false
+    # %arena% — the single match the player hosts.
+    match-controls:
+      slot: 10
+      material: NETHER_STAR
+      name: "&b&lMatch Controls"
+      lore:
+        - "&7Manage your private match on"
+        - "&f%arena%&7."
         - "&8"
         - "&8▶ Click to open"
       glint: false
@@ -212,7 +243,7 @@ controls:
     settings:
       slot: 10
       material: CRAFTING_TABLE
-      name: "&e&lArena Settings"
+      name: "&e&lArena Modifiers"
       lore:
         - "&7Configure event timings and"
         - "&7the in-match shop."
@@ -523,6 +554,122 @@ quick-actions:
         - "&8"
         - "&8▶ Click to reveal"
       glint: false
+    extend-timer:
+      slot: 16
+      material: CLOCK
+      name: "&a&l+2:00 Match Timer"
+      lore:
+        - "&7Pushes the match-end countdown"
+        - "&7out by two minutes."
+        - "&8"
+        - "&8▶ Click to extend"
+      glint: false
+    shorten-timer:
+      slot: 22
+      material: CLOCK
+      name: "&c&l-2:00 Match Timer"
+      lore:
+        - "&7Pulls the match-end countdown"
+        - "&7in by two minutes (never below 0:30)."
+        - "&8"
+        - "&8▶ Click to shorten"
+      glint: false
+    toggle-pvp:
+      slot: 23
+      material: IRON_SWORD
+      name: "&c&lToggle PvP"
+      lore:
+        - "&7Blocks (or restores) ALL player"
+        - "&7damage in the arena — friend or foe."
+        - "&8"
+        - "&8▶ Click to toggle"
+      glint: false
+    strip-inventories:
+      slot: 24
+      material: BARRIER
+      name: "&4&lStrip Inventories"
+      lore:
+        - "&7Clears everyone's inventory and"
+        - "&7armor — a hard reset, not a heal."
+        - "&8"
+        - "&8▶ Click to strip"
+      glint: false
+    comeback-buff:
+      slot: 25
+      material: TOTEM_OF_UNDYING
+      name: "&d&lComeback Buff"
+      lore:
+        - "&7Grants Strength II + Resistance II"
+        - "&7for 60s to whichever team currently"
+        - "&7has the fewest players."
+        - "&8"
+        - "&8▶ Click to apply"
+      glint: false
+    random-scatter:
+      slot: 31
+      material: ENDER_EYE
+      name: "&5&lRandom Scatter"
+      lore:
+        - "&7Teleports everyone to a random"
+        - "&7spot within the arena — chaos mode."
+        - "&8"
+        - "&8▶ Click to scatter"
+      glint: false
+    kick-afk:
+      slot: 32
+      material: SKELETON_SKULL
+      name: "&7&lKick AFK Players"
+      lore:
+        - "&7Removes anyone who hasn't moved"
+        - "&7in a while (see config for the"
+        - "&7threshold)."
+        - "&8"
+        - "&8▶ Click to sweep"
+      glint: false
+    reset-shop-prices:
+      slot: 33
+      material: EMERALD
+      name: "&a&lReset Shop Prices"
+      lore:
+        - "&7Clears every price/disable"
+        - "&7override you've made for this"
+        - "&7match's shop."
+        - "&8"
+        - "&8▶ Click to reset"
+      glint: false
+    give-compass:
+      slot: 34
+      material: COMPASS
+      name: "&e&lGive Tracking Compass"
+      lore:
+        - "&7Hands everyone a compass pointed"
+        - "&7at their nearest enemy right now."
+        - "&8"
+        - "&8▶ Click to give"
+      glint: false
+    announce-stats:
+      slot: 41
+      material: WRITTEN_BOOK
+      name: "&b&lAnnounce Match Stats"
+      lore:
+        - "&7Broadcasts each team's alive"
+        - "&7status and total kills."
+        - "&8"
+        - "&8▶ Click to announce"
+      glint: false
+    toggle-pause:
+      slot: 42
+      material: RED_STAINED_GLASS_PANE
+      name: "&c&lEmergency Pause"
+      lore:
+        - "&7Freezes everyone AND holds off"
+        - "&7every scheduled timeline event."
+        - "&8"
+        - "&7&oNote: &7&oMBedwars' own match-end"
+        - "&7&oclock keeps counting during a pause."
+        - "&8"
+        - "&8▶ Click to toggle"
+      glint: false
     back:
       slot: 49
       material: ARROW
@@ -589,7 +736,7 @@ quick-grant-effect:
 # ── Arena settings hub ───────────────────────────────────────────────────────
 # Title placeholders: %arena%
 arena-config:
-  title: "&1&lArena Settings &8· %arena%"
+  title: "&1&lArena Modifiers &8· %arena%"
   size: 27
   buttons:
     event-timeline:
@@ -635,6 +782,17 @@ arena-config:
         - "&8"
         - "&8▶ Click to configure"
       glint: false
+    match-rules:
+      slot: 11
+      material: NETHERITE_SWORD
+      name: "&c&lMatch Rules"
+      lore:
+        - "&7Friendly fire, fall/explosion"
+        - "&7damage, kill bounties, world"
+        - "&7border, and more standing rules."
+        - "&8"
+        - "&8▶ Click to configure"
+      glint: false
     environment:
       slot: 18
       material: SUNFLOWER
@@ -652,7 +810,7 @@ arena-config:
       lore: ["&8Return to match controls."]
       glint: false
 
-# ── Arena Settings → Environment (time / weather) ────────────────────────────
+# ── Arena Modifiers → Environment (time / weather) ────────────────────────────
 # Title placeholders: %arena%
 environment:
   title: "&1&lEnvironment &8· %arena%"
@@ -680,15 +838,182 @@ environment:
       slot: 22
       material: ARROW
       name: "&7◀ Back"
-      lore: ["&8Return to Arena Settings."]
+      lore: ["&8Return to Arena Modifiers."]
+      glint: false
+
+# ── Match Rules (standing per-match toggles) ──────────────────────────────────
+# Title placeholders: %arena%. Every button's lore uses %current% for its live value.
+match-rules:
+  title: "&1&lMatch Rules &8· %arena%"
+  size: 54
+  buttons:
+    friendly-fire:
+      slot: 10
+      material: IRON_SWORD
+      name: "&c&lFriendly Fire"
+      lore:
+        - "&7Whether teammates can damage"
+        - "&7each other."
+        - "&8"
+        - "&7Current: %current%"
+        - "&8"
+        - "&8▶ Click to cycle"
+      glint: false
+    fall-damage:
+      slot: 11
+      material: FEATHER
+      name: "&e&lFall Damage"
+      lore:
+        - "&7Whether falling hurts."
+        - "&8"
+        - "&7Current: %current%"
+        - "&8"
+        - "&8▶ Click to cycle"
+      glint: false
+    explosion-damage:
+      slot: 12
+      material: TNT
+      name: "&6&lExplosion Block Damage"
+      lore:
+        - "&7Whether explosions break blocks"
+        - "&7(entity damage is unaffected)."
+        - "&8"
+        - "&7Current: %current%"
+        - "&8"
+        - "&8▶ Click to cycle"
+      glint: false
+    kill-bounty:
+      slot: 13
+      material: GOLD_NUGGET
+      name: "&6&lKill Bounty"
+      lore:
+        - "&7Resources handed to a killer,"
+        - "&7on top of the normal drop."
+        - "&8"
+        - "&7Current: %current%"
+        - "&8"
+        - "&8▶ Click to cycle"
+      glint: false
+    shop-multiplier:
+      slot: 14
+      material: EMERALD
+      name: "&a&lShop Prices"
+      lore:
+        - "&7Scales every shop price for"
+        - "&7this match."
+        - "&8"
+        - "&7Current: %current%"
+        - "&8"
+        - "&8▶ Click to cycle"
+      glint: false
+    bonus-kit:
+      slot: 15
+      material: CHEST
+      name: "&d&lBonus Starting Kit"
+      lore:
+        - "&7Extra items everyone spawns"
+        - "&7with (see config.yml)."
+        - "&8"
+        - "&7Current: %current%"
+        - "&8"
+        - "&8▶ Click to cycle"
+      glint: false
+    pvp-grace:
+      slot: 16
+      material: SHIELD
+      name: "&b&lPvP Grace Period"
+      lore:
+        - "&7No PvP damage for this long"
+        - "&7after the match starts."
+        - "&8"
+        - "&7Current: %current%"
+        - "&8"
+        - "&8▶ Click to cycle"
+      glint: false
+    health-multiplier:
+      slot: 19
+      material: GOLDEN_APPLE
+      name: "&c&lHealth Multiplier"
+      lore:
+        - "&7Scales everyone's max health"
+        - "&7for this match."
+        - "&8"
+        - "&7Current: %current%"
+        - "&8"
+        - "&8▶ Click to cycle"
+      glint: false
+    world-border:
+      slot: 20
+      material: PRISMARINE_SHARD
+      name: "&b&lWorld Border Shrink"
+      lore:
+        - "&7Shrinks the arena's playable"
+        - "&7area over time (see config.yml)."
+        - "&8"
+        - "&7Current: %current%"
+        - "&8"
+        - "&8▶ Click to cycle"
+      glint: false
+    bed-respawn:
+      slot: 21
+      material: RED_BED
+      name: "&d&lBed Respawn Once"
+      lore:
+        - "&7Each bed survives its first"
+        - "&7hit, then breaks normally."
+        - "&8"
+        - "&7Current: %current%"
+        - "&8"
+        - "&8▶ Click to cycle"
+      glint: false
+    spawn-protection:
+      slot: 22
+      material: SHIELD
+      name: "&9&lSpawn Protection"
+      lore:
+        - "&7Blocks PvP damage near a"
+        - "&7player's own spawn right"
+        - "&7after they respawn."
+        - "&8"
+        - "&7Current: %current%"
+        - "&8"
+        - "&8▶ Click to cycle"
+      glint: false
+    kill-goal:
+      slot: 23
+      material: NETHER_STAR
+      name: "&e&lKill Goal (Win Condition)"
+      lore:
+        - "&7First team to reach this many"
+        - "&7total kills wins instantly."
+        - "&8"
+        - "&7Current: %current%"
+        - "&8"
+        - "&8▶ Click to cycle"
+      glint: false
+    reset-all:
+      slot: 43
+      material: BARRIER
+      name: "&4&lReset All Rules"
+      lore:
+        - "&7Puts every rule above back to"
+        - "&7its vanilla default."
+        - "&8"
+        - "&8▶ Click to reset"
+      glint: false
+    back:
+      slot: 49
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to Arena Modifiers."]
       glint: false
 
 # ── Arena settings hub, during creation (before the match exists) ────────────
 # Title placeholders: %arena%
-# Same three editors as the live Arena Settings hub above, but they edit the
+# Same three editors as the live Arena Modifiers hub above, but they edit the
 # builder's draft — applied to the arena the moment it's actually created.
 builder-settings:
-  title: "&1&lArena Settings &8· %arena%"
+  title: "&1&lArena Modifiers &8· %arena%"
   size: 27
   buttons:
     event-timeline:
@@ -720,6 +1045,17 @@ builder-settings:
       lore:
         - "&7Change how many players fit on"
         - "&7each team for this match."
+        - "&8"
+        - "&8▶ Click to configure"
+      glint: false
+    match-rules:
+      slot: 16
+      material: NETHERITE_SWORD
+      name: "&c&lMatch Rules"
+      lore:
+        - "&7Friendly fire, fall/explosion"
+        - "&7damage, kill bounties, world"
+        - "&7border, and more standing rules."
         - "&8"
         - "&8▶ Click to configure"
       glint: false
@@ -780,7 +1116,7 @@ team-size:
       slot: 22
       material: ARROW
       name: "&7◀ Back"
-      lore: ["&8Return to arena settings."]
+      lore: ["&8Return to arena modifiers."]
       glint: false
 
 # ── Saved configurations (presets) ──────────────────────────────────────────
@@ -826,7 +1162,7 @@ presets:
       slot: 48
       material: ARROW
       name: "&7◀ Back"
-      lore: ["&8Return to arena settings."]
+      lore: ["&8Return to arena modifiers."]
       glint: false
   items:
     # One entry per saved configuration.
@@ -946,7 +1282,7 @@ timeline:
       slot: 45
       material: ARROW
       name: "&7◀ Back"
-      lore: ["&8Return to arena settings."]
+      lore: ["&8Return to arena modifiers."]
       glint: false
     close:
       slot: 53
@@ -1011,11 +1347,14 @@ timeline-add:
       name: "&d&lWant something else?"
       lore:
         - "&7Create your own event with"
-        - "&7&f/ea timeline custom <type> <value> <time>&7."
+        - "&7&f/ea timeline custom <type> [value] <time>&7."
         - "&8"
-        - "&7Types: &fresource_burst, team_buff,"
-        - "&7trap_chaos, weather_change, time_change,"
-        - "&7announcement, fireworks"
+        - "&7Needs a value: &fresource_burst, team_buff,"
+        - "&7weather_change, time_change, announcement"
+        - "&8"
+        - "&7No value needed: &ftrap_chaos, fireworks,"
+        - "&7heal_all, clear_items, balance_teams,"
+        - "&7clear_traps, reset_upgrades"
       glint: false
     empty:
       slot: 22
@@ -1070,7 +1409,7 @@ shop-pages:
       slot: 27
       material: ARROW
       name: "&7◀ Back"
-      lore: ["&8Return to arena settings."]
+      lore: ["&8Return to arena modifiers."]
       glint: false
   items:
     # One entry per MBedwars shop page. %page%, %total% items, %disabled% of them disabled.
@@ -1221,6 +1560,18 @@ builder:
         - "&8"
         - "&8▶ Try &f/ea join &8to join your leader's match"
       glint: false
+    member-hosting-blocked:
+      slot: 13
+      material: BARRIER
+      name: "&c&lA Party Member Is Hosting"
+      lore:
+        - "&7Someone in your party is already"
+        - "&7hosting their own private match."
+        - "&8"
+        - "&7You can create one once none of your"
+        - "&7party members are hosting — or join"
+        - "&7theirs with &f/ea join&7."
+      glint: false
     # %map% is the selected arena or the not-selected notice.
     select-map:
       slot: 10
@@ -1284,7 +1635,7 @@ builder:
     arena-settings:
       slot: 22
       material: CRAFTING_TABLE
-      name: "&d&lArena Settings"
+      name: "&d&lArena Modifiers"
       lore:
         - "&7Configure event timings, shop"
         - "&7prices, and team size before"

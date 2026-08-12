@@ -53,6 +53,8 @@ public final class EventTimelineEngine implements Listener {
         final Arena arena;
         final List<SessionSettings.TimelineEntry> pending; // sorted, Match End excluded
         BukkitTask ticker;
+        boolean paused;
+        long pausedSince; // epoch ms when paused started; unused while !paused
 
         RunState(Arena arena, List<SessionSettings.TimelineEntry> pending) {
             this.arena = arena;
@@ -164,6 +166,40 @@ public final class EventTimelineEngine implements Listener {
         return def;
     }
 
+    // ── Emergency Pause (Quick Actions) ───────────────────────────────────────────
+
+    /**
+     * Pauses/resumes this arena's pending scheduled events (Quick Actions → Emergency Pause).
+     * Note this only holds off our own timeline ticker — MBedwars' native match-end countdown
+     * (pinned once at round start via {@code setIngameTimeRemaining}) keeps counting down
+     * regardless, since the public API exposes no way to actually freeze it. On resume, every
+     * still-pending event is pushed back by however long the pause lasted, so each still fires
+     * after the same amount of *live* time it originally had left, instead of every event whose
+     * time passed during the pause firing all at once the instant play resumes.
+     */
+    public void setPaused(Arena arena, boolean paused) {
+        RunState state = running.get(key(arena));
+        if (state == null || state.paused == paused) return;
+
+        if (paused) {
+            state.paused = true;
+            state.pausedSince = System.currentTimeMillis();
+            return;
+        }
+
+        state.paused = false;
+        int pausedSeconds = (int) Math.max(0, (System.currentTimeMillis() - state.pausedSince) / 1000);
+        if (pausedSeconds <= 0) return;
+
+        List<SessionSettings.TimelineEntry> shifted = new ArrayList<>();
+        for (SessionSettings.TimelineEntry e : state.pending) {
+            shifted.add(new SessionSettings.TimelineEntry(e.id(), e.seconds() + pausedSeconds,
+                    e.customType(), e.customValue()));
+        }
+        state.pending.clear();
+        state.pending.addAll(shifted);
+    }
+
     // ── Internals ────────────────────────────────────────────────────────────────
 
     /** Applies the timeline's Match End as MBedwars' in-game time limit. */
@@ -189,6 +225,7 @@ public final class EventTimelineEngine implements Listener {
             stop(arena);
             return;
         }
+        if (state.paused) return; // Emergency Pause — hold everything until resumed
 
         long elapsed = arena.getRunningTime().getSeconds();
         while (!state.pending.isEmpty() && state.pending.get(0).seconds() <= elapsed) {
@@ -211,6 +248,11 @@ public final class EventTimelineEngine implements Listener {
                 case WEATHER_CHANGE -> arena.setWeatherType(ExclusiveArenasPlugin.parseWeatherType(def.dropTypeId()));
                 case TIME_CHANGE -> arena.setTimeType(ExclusiveArenasPlugin.parseTimeType(def.dropTypeId()));
                 case FIREWORKS -> applyFireworks(arena);
+                case HEAL_ALL -> plugin.getQuickActions().healAll(null, null, arena);
+                case CLEAR_ITEMS -> plugin.getQuickActions().clearGroundItems(null, null, arena);
+                case BALANCE_TEAMS -> plugin.getQuickActions().balanceTeams(null, null, arena);
+                case CLEAR_TRAPS -> plugin.getQuickActions().clearAllTrapQueues(null, null, arena);
+                case RESET_UPGRADES -> plugin.getQuickActions().resetAllTeamUpgrades(null, null, arena);
                 case ANNOUNCEMENT -> {
                     // Its own message IS the broadcast — skip the generic "event fired" line below,
                     // which would otherwise show right next to (and be redundant with) it.

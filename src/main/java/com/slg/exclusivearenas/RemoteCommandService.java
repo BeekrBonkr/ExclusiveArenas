@@ -29,7 +29,12 @@ public final class RemoteCommandService {
         QUICK_BALANCE_TEAMS, QUICK_TRIGGER_TRAP, QUICK_CLEAR_TRAPS, QUICK_RESET_UPGRADES,
         /** payload = "POTION_TYPE:amplifier:seconds". */
         QUICK_GRANT_EFFECT,
-        QUICK_TOGGLE_FREEZE, QUICK_FORCE_REJOIN
+        QUICK_TOGGLE_FREEZE, QUICK_FORCE_REJOIN,
+        /** payload = signed seconds delta, e.g. "120" or "-120". */
+        QUICK_ADJUST_TIMER,
+        QUICK_TOGGLE_PVP, QUICK_STRIP_INVENTORIES, QUICK_COMEBACK_BUFF, QUICK_RANDOM_SCATTER,
+        QUICK_KICK_AFK, QUICK_RESET_SHOP_PRICES, QUICK_GIVE_COMPASS, QUICK_ANNOUNCE_STATS,
+        QUICK_TOGGLE_PAUSE
     }
 
     /** KICK_ALL payload marking the shift-click variant that spares the host. */
@@ -114,6 +119,24 @@ public final class RemoteCommandService {
             case QUICK_GRANT_EFFECT -> applyGrantEffect(quick, session, arena, row.payload());
             case QUICK_TOGGLE_FREEZE -> quick.toggleFreeze(null, session, arena);
             case QUICK_FORCE_REJOIN -> quick.forceRejoinDisconnected(null, session, arena);
+            case QUICK_ADJUST_TIMER -> applyAdjustTimer(quick, session, arena, row.payload());
+            case QUICK_TOGGLE_PVP -> quick.togglePvp(null, session, arena);
+            case QUICK_STRIP_INVENTORIES -> quick.stripInventories(null, session, arena);
+            case QUICK_COMEBACK_BUFF -> quick.comebackBuff(null, session, arena);
+            case QUICK_RANDOM_SCATTER -> quick.randomScatter(null, session, arena);
+            case QUICK_KICK_AFK -> quick.kickAfkPlayers(null, session, arena);
+            case QUICK_RESET_SHOP_PRICES -> quick.resetShopPrices(null, session, arena);
+            case QUICK_GIVE_COMPASS -> quick.giveTrackingCompass(null, session, arena);
+            case QUICK_ANNOUNCE_STATS -> quick.announceStats(null, session, arena);
+            case QUICK_TOGGLE_PAUSE -> quick.togglePause(null, session, arena);
+        }
+    }
+
+    private static void applyAdjustTimer(QuickActionsService quick, PrivateSession session, Arena arena, String payload) {
+        try {
+            quick.adjustMatchTimer(null, session, arena, Integer.parseInt(payload));
+        } catch (NumberFormatException ignored) {
+            // malformed payload — nothing to apply
         }
     }
 

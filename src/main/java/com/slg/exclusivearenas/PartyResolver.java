@@ -13,6 +13,22 @@ public final class PartyResolver {
     private PartyResolver() {}
 
     /**
+     * True when at least one parties plugin is hooked into MBedwars right now. Checked live
+     * (hooks can register/unregister as plugins reload) — callers that would take a
+     * destructive action on "not in a party" (e.g. converting a PARTY session to CODE) must
+     * check this first, since with no hook every lookup comes back empty and would otherwise
+     * be indistinguishable from the player genuinely having left their party.
+     */
+    public static boolean hasPartiesHook() {
+        try {
+            PartiesHook[] hooks = HookAPI.get().getPartiesHooks();
+            return hooks != null && hooks.length > 0;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
      * Resolves the PartiesHook.Member for the given player via MBedwars' hook system.
      * Calls the callback with an empty Optional if no party hook is registered or the
      * player is not in a party.
