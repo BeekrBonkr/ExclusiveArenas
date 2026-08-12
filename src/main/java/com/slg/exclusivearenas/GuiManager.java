@@ -73,10 +73,21 @@ public final class GuiManager {
         // its slot would be a bare hole for anyone lacking the permission.
         fillInteriorRow(inv, 9, accentMaterial());
 
-        String hosting = String.valueOf(sessions.countByOwner(p.getUniqueId()));
-        String limit = limitLabel(plugin.getArenaLimit(p));
-
-        GuiStyle.place(inv, "main.buttons.arena-management", "%hosting%", hosting, "%limit%", limit);
+        // One context-sensitive slot, three looks: nothing hosted yet → jump straight into
+        // creating; hosting their single allowed match → jump straight into its controls;
+        // otherwise the full management list. GuiListener re-derives the same branch from
+        // live state at click time, so the three templates may safely share a slot.
+        List<PrivateSession> owned = sessions.getSessionsByOwner(p.getUniqueId());
+        int limit = plugin.getArenaLimit(p);
+        String hosting = String.valueOf(owned.size());
+        String limitText = limitLabel(limit);
+        if (owned.isEmpty()) {
+            GuiStyle.place(inv, "main.buttons.create-arena", "%hosting%", hosting, "%limit%", limitText);
+        } else if (owned.size() == 1 && limit <= 1) {
+            GuiStyle.place(inv, "main.buttons.match-controls", "%arena%", owned.get(0).getArenaName());
+        } else {
+            GuiStyle.place(inv, "main.buttons.arena-management", "%hosting%", hosting, "%limit%", limitText);
+        }
         GuiStyle.place(inv, "main.buttons.help");
         GuiStyle.place(inv, "main.buttons.tournaments-soon");
         if (p.hasPermission(ADMIN_PERM)) {
@@ -214,6 +225,7 @@ public final class GuiManager {
         boolean codePolicy = session.getJoinPolicy() == JoinPolicy.CODE;
         Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
         boolean onThisServer = local != null && local.exists();
+        boolean relayAvailable = plugin.getRemoteCommandService().isAvailable();
         boolean lobbyNow = ArenaNames.isLobbyStatus(session.getArenaName());
 
         // Live status card: configured name + the live status lines as lore.
@@ -237,7 +249,8 @@ public final class GuiManager {
                         ? "&7Players join with &f/ea join <code>"
                         : "&7Only your party members can join.");
 
-        GuiStyle.place(inv, lobbyNow ? "controls.buttons.start-lobby" : "controls.buttons.start-running",
+        int startSlot = GuiStyle.place(inv,
+                lobbyNow ? "controls.buttons.start-lobby" : "controls.buttons.start-running",
                 "%remote_note%", onThisServer ? "" : "&8(controlling remotely)");
 
         if (codePolicy) {
@@ -250,9 +263,18 @@ public final class GuiManager {
         }
 
         GuiStyle.place(inv, "controls.buttons.go-to-arena");
-        GuiStyle.place(inv, "controls.buttons.kick-all");
-        GuiStyle.place(inv, "controls.buttons.end-match");
+        int kickSlot = GuiStyle.place(inv, "controls.buttons.kick-all");
+        int endSlot = GuiStyle.place(inv, "controls.buttons.end-match");
         GuiStyle.place(inv, "controls.buttons.quick-actions");
+
+        // Start / Kick All / End Match execute on the arena's own server — from here they need
+        // the shared database to relay through; say so on the buttons instead of failing quietly.
+        if (!onThisServer && !relayAvailable) {
+            String note = relayUnavailableLore();
+            appendLoreLine(inv, startSlot, note);
+            appendLoreLine(inv, kickSlot, note);
+            appendLoreLine(inv, endSlot, note);
+        }
 
         GuiStyle.place(inv, "controls.buttons.back", "%back_hint%",
                 adminView ? "&8Return to the admin list." : "&8Return to your matches.");
@@ -260,6 +282,13 @@ public final class GuiManager {
     }
 
     // ── Quick actions ─────────────────────────────────────────────────────────────
+
+    /**
+     * Quick actions that only work while standing on the arena's own server, even with a
+     * network database connected — the border render is a local particle effect, and the
+     * Force Win picker needs the local arena's team list to build its menu.
+     */
+    private static final Set<String> LOCAL_ONLY_QUICK_ACTIONS = Set.of("reveal-border", "force-win");
 
     public void openQuickActions(Player p, PrivateSession session, boolean adminView) {
         GuiHolder holder = new GuiHolder(GuiHolder.Type.QUICK_ACTIONS)
@@ -272,26 +301,61 @@ public final class GuiManager {
         fillInteriorRow(inv, 27, accentMaterial());
         fillInteriorRow(inv, 36, accentMaterial());
 
-        GuiStyle.place(inv, "quick-actions.buttons.regenerate-map");
-        GuiStyle.place(inv, "quick-actions.buttons.heal-all");
-        GuiStyle.place(inv, "quick-actions.buttons.drop-spawners");
-        GuiStyle.place(inv, "quick-actions.buttons.destroy-beds");
-        GuiStyle.place(inv, "quick-actions.buttons.clear-items");
-        if (plugin.getTimelineService().isEnabled()) {
-            GuiStyle.place(inv, "quick-actions.buttons.skip-event");
+        Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        boolean onThisServer = local != null && local.exists();
+        boolean relayAvailable = plugin.getRemoteCommandService().isAvailable();
+
+        String[] actions = {
+                "regenerate-map", "heal-all", "drop-spawners", "destroy-beds", "clear-items",
+                "force-win", "swap-teams-info", "balance-teams", "trigger-trap", "clear-traps",
+                "reset-upgrades", "grant-effect", "toggle-freeze", "force-rejoin", "reveal-border",
+                "extend-timer", "shorten-timer", "toggle-pvp", "strip-inventories", "comeback-buff",
+                "random-scatter", "kick-afk", "reset-shop-prices", "give-compass", "announce-stats",
+                "toggle-pause"
+        };
+        for (String action : actions) {
+            int slot = GuiStyle.place(inv, "quick-actions.buttons." + action);
+            markIfRemoteUnavailable(inv, slot, action, onThisServer, relayAvailable);
         }
-        GuiStyle.place(inv, "quick-actions.buttons.force-win");
-        GuiStyle.place(inv, "quick-actions.buttons.swap-teams-info");
-        GuiStyle.place(inv, "quick-actions.buttons.balance-teams");
-        GuiStyle.place(inv, "quick-actions.buttons.trigger-trap");
-        GuiStyle.place(inv, "quick-actions.buttons.clear-traps");
-        GuiStyle.place(inv, "quick-actions.buttons.reset-upgrades");
-        GuiStyle.place(inv, "quick-actions.buttons.grant-effect");
-        GuiStyle.place(inv, "quick-actions.buttons.toggle-freeze");
-        GuiStyle.place(inv, "quick-actions.buttons.force-rejoin");
-        GuiStyle.place(inv, "quick-actions.buttons.reveal-border");
+        if (plugin.getTimelineService().isEnabled()) {
+            int slot = GuiStyle.place(inv, "quick-actions.buttons.skip-event");
+            markIfRemoteUnavailable(inv, slot, "skip-event", onThisServer, relayAvailable);
+        }
         GuiStyle.place(inv, "quick-actions.buttons.back");
         p.openInventory(inv);
+    }
+
+    /**
+     * Appends the configured "can't do this from here" lore line to an action button when the
+     * session's arena lives on another server: always for the strictly-local actions, and for
+     * everything else only when there's no shared database to relay the click through.
+     */
+    private void markIfRemoteUnavailable(Inventory inv, int slot, String action,
+                                         boolean onThisServer, boolean relayAvailable) {
+        if (onThisServer || slot < 0) return;
+        if (LOCAL_ONLY_QUICK_ACTIONS.contains(action)) {
+            appendLoreLine(inv, slot, remoteUnavailableLore());
+        } else if (!relayAvailable) {
+            appendLoreLine(inv, slot, relayUnavailableLore());
+        }
+    }
+
+    private static String remoteUnavailableLore() {
+        return GuiStyle.rawString("global.remote-unavailable-lore",
+                "&c✖ Unavailable — the arena is on another server.");
+    }
+
+    private static String relayUnavailableLore() {
+        return GuiStyle.rawString("global.relay-unavailable-lore",
+                "&c✖ Unavailable — no shared database to relay through.");
+    }
+
+    private static void appendLoreLine(Inventory inv, int slot, String line) {
+        if (slot < 0 || slot >= inv.getSize()) return;
+        ItemStack item = inv.getItem(slot);
+        if (item == null) return;
+        appendLore(item, List.of(line));
+        inv.setItem(slot, item);
     }
 
     /** Quick Actions → Force Win: pick a team to instantly award the win to. */
@@ -354,12 +418,23 @@ public final class GuiManager {
         }
         GuiStyle.place(inv, "arena-config.buttons.shop-config");
         GuiStyle.place(inv, "arena-config.buttons.presets");
-        GuiStyle.place(inv, "arena-config.buttons.team-size");
+        int teamSizeSlot = GuiStyle.place(inv, "arena-config.buttons.team-size");
+        int environmentSlot = GuiStyle.place(inv, "arena-config.buttons.environment");
         GuiStyle.place(inv, "arena-config.buttons.back");
+
+        // Team Size and Environment act on the live arena object directly, so they only work
+        // from the server that hosts it — unlike the timeline/shop/preset editors, which edit
+        // the session's replicated settings and work from anywhere.
+        Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        if (local == null || !local.exists()) {
+            String note = remoteUnavailableLore();
+            appendLoreLine(inv, teamSizeSlot, note);
+            appendLoreLine(inv, environmentSlot, note);
+        }
         p.openInventory(inv);
     }
 
-    /** The same Arena Settings hub, but for a not-yet-created builder draft. */
+    /** The same Arena Modifiers hub, but for a not-yet-created builder draft. */
     public void openBuilderSettings(Player p, DraftPrivateMatch draft) {
         GuiHolder holder = new GuiHolder(GuiHolder.Type.BUILDER_SETTINGS);
         Inventory inv = create(holder, GuiStyle.size("builder-settings", 27),
@@ -439,7 +514,7 @@ public final class GuiManager {
     }
 
     /**
-     * Arena Settings → Environment: cycles the arena's time/weather. Live-only (a not-yet
+     * Arena Modifiers → Environment: cycles the arena's time/weather. Live-only (a not-yet
      * -created draft has no arena to preview this on) and usable any time — unlike team size,
      * this is a purely cosmetic per-player effect with no gameplay-balance reason to lock it.
      */
@@ -475,6 +550,51 @@ public final class GuiManager {
             case NIGHT -> "&9Night";
             default -> "&7Untouched (default)";
         };
+    }
+
+    // ── Match rules ──────────────────────────────────────────────────────────────
+
+    public void openMatchRules(Player p, SettingsHolder holder, boolean adminView) {
+        UUID sessionId = holder instanceof PrivateSession ps ? ps.getSessionId() : null;
+        GuiHolder gh = new GuiHolder(GuiHolder.Type.MATCH_RULES)
+                .sessionId(sessionId).adminView(adminView);
+        Inventory inv = create(gh, GuiStyle.size("match-rules", 54),
+                GuiStyle.title("match-rules", "%arena%", holder.getArenaName()));
+        frame(inv);
+        fillInteriorRow(inv, 9, accentMaterial());
+        fillInteriorRow(inv, 18, accentMaterial());
+
+        SessionSettings.ArenaModifiers mods = holder.getSettings().getModifiers();
+
+        GuiStyle.place(inv, "match-rules.buttons.friendly-fire", "%current%", onOff(mods.isFriendlyFire()));
+        GuiStyle.place(inv, "match-rules.buttons.fall-damage", "%current%", onOff(!mods.isNoFallDamage()));
+        GuiStyle.place(inv, "match-rules.buttons.explosion-damage", "%current%", onOff(!mods.isNoExplosionBlockDamage()));
+        GuiStyle.place(inv, "match-rules.buttons.kill-bounty", "%current%",
+                mods.getKillBountyMultiplier() == 0 ? "&7Off" : "&6" + mods.getKillBountyMultiplier() + "x");
+        GuiStyle.place(inv, "match-rules.buttons.shop-multiplier", "%current%", multiplierLabel(mods.getShopCurrencyMultiplier()));
+        GuiStyle.place(inv, "match-rules.buttons.bonus-kit", "%current%", onOff(mods.isBonusStartingKit()));
+        GuiStyle.place(inv, "match-rules.buttons.pvp-grace", "%current%",
+                mods.getPvpGraceSeconds() == 0 ? "&7Off" : "&b" + mods.getPvpGraceSeconds() + "s");
+        GuiStyle.place(inv, "match-rules.buttons.health-multiplier", "%current%", multiplierLabel(mods.getHealthMultiplier()));
+        GuiStyle.place(inv, "match-rules.buttons.world-border", "%current%", onOff(mods.isWorldBorderShrink()));
+        GuiStyle.place(inv, "match-rules.buttons.bed-respawn", "%current%", onOff(mods.isBedRespawnOnce()));
+        GuiStyle.place(inv, "match-rules.buttons.spawn-protection", "%current%",
+                mods.getSpawnProtectionSeconds() == 0 ? "&7Off" : "&9" + mods.getSpawnProtectionSeconds() + "s");
+        GuiStyle.place(inv, "match-rules.buttons.kill-goal", "%current%",
+                mods.getKillGoal() == 0 ? "&7Off" : "&e" + mods.getKillGoal() + " kills");
+        GuiStyle.place(inv, "match-rules.buttons.reset-all");
+        GuiStyle.place(inv, "match-rules.buttons.back");
+        p.openInventory(inv);
+    }
+
+    private static String onOff(boolean v) {
+        return v ? "&aON" : "&7OFF";
+    }
+
+    private static String multiplierLabel(double v) {
+        if (v == 1.0) return "&7Normal (1x)";
+        String num = v == Math.floor(v) ? String.valueOf((int) v) : String.valueOf(v);
+        return "&e" + num + "x";
     }
 
     // ── Saved configurations (presets) ────────────────────────────────────────────
@@ -999,7 +1119,8 @@ public final class GuiManager {
         frame(inv);
 
         if (d.isPartyBlocked()) {
-            GuiStyle.place(inv, "builder.buttons.party-blocked");
+            GuiStyle.place(inv, d.getBlockReason() == DraftPrivateMatch.BlockReason.MEMBER_HOSTING
+                    ? "builder.buttons.member-hosting-blocked" : "builder.buttons.party-blocked");
             GuiStyle.place(inv, "builder.buttons.back");
             GuiStyle.place(inv, "builder.buttons.close");
             p.openInventory(inv);
@@ -1270,11 +1391,15 @@ public final class GuiManager {
 
     private List<ArenaEntry> collectArenas() {
         List<ArenaEntry> list = new ArrayList<>();
+        // Without the shared database, a session on a remote arena would never reach the
+        // server actually hosting it — the "private" match would sit completely ungated
+        // there. Only offer remote arenas when the network store is actually connected.
+        boolean networkStoreReady = plugin.getDatabase() != null;
         try {
             RemoteAPI remote = RemoteAPI.get();
             if (remote != null && remote.isAPIActive()) {
                 for (RemoteArena ra : remote.getArenas()) {
-                    if (ra != null && ra.exists()) {
+                    if (ra != null && ra.exists() && (ra.isLocal() || networkStoreReady)) {
                         list.add(new ArenaEntry(ra.getName(), !ra.isLocal(),
                                 ra.getEnabledTeams().size(), ra.getPlayersPerTeam(), ra.getIcon()));
                     }

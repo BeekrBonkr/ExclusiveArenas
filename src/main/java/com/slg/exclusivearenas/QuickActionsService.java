@@ -14,13 +14,21 @@ import de.marcely.bedwars.api.game.upgrade.UpgradeLevel;
 import de.marcely.bedwars.api.game.upgrade.UpgradeState;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.attribute.Attribute;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -54,6 +62,15 @@ public final class QuickActionsService implements Listener {
 
     /** Arenas (lower-cased name) currently frozen by {@link #toggleFreeze} — see {@link #onMove}. */
     private final Set<String> frozenArenas = ConcurrentHashMap.newKeySet();
+
+    /** Arenas (lower-cased name) with PvP damage blocked by {@link #togglePvp}. */
+    private final Set<String> pvpDisabledArenas = ConcurrentHashMap.newKeySet();
+
+    /** Arenas (lower-cased name) currently paused by {@link #togglePause} — also freezes movement. */
+    private final Set<String> pausedArenas = ConcurrentHashMap.newKeySet();
+
+    /** Last time each player actually moved (X/Z change), for {@link #kickAfkPlayers}. */
+    private final Map<UUID, Long> lastActivity = new ConcurrentHashMap<>();
 
     private static final class RegenSnapshot {
         final PrivateSession session;
@@ -92,7 +109,24 @@ public final class QuickActionsService implements Listener {
             if (keepHost && p.getUniqueId().equals(session.getOwner())) continue;
             if (arena.kickPlayer(p, KickReason.KICK)) kicked++;
         }
-        kicked += arena.kickAllSpectators(KickSpectatorReason.PLUGIN_STOP);
+        if (keepHost) {
+            // kickAllSpectators would sweep the host out too when they happen to be
+            // spectating — kick spectators one by one and spare the host instead.
+            for (Player spec : arena.getSpectators().toArray(new Player[0])) {
+                if (spec.getUniqueId().equals(session.getOwner())) continue;
+                try {
+                    var data = arena.getSpectateData(spec);
+                    if (data != null) {
+                        data.kick(KickSpectatorReason.PLUGIN_STOP);
+                        kicked++;
+                    }
+                } catch (Throwable ignored) {
+                    // best effort per spectator
+                }
+            }
+        } else {
+            kicked += arena.kickAllSpectators(KickSpectatorReason.PLUGIN_STOP);
+        }
 
         if (kicked > 0) {
             arena.broadcast(Lang.msg("kickall.broadcast"));
@@ -190,10 +224,13 @@ public final class QuickActionsService implements Listener {
      */
     @EventHandler
     public void onStatusChange(ArenaStatusChangeEvent event) {
-        // Freezing only ever makes sense mid-round — don't let it silently carry over into
-        // this arena's next match once the round it was set during actually ends.
+        // Freezing/pausing/PvP-blocking only ever make sense mid-round — don't let them silently
+        // carry over into this arena's next match once the round they were set during ends.
         if (event.getNewStatus() != ArenaStatus.RUNNING) {
-            frozenArenas.remove(key(event.getArena().getName()));
+            String k = key(event.getArena().getName());
+            frozenArenas.remove(k);
+            pvpDisabledArenas.remove(k);
+            pausedArenas.remove(k);
         }
 
         if (event.getNewStatus() != ArenaStatus.LOBBY) return;
@@ -472,18 +509,28 @@ public final class QuickActionsService implements Listener {
         }
     }
 
-    /** Snaps movement back for anyone in a frozen arena — looking around is still allowed. */
+    /** Keeps {@link #lastActivity} from accumulating entries for players long gone. */
+    @EventHandler
+    public void onPlayerQuit(org.bukkit.event.player.PlayerQuitEvent event) {
+        lastActivity.remove(event.getPlayer().getUniqueId());
+    }
+
+    /** Snaps movement back for anyone in a frozen (or paused — see {@link #togglePause}) arena. */
     @EventHandler(ignoreCancelled = true)
     public void onMove(PlayerMoveEvent event) {
-        if (frozenArenas.isEmpty()) return; // fast path — nothing frozen anywhere
         Location from = event.getFrom();
         Location to = event.getTo();
         if (to == null) return;
-        if (from.getX() == to.getX() && from.getY() == to.getY() && from.getZ() == to.getZ()) return;
+        boolean realMove = from.getX() != to.getX() || from.getY() != to.getY() || from.getZ() != to.getZ();
+        if (realMove) lastActivity.put(event.getPlayer().getUniqueId(), System.currentTimeMillis());
+
+        if (!realMove || (frozenArenas.isEmpty() && pausedArenas.isEmpty())) return;
 
         Player player = event.getPlayer();
         Arena arena = BedwarsAPI.getGameAPI().getArenaByPlayer(player);
-        if (arena == null || !frozenArenas.contains(key(arena.getName()))) return;
+        if (arena == null) return;
+        String k = key(arena.getName());
+        if (!frozenArenas.contains(k) && !pausedArenas.contains(k)) return;
         event.setTo(from);
         // Without this, a player already falling/knocked back when frozen keeps their old
         // velocity and immediately drifts again next tick despite the position snap-back.
@@ -524,6 +571,210 @@ public final class QuickActionsService implements Listener {
         } catch (Throwable t) {
             plugin.getLogger().warning("Draw border failed on " + arena.getName() + ": " + t.getMessage());
         }
+    }
+
+    // ── Match timer ─────────────────────────────────────────────────────────────
+
+    /** Nudges the match-end countdown by {@code deltaSeconds} (negative to shorten). */
+    public void adjustMatchTimer(Player actor, PrivateSession session, Arena arena, int deltaSeconds) {
+        if (arena.getStatus() != ArenaStatus.RUNNING) {
+            tell(actor, arena, Lang.msg("quick.running-only"));
+            return;
+        }
+        int next = Math.max(30, arena.getIngameTimeRemaining() + deltaSeconds);
+        arena.setIngameTimeRemaining(next);
+        arena.broadcast(Lang.msg(deltaSeconds >= 0 ? "quick.timer-extended" : "quick.timer-shortened",
+                "%time%", TimelineService.format(next)));
+        tell(actor, arena, Lang.msg("quick.timer-adjusted", "%time%", TimelineService.format(next)));
+    }
+
+    // ── PvP toggle ───────────────────────────────────────────────────────────────
+
+    /** Toggles whether players can damage each other at all in this arena. */
+    public void togglePvp(Player actor, PrivateSession session, Arena arena) {
+        String k = key(arena.getName());
+        if (!pvpDisabledArenas.add(k)) {
+            pvpDisabledArenas.remove(k);
+            arena.broadcast(Lang.msg("quick.pvp-enabled"));
+        } else {
+            arena.broadcast(Lang.msg("quick.pvp-disabled"));
+        }
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onPvpDamage(EntityDamageByEntityEvent event) {
+        if (pvpDisabledArenas.isEmpty()) return;
+        if (!(event.getEntity() instanceof Player victim)) return;
+        Player attacker = resolveAttacker(event.getDamager());
+        if (attacker == null) return;
+
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByPlayer(victim);
+        if (arena == null || !pvpDisabledArenas.contains(key(arena.getName()))) return;
+        event.setCancelled(true);
+    }
+
+    private static Player resolveAttacker(Entity damager) {
+        if (damager instanceof Player p) return p;
+        if (damager instanceof Projectile proj && proj.getShooter() instanceof Player p) return p;
+        return null;
+    }
+
+    // ── Emergency pause ─────────────────────────────────────────────────────────
+
+    /** Freezes movement AND holds off every pending timeline event until resumed. */
+    public void togglePause(Player actor, PrivateSession session, Arena arena) {
+        String k = key(arena.getName());
+        boolean nowPaused = pausedArenas.add(k);
+        if (!nowPaused) pausedArenas.remove(k);
+        plugin.getTimelineEngine().setPaused(arena, nowPaused);
+        arena.broadcast(Lang.msg(nowPaused ? "quick.paused" : "quick.resumed"));
+    }
+
+    // ── Inventory / roster chaos ────────────────────────────────────────────────
+
+    /** Clears every player's inventory and armor — a hard reset, not a heal. */
+    public void stripInventories(Player actor, PrivateSession session, Arena arena) {
+        int count = 0;
+        for (Player p : arena.getPlayers()) {
+            p.getInventory().clear();
+            p.getInventory().setArmorContents(null);
+            p.getInventory().setItemInOffHand(null);
+            count++;
+        }
+        if (count > 0) arena.broadcast(Lang.msg("quick.stripped-broadcast"));
+        tell(actor, arena, Lang.msg("quick.stripped", "%count%", String.valueOf(count)));
+    }
+
+    /** Grants Strength II + Resistance II for 60s to whichever team currently has the fewest players. */
+    public void comebackBuff(Player actor, PrivateSession session, Arena arena) {
+        Map<Team, Integer> counts = new HashMap<>();
+        for (Player p : arena.getPlayers()) {
+            Team t = arena.getPlayerTeam(p);
+            if (t != null) counts.merge(t, 1, Integer::sum);
+        }
+        if (counts.isEmpty()) {
+            tell(actor, arena, Lang.msg("quick.no-teams-eligible"));
+            return;
+        }
+        Team lowest = null;
+        int lowestCount = Integer.MAX_VALUE;
+        for (Map.Entry<Team, Integer> e : counts.entrySet()) {
+            if (e.getValue() < lowestCount) { lowestCount = e.getValue(); lowest = e.getKey(); }
+        }
+        for (Player p : playersOnTeam(arena, lowest)) {
+            p.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, 60 * 20, 0, false, true));
+            p.addPotionEffect(new PotionEffect(PotionEffectType.RESISTANCE, 60 * 20, 0, false, true));
+        }
+        arena.broadcast(Lang.msg("quick.comeback-broadcast", "%team%", lowest.getDisplayName(null)));
+        tell(actor, arena, Lang.msg("quick.comeback-applied", "%team%", lowest.getDisplayName(null)));
+    }
+
+    /**
+     * Teleports every player to a random X/Z within the arena's configured region (same
+     * height they're already at, to avoid dropping anyone into terrain or off the map).
+     */
+    public void randomScatter(Player actor, PrivateSession session, Arena arena) {
+        if (arena.getStatus() != ArenaStatus.RUNNING) {
+            tell(actor, arena, Lang.msg("quick.running-only"));
+            return;
+        }
+        World world = arena.getGameWorld();
+        var min = arena.getMinRegionCorner();
+        var max = arena.getMaxRegionCorner();
+        if (world == null || min == null || max == null) {
+            tell(actor, arena, Lang.msg("quick.no-region"));
+            return;
+        }
+        double minX = Math.min(min.getX(), max.getX()), maxX = Math.max(min.getX(), max.getX());
+        double minZ = Math.min(min.getZ(), max.getZ()), maxZ = Math.max(min.getZ(), max.getZ());
+        Random random = new Random();
+        int count = 0;
+        for (Player p : arena.getPlayers()) {
+            Location loc = p.getLocation().clone();
+            loc.setWorld(world);
+            loc.setX(minX + random.nextDouble() * (maxX - minX));
+            loc.setZ(minZ + random.nextDouble() * (maxZ - minZ));
+            p.teleport(loc);
+            count++;
+        }
+        if (count > 0) arena.broadcast(Lang.msg("quick.scatter-broadcast"));
+        tell(actor, arena, Lang.msg("quick.scattered", "%count%", String.valueOf(count)));
+    }
+
+    /** Kicks anyone who hasn't actually moved in {@code quick_actions.afk_kick_threshold_seconds}. */
+    public void kickAfkPlayers(Player actor, PrivateSession session, Arena arena) {
+        if (arena.getStatus() != ArenaStatus.RUNNING) {
+            tell(actor, arena, Lang.msg("quick.running-only"));
+            return;
+        }
+        long thresholdMs = plugin.getEaConfig().intNum("quick_actions.afk_kick_threshold_seconds", 120) * 1000L;
+        long now = System.currentTimeMillis();
+        int kicked = 0;
+        for (Player p : new ArrayList<>(arena.getPlayers())) {
+            Long last = lastActivity.get(p.getUniqueId());
+            if (last == null || now - last < thresholdMs) continue;
+            try {
+                arena.kickPlayer(p, KickReason.KICK);
+                kicked++;
+            } catch (Throwable ignored) {
+                // best effort per player
+            }
+        }
+        if (kicked > 0) arena.broadcast(Lang.msg("quick.afk-broadcast", "%count%", String.valueOf(kicked)));
+        tell(actor, arena, Lang.msg("quick.afk-kicked", "%count%", String.valueOf(kicked)));
+    }
+
+    // ── Shop / info ──────────────────────────────────────────────────────────────
+
+    /** Clears every host-configured shop price/disable override for this session. */
+    public void resetShopPrices(Player actor, PrivateSession session, Arena arena) {
+        int count = session.getSettings().getShopOverrides().size();
+        session.getSettings().clearShopOverrides();
+        plugin.getSessionService().saveSettings(session);
+        tell(actor, arena, Lang.msg("quick.shop-reset", "%count%", String.valueOf(count)));
+    }
+
+    /** Gives every player a compass pointed at their nearest enemy (a one-time snapshot, not a live track). */
+    public void giveTrackingCompass(Player actor, PrivateSession session, Arena arena) {
+        int given = 0;
+        for (Player p : arena.getPlayers()) {
+            Team myTeam = arena.getPlayerTeam(p);
+            Player nearest = null;
+            double nearestDist = Double.MAX_VALUE;
+            for (Player other : arena.getPlayers()) {
+                if (other.equals(p) || !other.getWorld().equals(p.getWorld())) continue;
+                if (myTeam != null && myTeam.equals(arena.getPlayerTeam(other))) continue;
+                double d = other.getLocation().distanceSquared(p.getLocation());
+                if (d < nearestDist) { nearestDist = d; nearest = other; }
+            }
+            ItemStack compass = new ItemStack(Material.COMPASS);
+            ItemMeta meta = compass.getItemMeta();
+            if (meta != null) {
+                meta.setDisplayName(ItemUtil.color(nearest != null
+                        ? "&e&lTracker &7(" + nearest.getName() + ")" : "&e&lTracker"));
+                compass.setItemMeta(meta);
+            }
+            p.getInventory().addItem(compass);
+            if (nearest != null) p.setCompassTarget(nearest.getLocation());
+            given++;
+        }
+        if (given > 0) arena.broadcast(Lang.msg("quick.compass-broadcast"));
+        tell(actor, arena, Lang.msg("quick.compass-given", "%count%", String.valueOf(given)));
+    }
+
+    /** Broadcasts each enabled team's alive/eliminated status and total kills. */
+    public void announceStats(Player actor, PrivateSession session, Arena arena) {
+        arena.broadcast(Lang.msg("quick.stats-header", "%arena%", arena.getName()));
+        for (Team team : arena.getEnabledTeams()) {
+            boolean alive = arena.getAliveTeams().contains(team);
+            int kills = 0;
+            for (Player p : playersOnTeam(arena, team)) {
+                kills += arena.getPlayerKillHistory(p).size();
+            }
+            arena.broadcast(Lang.msg(alive ? "quick.stats-line-alive" : "quick.stats-line-dead",
+                    "%team%", team.getDisplayName(null), "%kills%", String.valueOf(kills)));
+        }
+        tell(actor, arena, Lang.msg("quick.stats-sent"));
     }
 
     private static List<Player> playersOnTeam(Arena arena, Team team) {

@@ -52,6 +52,9 @@ public final class GuiStyle {
         checkPair(logger, "controls.buttons.public-on", "controls.buttons.public-off");
         checkPair(logger, "controls.buttons.public-on", "controls.buttons.summon-party");
         checkPair(logger, "builder.buttons.public-on", "builder.buttons.public-off");
+        // The main menu's context-sensitive button: three looks of one control.
+        checkPair(logger, "main.buttons.arena-management", "main.buttons.create-arena");
+        checkPair(logger, "main.buttons.arena-management", "main.buttons.match-controls");
     }
 
     private static void checkPair(java.util.logging.Logger logger, String a, String b) {

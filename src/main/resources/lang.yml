@@ -71,6 +71,12 @@ create:
   # Player is in someone else's party and can't host.
   party-blocked: "&cYou're in someone else's party — leave it to host your own private match, or use &f/ea join&c to join your leader's match."
   party-blocked-menu: "&cLeave your party before you can host your own private match."
+  # A party leader whose party contains someone already hosting their own match.
+  member-hosting: "&cA member of your party is already hosting a private match — you can create one once they end theirs."
+  member-hosting-menu: "&cA member of your party is already hosting a private match."
+  # Hosting several matches at once requires every one of them to be join-code gated.
+  party-single: "&cA party-gated match is always your only match — end your current one before creating another."
+  multi-code-only: "&cYou can only host multiple matches while every one of them is join-code gated."
 
 route:
   # %arena% — the join command failed to dispatch.
@@ -92,6 +98,14 @@ match:
   code-regenerated: "&eJoin code regenerated: &f%code% &e— use &f/ea join %code%"
   public-opened: "&aMatch opened — anyone with the code may join."
   public-locked: "&cMatch locked — joining is disabled."
+
+# A PARTY-gated match whose host left (or lost leadership of) their party converts to a
+# join-code gate automatically instead of lingering behind a party that no longer exists.
+party:
+  # Sent to the host. %arena%
+  converted-to-code: "&eYour private match on &f%arena%&e is now join-code gated — you no longer lead a party."
+  # Broadcast inside the arena.
+  converted-broadcast: "&eThis match is now join-code gated — the host is no longer leading a party."
 
 summon:
   not-in-party: "&cYou are not in a party."
@@ -118,7 +132,7 @@ teams:
   # %count%
   distributed: "&aDistributed &f%count%&a player(s) evenly across teams."
 
-# Arena Settings → Team Size.
+# Arena Modifiers → Team Size.
 teamsize:
   locked: "&cTeam size can only be changed while the match is in its lobby."
   # %amount%
@@ -251,6 +265,47 @@ quick:
   # %count%
   rejoined: "&aRejoined &f%count%&a disconnected player(s)."
   border-shown: "&eShowing you the arena's match-area border."
+  # %time%
+  timer-extended: "&aThe host extended the match — now ending at &f%time%&a."
+  timer-shortened: "&cThe host shortened the match — now ending at &f%time%&c."
+  timer-adjusted: "&aMatch end is now &f%time%&a."
+  pvp-disabled: "&cPvP is now &lOFF&c in this arena."
+  pvp-enabled: "&aPvP is now &lON&a in this arena."
+  stripped-broadcast: "&4The host wiped everyone's inventory!"
+  # %count%
+  stripped: "&aStripped &f%count%&a player(s)' inventory."
+  no-teams-eligible: "&7No team has any players to buff right now."
+  # %team%
+  comeback-broadcast: "&d%team%&d is getting a comeback buff!"
+  comeback-applied: "&aApplied the comeback buff to &f%team%&a."
+  scatter-broadcast: "&5The host scattered everyone across the arena!"
+  # %count%
+  scattered: "&aScattered &f%count%&a player(s)."
+  no-region: "&cThis arena has no region corners configured — can't scatter."
+  # %count%
+  afk-broadcast: "&7Kicked &f%count%&7 AFK player(s)."
+  afk-kicked: "&aKicked &f%count%&a AFK player(s)."
+  # %count%
+  shop-reset: "&aCleared &f%count%&a shop override(s)."
+  compass-broadcast: "&eEveryone was handed a tracking compass!"
+  # %count%
+  compass-given: "&aGave &f%count%&a player(s) a tracking compass."
+  # %arena%
+  stats-header: "&b&l── %arena% — Match Stats ──"
+  # %team%, %kills%
+  stats-line-alive: "&a✔ &f%team% &7— &f%kills% &7kill(s)"
+  stats-line-dead: "&c✘ &7%team% &7— &f%kills% &7kill(s) &8(eliminated)"
+  stats-sent: "&aStats announced to the arena."
+  paused: "&c&lEmergency Pause &7— everyone is frozen and the timeline is on hold."
+  resumed: "&a&lResumed &7— play continues."
+
+modifiers:
+  # Shown when a Match Rules toggle is changed. %rule%, %value%
+  changed: "&aSet &f%rule%&a to &f%value%&a."
+  friendly-fire-on: "&cFriendly fire is now &lON&c for this match."
+  friendly-fire-off: "&aFriendly fire is now &lOFF&a for this match."
+  bed-saved: "&a&l%team%&a's bed survived its first hit — one-time save used!"
+  kill-goal-reached: "&6&l%team% &6reached the &f%goal%&6-kill goal and won the match!"
 
 timeline:
   lobby-only: "&cEvent timings can only be changed while the arena is in its lobby."
@@ -297,7 +352,7 @@ cmd:
   timeline-disabled: "&cThe event timeline is disabled on this server."
   timeline-usage: "&cUsage: /ea timeline <list|add|custom|move|set|delete|reset> [event] [time]"
   timeline-add-usage: "&cUsage: /ea timeline add <event> [time]"
-  timeline-custom-usage: "&cUsage: /ea timeline custom <type> <value> <time>&7 — types: resource_burst, team_buff, trap_chaos, weather_change, time_change, announcement, fireworks"
+  timeline-custom-usage: "&cUsage: /ea timeline custom <type> [value] <time>&7 — value-required: resource_burst, team_buff, weather_change, time_change, announcement — value-less: trap_chaos, fireworks, heal_all, clear_items, balance_teams, clear_traps, reset_upgrades"
   # %arena%
   timeline-header: "&6Event timeline for &f%arena%&6:"
   # %time%, %event%, %id% — one line per event in /ea timeline list

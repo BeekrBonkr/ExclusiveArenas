@@ -89,6 +89,12 @@ private:
   # pulls new party members into a match whose host enabled "Auto-summon".
   auto_summon_poll_seconds: 5
 
+  # How often (seconds) each server checks that the host of every Party-gated match still
+  # leads a party. When they left it (or lost leadership), the match switches to a Join Code
+  # gate automatically — with a fresh code sent to the host — instead of sitting behind a
+  # party that no longer authorises anyone. Only the server the host is online on checks.
+  party_check_seconds: 5
+
   # Shows everyone inside a private match's arena an orange-ish boss bar stating that it's
   # private, its join policy, and whether the timer is currently paused.
   bossbar_enabled: true
@@ -146,7 +152,7 @@ private:
 
 # ── Event timeline ────────────────────────────────────────────────────────────
 # The default in-match event schedule for every private match. Hosts can move or
-# delete these per match via Arena Settings → Event Timeline; this section only
+# delete these per match via Arena Modifiers → Event Timeline; this section only
 # defines what a fresh match starts with.
 #
 # Each event needs:
@@ -194,15 +200,23 @@ timeline:
   #                       (NOON, SUNSET, NIGHT, UNTOUCHED).
   #   announcement     — pure broadcast, no gameplay effect. drop_type = the message.
   #   fireworks        — cosmetic firework show over the arena.
+  #   heal_all         — fully heals/feeds every player currently in the arena.
+  #   clear_items      — removes every dropped item lying in the arena.
+  #   balance_teams    — re-shuffles every current player evenly across the enabled teams.
+  #   clear_traps      — clears every team's queued (not yet triggered) traps.
+  #   reset_upgrades   — resets every team's generator/shop upgrades to nothing purchased.
   #
   # 'default: false' marks an event as an optional extra that ISN'T part of a fresh match's
   # starting schedule — hosts add it themselves later via the timeline editor's "Add Event"
   # button (or /ea timeline add <id>) when they actually want it. Omit it (or set true) for
   # anything that should just always be there by default, as every event below already is.
+  # The catalog below ships a good spread of these as ready-to-add optional extras — hosts
+  # never need to touch this file to use them, just click "Add Event" in the timeline editor.
   #
-  # A host isn't limited to this catalog either — /ea timeline custom <type> <value> <time>
-  # lets them create a one-off event of any of the seven types above from scratch, without
-  # an admin needing to pre-configure it here at all.
+  # A host isn't limited to this catalog either — /ea timeline custom <type> [value] <time>
+  # lets them create a one-off event of any of the types above from scratch (the value-less
+  # ones — trap_chaos, fireworks, heal_all, clear_items, balance_teams, clear_traps,
+  # reset_upgrades — skip the value argument), without an admin pre-configuring it here.
   events:
     diamond2:
       name: "Diamond II"
@@ -248,8 +262,9 @@ timeline:
       time: "30:00"
       type: match_end
       description: "&7The match ends (draw if no winner)."
-    # Example optional catalog event (default: false) — not scheduled unless a host adds it
-    # via the timeline editor's "Add Event" button or /ea timeline add fireworks_finale.
+    # Everything from here down is 'default: false' — optional catalog extras a host adds
+    # themselves via the timeline editor's "Add Event" button (or /ea timeline add <id>)
+    # when they actually want them. None of these are scheduled in a fresh match.
     fireworks_finale:
       name: "Fireworks Finale"
       icon: FIREWORK_ROCKET
@@ -257,6 +272,152 @@ timeline:
       type: fireworks
       default: false
       description: "&dA celebratory firework show over the arena."
+    heal_pulse:
+      name: "Heal Pulse"
+      icon: GOLDEN_APPLE
+      time: "10:00"
+      type: heal_all
+      default: false
+      description: "&6Fully heals and feeds every player in the arena."
+    item_cleanup:
+      name: "Item Cleanup"
+      icon: HOPPER
+      time: "15:00"
+      type: clear_items
+      default: false
+      description: "&eClears dropped items lying around (lag cleanup)."
+    team_reshuffle:
+      name: "Team Reshuffle"
+      icon: COMPASS
+      time: "5:00"
+      type: balance_teams
+      default: false
+      description: "&aRe-shuffles everyone evenly across the enabled teams."
+    trap_purge:
+      name: "Trap Purge"
+      icon: STRING
+      time: "18:00"
+      type: clear_traps
+      default: false
+      description: "&7Clears every team's queued (not yet triggered) traps."
+    upgrade_reset:
+      name: "Upgrade Reset"
+      icon: ANVIL
+      time: "20:00"
+      type: reset_upgrades
+      default: false
+      description: "&cResets every team's upgrades to nothing purchased."
+    trap_chaos_event:
+      name: "Trap Chaos"
+      icon: TRIPWIRE_HOOK
+      time: "14:00"
+      type: trap_chaos
+      default: false
+      description: "&5Force-triggers a random team's queued trap."
+    speed_rush:
+      name: "Speed Rush"
+      icon: SUGAR
+      time: "8:00"
+      type: team_buff
+      drop_type: "SPEED:1:45"
+      default: false
+      description: "&bEveryone gets Speed II for 45 seconds."
+    iron_skin:
+      name: "Iron Skin"
+      icon: IRON_CHESTPLATE
+      time: "16:00"
+      type: team_buff
+      drop_type: "RESISTANCE:1:45"
+      default: false
+      description: "&7Everyone gets Resistance II for 45 seconds."
+    battle_regen:
+      name: "Battle Regen"
+      icon: GLISTERING_MELON_SLICE
+      time: "11:00"
+      type: team_buff
+      drop_type: "REGENERATION:1:30"
+      default: false
+      description: "&dEveryone gets Regeneration II for 30 seconds."
+    high_jump:
+      name: "High Jump"
+      icon: RABBIT_FOOT
+      time: "7:00"
+      type: team_buff
+      drop_type: "JUMP:1:60"
+      default: false
+      description: "&aEveryone gets Jump Boost II for 60 seconds."
+    storm_warning:
+      name: "Storm Warning"
+      icon: WATER_BUCKET
+      time: "17:00"
+      type: weather_change
+      drop_type: "RAINING"
+      default: false
+      description: "&9Turns the arena's weather to rain."
+    clear_skies:
+      name: "Clear Skies"
+      icon: SUNFLOWER
+      time: "22:00"
+      type: weather_change
+      drop_type: "CLEAR"
+      default: false
+      description: "&fClears the arena's weather back up."
+    nightfall:
+      name: "Nightfall"
+      icon: BLACK_DYE
+      time: "19:00"
+      type: time_change
+      drop_type: "NIGHT"
+      default: false
+      description: "&8Turns the arena's sky to night."
+    high_noon:
+      name: "High Noon"
+      icon: YELLOW_DYE
+      time: "13:00"
+      type: time_change
+      drop_type: "NOON"
+      default: false
+      description: "&eTurns the arena's sky to full daylight."
+    iron_surge:
+      name: "Iron Surge"
+      icon: IRON_INGOT
+      time: "4:00"
+      type: resource_burst
+      drop_type: iron
+      default: false
+      description: "&fOne-time bonus drop from every &7Iron&f generator."
+    gold_rush:
+      name: "Gold Rush"
+      icon: GOLD_INGOT
+      time: "10:00"
+      type: resource_burst
+      drop_type: gold
+      default: false
+      description: "&6One-time bonus drop from every Gold generator."
+    diamond_bonus:
+      name: "Diamond Bonus"
+      icon: DIAMOND
+      time: "13:00"
+      type: resource_burst
+      drop_type: diamond
+      default: false
+      description: "&bOne-time bonus drop from every Diamond generator."
+    emerald_bonus:
+      name: "Emerald Bonus"
+      icon: EMERALD
+      time: "16:00"
+      type: resource_burst
+      drop_type: emerald
+      default: false
+      description: "&aOne-time bonus drop from every Emerald generator."
+    final_stretch:
+      name: "Final Stretch Reminder"
+      icon: PAPER
+      time: "27:00"
+      type: announcement
+      drop_type: "&e⚡ Final stretch — hold your beds!"
+      default: false
+      description: "&7Broadcasts a reminder to the whole arena."
 
 # ── Quick actions ─────────────────────────────────────────────────────────────
 quick_actions:
@@ -268,6 +429,10 @@ quick_actions:
   # Immediately restart the round once everyone is back in the regenerated lobby.
   # When false the arena stays in its lobby and the host starts it manually.
   restart_after_regen: true
+  # Quick Actions → Kick AFK Players: how long (seconds) without any real movement before
+  # a player counts as AFK. A player the plugin has never seen move (e.g. just joined) is
+  # never kicked, no matter how long ago that was.
+  afk_kick_threshold_seconds: 120
 
 # ── Shop overrides ────────────────────────────────────────────────────────────
 shop:
@@ -276,3 +441,28 @@ shop:
   #   remove — hidden from the shop entirely.
   # Buying is blocked either way.
   disabled_display: "dye"
+
+# ── Arena modifiers ────────────────────────────────────────────────────────────
+# Per-match toggles/dials a host sets from Arena Modifiers → Match Rules. Unlike the timeline
+# (one-time scheduled events), these are standing rule changes for the whole match.
+arena_modifiers:
+  kill_bounty:
+    # Resource the killer is handed on every kill, scaled by the host's chosen multiplier
+    # (0/1x/2x/3x — 0 is off). base_amount is the 1x amount.
+    drop_type: iron
+    base_amount: 4
+  starting_kit:
+    # Extra items everyone spawns with when a host enables "Bonus Starting Kit" — plain
+    # Bukkit Material names, one stack each.
+    items:
+      - "COOKED_BEEF:8"
+      - "OAK_PLANKS:16"
+  world_border:
+    # Used when a host enables "World Border Shrink" — shrinks to target_size (diameter,
+    # blocks) over shrink_seconds, starting from the round's beginning.
+    target_size: 60
+    shrink_seconds: 480
+  spawn_protection:
+    # Used when a host sets a "Spawn Protection" duration — how close (blocks) to their own
+    # team spawn a just-respawned player must stay for the protection to keep applying.
+    radius: 8

@@ -208,6 +208,28 @@ public final class PrivateSessionService {
         return session;
     }
 
+    /**
+     * Converts a PARTY-gated session to a CODE-gated one — used when the host leaves (or
+     * loses leadership of) their party, so the match cleanly keeps running instead of being
+     * stuck behind a party that no longer authorises anyone. A fresh code is generated, the
+     * session opens as public (so the code actually works), and the change is persisted
+     * network-wide. Returns the new code, or the existing one when already CODE-gated.
+     */
+    public String convertToCodePolicy(PrivateSession session) {
+        if (session == null) return null;
+        if (session.getJoinPolicy() == JoinPolicy.CODE) return session.getJoinCode();
+
+        String code = generateCode();
+        session.setJoinPolicy(JoinPolicy.CODE);
+        session.setJoinCode(code);
+        session.setPublic(true);
+        session.setAutoSummon(false); // only meaningful for Party policy
+        byCode.put(code.toLowerCase(Locale.ROOT), session.getSessionId());
+
+        writeThrough(session);
+        return code;
+    }
+
     public String regenerateJoinCode(PrivateSession session) {
         if (session == null || session.getJoinPolicy() != JoinPolicy.CODE) return null;
 
@@ -238,7 +260,7 @@ public final class PrivateSessionService {
 
     /**
      * Persists the session's current {@link SessionSettings} (timeline + shop overrides)
-     * network-wide. Call after mutating them via the Arena Settings menus.
+     * network-wide. Call after mutating them via the Arena Modifiers menus.
      */
     public void saveSettings(PrivateSession session) {
         if (session == null) return;
@@ -332,6 +354,14 @@ public final class PrivateSessionService {
     }
 
     private void updateLocalFromRow(PrivateSession session, Database.SessionRow row) {
+        // The policy can genuinely change mid-session (PARTY → CODE conversion on the host's
+        // server) — mirror it here so every other backend's join gate agrees.
+        try {
+            JoinPolicy rowPolicy = JoinPolicy.valueOf(row.policy());
+            if (rowPolicy != session.getJoinPolicy()) session.setJoinPolicy(rowPolicy);
+        } catch (IllegalArgumentException | NullPointerException ignored) {
+            // unknown/missing policy in the row — keep the local value
+        }
         String old = session.getJoinCode();
         String fresh = row.joinCode();
         if (old != null && (fresh == null || !old.equalsIgnoreCase(fresh))) {

@@ -101,6 +101,7 @@ public final class GuiListener implements Listener {
             case TIMELINE_ADD -> handleTimelineAdd(p, gh, slot);
             case QUICK_FORCE_WIN -> handleForceWin(p, gh, slot);
             case QUICK_GRANT_EFFECT -> handleGrantEffect(p, gh, slot);
+            case MATCH_RULES -> handleMatchRules(p, gh, slot);
         }
     }
 
@@ -128,8 +129,22 @@ public final class GuiListener implements Listener {
     // ── Main menu ─────────────────────────────────────────────────────────────────
 
     private void handleMain(Player p, int slot) {
-        if (slot == GuiStyle.slot("main.buttons.arena-management")) {
-            gui.openArenaList(p, 0);
+        // arena-management / create-arena / match-controls are three looks of the same
+        // context-sensitive button (they share a slot) — decide from live state at click
+        // time, exactly mirroring the render branch in GuiManager.openMainMenu, rather than
+        // trusting whichever template happened to be visible when the menu was drawn.
+        if (slot == GuiStyle.slot("main.buttons.arena-management")
+                || slot == GuiStyle.slot("main.buttons.create-arena")
+                || slot == GuiStyle.slot("main.buttons.match-controls")) {
+            java.util.List<PrivateSession> owned = sessions.getSessionsByOwner(p.getUniqueId());
+            int limit = plugin.getArenaLimit(p);
+            if (owned.isEmpty()) {
+                plugin.openBuilderMenu(p);
+            } else if (owned.size() == 1 && limit <= 1) {
+                gui.openControls(p, owned.get(0), false);
+            } else {
+                gui.openArenaList(p, 0);
+            }
         } else if (slot == GuiStyle.slot("main.buttons.help")) {
             gui.openHelp(p);
         } else if (slot == GuiStyle.slot("main.buttons.admin")) {
@@ -183,7 +198,8 @@ public final class GuiListener implements Listener {
         if (d.isPartyBlocked()) {
             if (slot == GuiStyle.slot("builder.buttons.back")) { gui.openArenaList(p, 0); return; }
             if (slot == GuiStyle.slot("builder.buttons.close")) { p.closeInventory(); return; }
-            p.sendMessage(Lang.msg("create.party-blocked-menu"));
+            p.sendMessage(Lang.msg(d.getBlockReason() == DraftPrivateMatch.BlockReason.MEMBER_HOSTING
+                    ? "create.member-hosting-menu" : "create.party-blocked-menu"));
             return;
         }
 
@@ -314,6 +330,8 @@ public final class GuiListener implements Listener {
             openPresetsFor(p, gh);
         } else if (slot == GuiStyle.slot("arena-config.buttons.team-size")) {
             gui.openTeamSize(p, session, gh.adminView());
+        } else if (slot == GuiStyle.slot("arena-config.buttons.match-rules")) {
+            gui.openMatchRules(p, session, gh.adminView());
         } else if (slot == GuiStyle.slot("arena-config.buttons.environment")) {
             gui.openEnvironment(p, session, gh.adminView());
         } else if (slot == GuiStyle.slot("arena-config.buttons.back")) {
@@ -337,6 +355,8 @@ public final class GuiListener implements Listener {
             gui.openShopPages(p, draft, false);
         } else if (slot == GuiStyle.slot("builder-settings.buttons.team-size")) {
             gui.openTeamSize(p, draft, false);
+        } else if (slot == GuiStyle.slot("builder-settings.buttons.match-rules")) {
+            gui.openMatchRules(p, draft, false);
         } else if (slot == GuiStyle.slot("builder-settings.buttons.back")) {
             gui.openBuilder(p);
         }
@@ -396,6 +416,83 @@ public final class GuiListener implements Listener {
         p.sendMessage(Lang.msg("teamsize.changed",
                 "%amount%", String.valueOf(next != null ? next : fallback)));
         gui.openTeamSize(p, holder, adminView);
+    }
+
+    // ── Match rules ──────────────────────────────────────────────────────────────────
+
+    private void handleMatchRules(Player p, GuiHolder gh, int slot) {
+        SettingsHolder holder = resolveSettingsHolder(p, gh);
+        if (holder == null) return;
+        boolean adminView = gh.adminView();
+
+        if (slot == GuiStyle.slot("match-rules.buttons.back")) {
+            openSettingsHub(p, holder, adminView);
+            return;
+        }
+        // Standing rules only take effect from the next round start onward — editing them
+        // mid-match wouldn't visibly do anything for most of them, so gate the same as the
+        // timeline editor (lobby-only for a live session; always open for a draft).
+        if (!timelineEditable(p, holder)) return;
+
+        SessionSettings.ArenaModifiers mods = holder.getSettings().getModifiers();
+
+        if (slot == GuiStyle.slot("match-rules.buttons.reset-all")) {
+            mods.setFriendlyFire(false);
+            mods.setNoFallDamage(false);
+            mods.setNoExplosionBlockDamage(false);
+            mods.setKillBountyMultiplier(0);
+            mods.setShopCurrencyMultiplier(1.0);
+            mods.setBonusStartingKit(false);
+            mods.setPvpGraceSeconds(0);
+            mods.setHealthMultiplier(1.0);
+            mods.setWorldBorderShrink(false);
+            mods.setBedRespawnOnce(false);
+            mods.setSpawnProtectionSeconds(0);
+            mods.setKillGoal(0);
+        } else if (slot == GuiStyle.slot("match-rules.buttons.friendly-fire")) {
+            mods.setFriendlyFire(!mods.isFriendlyFire());
+        } else if (slot == GuiStyle.slot("match-rules.buttons.fall-damage")) {
+            mods.setNoFallDamage(!mods.isNoFallDamage());
+        } else if (slot == GuiStyle.slot("match-rules.buttons.explosion-damage")) {
+            mods.setNoExplosionBlockDamage(!mods.isNoExplosionBlockDamage());
+        } else if (slot == GuiStyle.slot("match-rules.buttons.kill-bounty")) {
+            mods.setKillBountyMultiplier((mods.getKillBountyMultiplier() + 1) % 4);
+        } else if (slot == GuiStyle.slot("match-rules.buttons.shop-multiplier")) {
+            mods.setShopCurrencyMultiplier(cycleDouble(mods.getShopCurrencyMultiplier(), 1.0, 0.5, 1.5, 2.0));
+        } else if (slot == GuiStyle.slot("match-rules.buttons.bonus-kit")) {
+            mods.setBonusStartingKit(!mods.isBonusStartingKit());
+        } else if (slot == GuiStyle.slot("match-rules.buttons.pvp-grace")) {
+            mods.setPvpGraceSeconds(cycleInt(mods.getPvpGraceSeconds(), 0, 15, 30, 60));
+        } else if (slot == GuiStyle.slot("match-rules.buttons.health-multiplier")) {
+            mods.setHealthMultiplier(cycleDouble(mods.getHealthMultiplier(), 1.0, 1.5, 2.0, 0.5));
+        } else if (slot == GuiStyle.slot("match-rules.buttons.world-border")) {
+            mods.setWorldBorderShrink(!mods.isWorldBorderShrink());
+        } else if (slot == GuiStyle.slot("match-rules.buttons.bed-respawn")) {
+            mods.setBedRespawnOnce(!mods.isBedRespawnOnce());
+        } else if (slot == GuiStyle.slot("match-rules.buttons.spawn-protection")) {
+            mods.setSpawnProtectionSeconds(cycleInt(mods.getSpawnProtectionSeconds(), 0, 5, 10, 20));
+        } else if (slot == GuiStyle.slot("match-rules.buttons.kill-goal")) {
+            mods.setKillGoal(cycleInt(mods.getKillGoal(), 0, 10, 20, 30));
+        } else {
+            return;
+        }
+
+        if (holder instanceof PrivateSession session) sessions.saveSettings(session);
+        gui.openMatchRules(p, holder, adminView);
+    }
+
+    private static int cycleInt(int current, int... values) {
+        for (int i = 0; i < values.length; i++) {
+            if (values[i] == current) return values[(i + 1) % values.length];
+        }
+        return values[0];
+    }
+
+    private static double cycleDouble(double current, double... values) {
+        for (int i = 0; i < values.length; i++) {
+            if (values[i] == current) return values[(i + 1) % values.length];
+        }
+        return values[0];
     }
 
     // ── Environment (time / weather) ─────────────────────────────────────────────────
@@ -583,6 +680,14 @@ public final class GuiListener implements Listener {
             plugin.getQuickActions().revealBorder(p, arena);
             return;
         }
+        if (slot == GuiStyle.slot("quick-actions.buttons.extend-timer")) {
+            plugin.runArenaAction(p, session, RemoteCommandService.Type.QUICK_ADJUST_TIMER, "120");
+            return;
+        }
+        if (slot == GuiStyle.slot("quick-actions.buttons.shorten-timer")) {
+            plugin.runArenaAction(p, session, RemoteCommandService.Type.QUICK_ADJUST_TIMER, "-120");
+            return;
+        }
 
         RemoteCommandService.Type type = null;
         if (slot == GuiStyle.slot("quick-actions.buttons.regenerate-map")) type = RemoteCommandService.Type.QUICK_REGEN;
@@ -597,6 +702,15 @@ public final class GuiListener implements Listener {
         else if (slot == GuiStyle.slot("quick-actions.buttons.reset-upgrades")) type = RemoteCommandService.Type.QUICK_RESET_UPGRADES;
         else if (slot == GuiStyle.slot("quick-actions.buttons.toggle-freeze")) type = RemoteCommandService.Type.QUICK_TOGGLE_FREEZE;
         else if (slot == GuiStyle.slot("quick-actions.buttons.force-rejoin")) type = RemoteCommandService.Type.QUICK_FORCE_REJOIN;
+        else if (slot == GuiStyle.slot("quick-actions.buttons.toggle-pvp")) type = RemoteCommandService.Type.QUICK_TOGGLE_PVP;
+        else if (slot == GuiStyle.slot("quick-actions.buttons.strip-inventories")) type = RemoteCommandService.Type.QUICK_STRIP_INVENTORIES;
+        else if (slot == GuiStyle.slot("quick-actions.buttons.comeback-buff")) type = RemoteCommandService.Type.QUICK_COMEBACK_BUFF;
+        else if (slot == GuiStyle.slot("quick-actions.buttons.random-scatter")) type = RemoteCommandService.Type.QUICK_RANDOM_SCATTER;
+        else if (slot == GuiStyle.slot("quick-actions.buttons.kick-afk")) type = RemoteCommandService.Type.QUICK_KICK_AFK;
+        else if (slot == GuiStyle.slot("quick-actions.buttons.reset-shop-prices")) type = RemoteCommandService.Type.QUICK_RESET_SHOP_PRICES;
+        else if (slot == GuiStyle.slot("quick-actions.buttons.give-compass")) type = RemoteCommandService.Type.QUICK_GIVE_COMPASS;
+        else if (slot == GuiStyle.slot("quick-actions.buttons.announce-stats")) type = RemoteCommandService.Type.QUICK_ANNOUNCE_STATS;
+        else if (slot == GuiStyle.slot("quick-actions.buttons.toggle-pause")) type = RemoteCommandService.Type.QUICK_TOGGLE_PAUSE;
         if (type == null) return;
 
         if (type == RemoteCommandService.Type.QUICK_REGEN) {
@@ -767,7 +881,7 @@ public final class GuiListener implements Listener {
         if (holder instanceof PrivateSession session) sessions.saveSettings(session);
     }
 
-    /** "Back" from Timeline/Shop/Team Size — the real Arena Settings hub, or the builder's, for a draft. */
+    /** "Back" from Timeline/Shop/Team Size — the real Arena Modifiers hub, or the builder's, for a draft. */
     private void openSettingsHub(Player p, SettingsHolder holder, boolean adminView) {
         if (holder instanceof PrivateSession session) {
             gui.openArenaConfig(p, session, adminView);

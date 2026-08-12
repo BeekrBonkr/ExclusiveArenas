@@ -202,7 +202,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
             case "buff" -> handleBuff(p, args);
             case "border" -> handleRevealBorder(p);
 
-            // ── Arena Settings editors ──────────────────────────────────────────
+            // ── Arena Modifiers editors ──────────────────────────────────────────
 
             case "timeline" -> handleTimeline(p, args);
             case "shop" -> handleShop(p, args);
@@ -481,15 +481,15 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
 
             case "custom" -> {
                 if (!timelineEditable(p, session)) return;
-                if (args.length < 5) { p.sendMessage(Lang.msg("cmd.timeline-custom-usage")); return; }
 
-                TimelineService.Type type;
-                try {
-                    type = TimelineService.Type.valueOf(args[2].toUpperCase(Locale.ROOT));
-                } catch (IllegalArgumentException e) {
-                    p.sendMessage(Lang.msg("cmd.timeline-custom-usage"));
-                    return;
-                }
+                TimelineService.Type type = args.length >= 3 ? parseCustomType(args[2]) : null;
+                if (type == null) { p.sendMessage(Lang.msg("cmd.timeline-custom-usage")); return; }
+
+                // Value-less types (heal_all, clear_items, …) skip the value argument entirely —
+                // "/ea timeline custom heal_all 10:00" instead of needing a placeholder value.
+                int minArgs = TimelineService.requiresValue(type) ? 5 : 4;
+                if (args.length < minArgs) { p.sendMessage(Lang.msg("cmd.timeline-custom-usage")); return; }
+
                 Integer time = parseDuration(args[args.length - 1]);
                 if (time == null) {
                     p.sendMessage(Lang.msg("cmd.bad-time", "%value%", args[args.length - 1]));
@@ -497,7 +497,9 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                 }
                 // The value itself may contain spaces (an announcement message) — everything
                 // between the type and the trailing time is joined back together.
-                String value = String.join(" ", Arrays.asList(args).subList(3, args.length - 1));
+                String value = TimelineService.requiresValue(type)
+                        ? String.join(" ", Arrays.asList(args).subList(3, args.length - 1))
+                        : "";
 
                 SessionSettings.TimelineEntry entry =
                         timelines.addCustomEvent(session.getSettings(), type, value, time);
@@ -848,6 +850,16 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
         }
     }
 
+    /** Only a host-creatable timeline type (see {@link TimelineService#isCustomCreatable}) is accepted. */
+    private static TimelineService.Type parseCustomType(String raw) {
+        try {
+            TimelineService.Type type = TimelineService.Type.valueOf(raw.toUpperCase(Locale.ROOT));
+            return TimelineService.isCustomCreatable(type) ? type : null;
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     // ── Time parsing ─────────────────────────────────────────────────────────────
 
     /** Strict "m:ss" or plain-seconds parse; null (not a fallback value) on bad input. */
@@ -1044,6 +1056,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                 }
                 if (args.length == 3 && args[1].equalsIgnoreCase("custom")) {
                     return partial(args[2], Arrays.stream(TimelineService.Type.values())
+                            .filter(TimelineService::isCustomCreatable)
                             .map(t -> t.name().toLowerCase(Locale.ROOT)).toList());
                 }
             }

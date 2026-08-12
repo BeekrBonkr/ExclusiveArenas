@@ -99,7 +99,11 @@ server actually hosts the arena; see [Remote Control](#remote-control)).
 
 ## Hosting a Private Match
 
-1. Run `/ea` and click **Arena Management**, then **Create New Arena** (or `/ea arena` directly).
+1. Run `/ea`. The main menu's first button is context-sensitive: while you host nothing it's
+   **Create New Arena** (straight into the builder); while you host your single allowed match
+   it's **Match Controls** (straight into managing it); and only when your limit allows several
+   matches does it read **Arena Management**, opening the full list. `/ea arena` always jumps
+   straight to the builder.
 2. **Join Policy is automatic, not a choice** — it's set from your current party leadership the
    moment you open the builder:
    - Leading a party → **Party Only**: only your party members may join.
@@ -107,13 +111,24 @@ server actually hosts the arena; see [Remote Control](#remote-control)).
    - In a party but *not* its leader → the whole builder is locked; you're told to leave the
      party instead (party members should join their leader's match — see `/ea join` below —
      not create a competing one of their own).
+   - Leading a party in which *someone else* already hosts a private match → also locked,
+     until those members' matches end (or they leave the party).
+
+   A Party-gated match doesn't outlive its party, either: if the host leaves the party (or
+   stops being its leader), the match automatically converts to a **Join Code** gate — the
+   host is sent the fresh code, and the arena is told the gate changed
+   (`private.party_check_seconds` controls how quickly this is noticed).
+
+   Hosting **several matches at once** (an elevated `exclusivearenas.limit.<n>`) is allowed
+   only while every one of them is Join-Code gated — a Party-gated match is always its host's
+   only match.
 3. Click **Select Map** and choose an arena from the list. Each entry shows the arena's own
    MBedwars icon, and can be filtered by **team count** and **players per team** — the filter
    buttons cycle through values discovered from your actual arena roster, not a fixed list.
    The moment you select one it's soft-reserved for you — no one else can pick the same arena
    in their own builder until you create your match, back out, or leave the menu (this lock
    self-expires after 10 minutes in case you just wander off).
-4. (Optional) Click **Arena Settings** to configure [Event Timeline](#event-timeline),
+4. (Optional) Click **Arena Modifiers** to configure [Event Timeline](#event-timeline),
    [Shop Items](#shop-overrides), and [Team Size](#team-size) *before* the match is created —
    the exact same editors as Match Controls, just working on your draft. Whatever you set here
    is applied the moment the arena is actually created.
@@ -143,12 +158,13 @@ Open via the arena's entry in **Arena Management**, `/ea lobby`, or the host-onl
   on the arena's own server (MBedwars doesn't expose per-player team data remotely).
 - **Go to Arena** — teleport/connect to the match yourself.
 - **Kick All Players** — clears the arena; shift-click keeps you (the host) in it.
-- **Arena Settings** — opens [Event Timeline](#event-timeline), [Shop Items](#shop-overrides),
-  [Team Size](#team-size), [Environment](#environment-time--weather), and
-  [Saved Configurations](#saved-configurations-presets) for this match. Event Timeline/Shop
-  Items/Team Size are editable any time the match hasn't started yet (Event Timeline/Shop Items
-  again once it has, taking effect from the next round); Environment is editable any time,
-  match running or not.
+- **Arena Modifiers** — opens [Event Timeline](#event-timeline), [Shop Items](#shop-overrides),
+  [Team Size](#team-size), [Match Rules](#match-rules), [Environment](#environment-time--weather),
+  and [Saved Configurations](#saved-configurations-presets) for this match. Event Timeline/Shop
+  Items/Team Size/Match Rules are editable any time the match hasn't started yet (Event
+  Timeline/Shop Items again once it has, taking effect from the next round; Match Rules changes
+  only take effect from the next round too); Environment is editable any time, match running or
+  not.
 - **Quick Actions** — one-click shortcuts, recreated through the stable MBedwars API so they
   can't silently break with an update. Most work on a *live* (running) match; team/trap/upgrade
   actions work any time:
@@ -182,7 +198,54 @@ Open via the arena's entry in **Arena Management**, `/ea lobby`, or the host-onl
     online, and rejoins them to the arena.
   - **Reveal Arena Border** — shows *you only* the arena's match-area border — a debug/QoL aid
     with zero gameplay effect. Only works while you're on the arena's own server.
+  - **+2:00 / -2:00 Match Timer** — nudges the match-end countdown, live (never below 0:30).
+  - **Toggle PvP** — blocks or restores ALL player damage in the arena, friend or foe.
+  - **Strip Inventories** — clears everyone's inventory and armor — a hard reset, not a heal.
+  - **Comeback Buff** — grants Strength II + Resistance II (60s) to whichever team currently has
+    the fewest players.
+  - **Random Scatter** — teleports everyone to a random X/Z within the arena's region corners —
+    chaos mode.
+  - **Kick AFK Players** — removes anyone who hasn't actually moved in
+    `quick_actions.afk_kick_threshold_seconds` (default 120s); a player never seen moving is
+    never kicked.
+  - **Reset Shop Prices** — clears every price/disable override you've made for this match's shop.
+  - **Give Tracking Compass** — hands everyone a compass pointed at their nearest enemy, a
+    one-time snapshot (not a live tracker).
+  - **Announce Match Stats** — broadcasts each enabled team's alive/eliminated status and total
+    kills.
+  - **Emergency Pause** — freezes everyone AND holds off every pending timeline event until
+    resumed (pending events are pushed back by however long the pause lasted, so nothing fires
+    all at once on resume). MBedwars' own match-end clock keeps counting during a pause — there's
+    no public API to actually stop it.
 - **End Match** — closes the session and kicks everyone, players and spectators alike.
+
+#### Match Rules
+
+A grid of standing per-match toggles, separate from the one-shot [Event Timeline](#event-timeline)
+— click a rule to cycle its value, **Reset All Rules** to put everything back to vanilla. Changes
+apply from the next round start:
+
+- **Friendly Fire** — lets teammates damage each other.
+- **Fall Damage** — off disables fall damage entirely.
+- **Explosion Block Damage** — off keeps explosions from breaking blocks (entity damage is
+  unaffected).
+- **Kill Bounty** (0/1x/2x/3x) — resources handed to a killer on top of the normal drop
+  (`arena_modifiers.kill_bounty` in config.yml sets the resource and 1x amount).
+- **Shop Prices** (Normal/Half Price/+50%/Double) — scales every shop price for the match.
+- **Bonus Starting Kit** — extra items everyone spawns with (`arena_modifiers.starting_kit.items`
+  in config.yml).
+- **PvP Grace Period** (Off/15s/30s/60s) — no PvP damage for this long after the match starts.
+- **Health Multiplier** (Normal/1.5x/2x/0.5x) — scales everyone's max health.
+- **World Border Shrink** — shrinks the arena's playable area over time
+  (`arena_modifiers.world_border` in config.yml sets the target size and duration). Assumes one
+  game world per arena, MBedwars' default — enabling it while multiple arenas share one world
+  would shrink the border for all of them.
+- **Bed Respawn Once** — each team's bed survives its first hit, then breaks normally on the next.
+- **Spawn Protection** (Off/5s/10s/20s) — blocks PvP damage near a player's own team spawn for
+  this long right after they respawn (`arena_modifiers.spawn_protection.radius` sets how close
+  counts as "near").
+- **Kill Goal** (Off/10/20/30) — first team to reach this many total kills wins instantly, instead
+  of the normal last-team-standing condition.
 
 #### Manage Teams
 
@@ -252,7 +315,7 @@ created (reference them by the id `/ea timeline list` shows for them).
 ### Shop Overrides
 
 Disable individual shop items for just this match, or change what they cost (amount + currency),
-from Arena Settings → **Shop Items**. Click an item to toggle it on/off; shift-click to open the
+from Arena Modifiers → **Shop Items**. Click an item to toggle it on/off; shift-click to open the
 price editor (±1/±10 buttons, cycle currency, reset to default). Also editable via
 `/ea shop list|disable|enable|price|resetprice|reset`. Disabled items are re-skinned to red dye
 wherever the shop is opened — the normal category pages and MBedwars' Quick Buy home screen
@@ -260,7 +323,7 @@ alike — or hidden entirely if `shop.disabled_display: remove`.
 
 ### Team Size
 
-Change how many players fit on each team for this match from Arena Settings → **Team Size**
+Change how many players fit on each team for this match from Arena Modifiers → **Team Size**
 (±1 buttons, 1–8, reset to the arena's own default) or `/ea teamsize <amount|reset>`. Editable
 for the whole lobby phase, regardless of how many players are already in — only locked once the
 match is actually `RUNNING`. Changing it while players already hold teams **unassigns everyone
@@ -270,7 +333,7 @@ temporary to this match; the arena's own value is restored once it ends.
 
 ### Environment (Time & Weather)
 
-Set the arena's time of day and weather for this match from Arena Settings → **Environment**
+Set the arena's time of day and weather for this match from Arena Modifiers → **Environment**
 (cycle buttons) or `/ea weather <clear|rain|off>` / `/ea time <noon|sunset|night|off>`. Purely
 cosmetic — a per-player visual effect with no gameplay-balance impact — so it's editable any
 time, match running or not, and applies instantly to everyone currently in the arena plus anyone
@@ -281,7 +344,7 @@ want them to happen automatically partway through a match instead of being set u
 
 ### Saved Configurations (Presets)
 
-Snapshot a match's event timeline and shop overrides as a named preset from Arena Settings →
+Snapshot a match's event timeline and shop overrides as a named preset from Arena Modifiers →
 **Saved Configurations**, then apply it to any later match (click), or delete it (shift-click).
 Clicking **Save Current Setup** opens an anvil where you type the name — take the result item to
 confirm, or press Escape to cancel; nothing is spent, the level-cost UI is cosmetic only. Also
