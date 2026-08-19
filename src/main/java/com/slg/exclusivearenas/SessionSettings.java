@@ -69,6 +69,9 @@ public final class SessionSettings {
     // ArenaWeatherType/ArenaTimeType enum names; null = UNTOUCHED (arena's own default climate)
     private String weatherType;
     private String timeType;
+    // True while the host has locked team selection for this match's lobby — players can no
+    // longer switch teams themselves; the host's own team management is unaffected.
+    private boolean teamsLocked;
     private final ArenaModifiers modifiers = new ArenaModifiers();
 
     /**
@@ -126,6 +129,23 @@ public final class SessionSettings {
         public int getKillGoal() { return killGoal; }
         public void setKillGoal(int v) { killGoal = v; }
 
+        /** Value equality across every rule — used to tell whether a preset would change any. */
+        public boolean sameValuesAs(ArenaModifiers other) {
+            return other != null
+                    && friendlyFire == other.friendlyFire
+                    && noFallDamage == other.noFallDamage
+                    && noExplosionBlockDamage == other.noExplosionBlockDamage
+                    && killBountyMultiplier == other.killBountyMultiplier
+                    && shopCurrencyMultiplier == other.shopCurrencyMultiplier
+                    && bonusStartingKit == other.bonusStartingKit
+                    && pvpGraceSeconds == other.pvpGraceSeconds
+                    && healthMultiplier == other.healthMultiplier
+                    && worldBorderShrink == other.worldBorderShrink
+                    && bedRespawnOnce == other.bedRespawnOnce
+                    && spawnProtectionSeconds == other.spawnProtectionSeconds
+                    && killGoal == other.killGoal;
+        }
+
         /** True when every field is still at its vanilla default — nothing to persist/enforce. */
         public boolean isDefault() {
             return !friendlyFire && !noFallDamage && !noExplosionBlockDamage
@@ -169,6 +189,21 @@ public final class SessionSettings {
 
     public void setTimeType(String timeType) {
         this.timeType = timeType;
+    }
+
+    // ── Team lock ────────────────────────────────────────────────────────────────
+
+    /**
+     * True while players in the lobby may not switch teams themselves (Manage Teams → Lock
+     * Teams). Enforced by {@link TeamLockListener} on whichever server hosts the arena, which
+     * is why it travels with the replicated settings rather than living in local state.
+     */
+    public boolean isTeamsLocked() {
+        return teamsLocked;
+    }
+
+    public void setTeamsLocked(boolean teamsLocked) {
+        this.teamsLocked = teamsLocked;
     }
 
     // ── Timeline ─────────────────────────────────────────────────────────────────
@@ -220,7 +255,7 @@ public final class SessionSettings {
     /** Serializes to the JSON blob stored in the sessions table; null when nothing is set. */
     public String toJson() {
         if (timeline == null && shop.isEmpty() && playersPerTeam == null
-                && weatherType == null && timeType == null && modifiers.isDefault()) {
+                && weatherType == null && timeType == null && !teamsLocked && modifiers.isDefault()) {
             return null;
         }
 
@@ -233,6 +268,9 @@ public final class SessionSettings {
         }
         if (timeType != null) {
             root.addProperty("time", timeType);
+        }
+        if (teamsLocked) {
+            root.addProperty("tl", true);
         }
         if (timeline != null) {
             JsonArray arr = new JsonArray();
@@ -294,6 +332,9 @@ public final class SessionSettings {
             }
             if (root.has("time")) {
                 s.timeType = root.get("time").getAsString();
+            }
+            if (root.has("tl")) {
+                s.teamsLocked = root.get("tl").getAsBoolean();
             }
             if (root.has("timeline")) {
                 List<TimelineEntry> entries = new ArrayList<>();

@@ -55,6 +55,41 @@ All notable changes to ExclusiveArenas are documented here.
 - `/ea timeline custom <type> [value] <time>` now accepts value-less types (`trap_chaos`,
   `fireworks`, `heal_all`, `clear_items`, `balance_teams`, `clear_traps`, `reset_upgrades`)
   without needing a placeholder value argument.
+- **Lock Teams** (Match Controls → Manage Teams) — a host can freeze team selection for the
+  lobby: players can no longer open the team menu or switch teams themselves, while the host
+  keeps moving anyone anywhere from Manage Teams. Everyone in the arena is told when the lock is
+  toggled, anyone joining a locked lobby is told on arrival, and a player who tries to switch is
+  told why they can't. The flag rides on the match's replicated settings, so the server that
+  actually hosts the arena enforces it no matter where it was toggled from. New `guis.yml`
+  buttons `team-select.buttons.lock-teams` / `unlock-teams` (two looks of one toggle — keep them
+  on the same slot) and a `teams.locked-*` block in `lang.yml`.
+- **Team Size in Manage Teams** — the same ±1 editor the Arena Modifiers hub offers, reachable
+  from the menu where a wrong per-team cap is actually noticed (`team-select.buttons.team-size`).
+  Its Back button returns to Manage Teams rather than the hub the host never passed through.
+- **Build-your-own timeline events, in the GUI** — Add Event → *Build Your Own Event* opens a
+  three-step wizard (what it does → what it applies to → when it fires) covering every
+  host-authorable event type: resource bursts (any of the server's drop types), buffs for
+  everyone (14 effects × strength × duration), trap chaos, weather and time-of-day changes,
+  announcements typed into an anvil, fireworks, heal pulses, item cleanup, team reshuffles, trap
+  purges and upgrade resets. `/ea timeline custom` still works and is unchanged.
+- **Revamped Event Timeline editor** — a paged event strip (the schedule can now outgrow one
+  screen), a live schedule summary (event count, match length, custom events used, whether the
+  timings are still the server defaults), a detail card for the selected event (type, value,
+  effect, exact time), plus three new operations alongside the existing move/delete: **Duplicate
+  Event** (schedule the same thing again later), **Change What It Does** (re-run the wizard's
+  value step on an event you built), and **Clear All Events** (start from an empty schedule;
+  Match End always stays). Catalog events can now be added at a chosen time with a shift-click
+  instead of only at their configured default.
+- **Preview a saved configuration before applying it** — right-click any entry in Saved
+  Configurations for a read-only breakdown: every scheduled event with its time, the disabled and
+  repriced shop items by name, team size, changed match rules, environment, and a *What would
+  change* card comparing it with the match's current setup. Apply and Delete sit on the same
+  screen (`preset-preview` in `guis.yml`).
+- **Live "what's changed" lines in Arena Modifiers** — every editor's button in the hub (and the
+  pre-creation builder's) now carries a one-line summary of what this match has actually changed:
+  the timeline's event count and match length, how many shop items are disabled/repriced, the
+  per-team cap against the arena's own, which match rules are off default, and the current
+  time/weather. Configurable via the new `%summary%` placeholder in each button's lore.
 
 ### Fixed
 - **Distribute Players actually distributes evenly now** — players who already held a team kept
@@ -76,6 +111,19 @@ All notable changes to ExclusiveArenas are documented here.
 - Arena Modifiers → Environment (time/weather) button was fully wired up in the click handler but
   never actually rendered in the menu — introduced in the same release that added it, invisible
   and unreachable ever since.
+- **Match Rules was unreachable from either Arena Modifiers hub** — same class of bug: the button
+  was defined in `guis.yml` and fully handled on click, but neither the live hub nor the builder's
+  ever rendered it, so the whole rules editor could only be reached by accident. Both hubs now
+  place it.
+- Manage Teams and its player picker only resolved the session before acting, skipping the
+  host/admin check every other management menu applies — an already-open menu could therefore
+  still move players after its viewer stopped being entitled to. Both now go through the same
+  guard.
+- Applying a saved configuration no longer silently changes whether teams are locked: the lock is
+  live lobby state, not part of the setup a preset describes, so it is carried across untouched.
 
 ### Changed
 - Renamed "Arena Settings" to "Arena Modifiers" throughout every menu, message, and doc.
+- `guis.yml` is now version 5 and `lang.yml` version 4 — both upgrade in place, keeping your
+  edits. `timeline-add.buttons.custom-info` (the "run this command instead" note) is removed by
+  the upgrade; the wizard button that replaces it lands at the same slot.

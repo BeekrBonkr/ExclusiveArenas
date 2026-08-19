@@ -66,6 +66,71 @@ public final class TimelineService {
         };
     }
 
+    /** The type's display name in the GUI — "Resource Burst", "Team Buff", … */
+    public static String typeName(Type type) {
+        return switch (type) {
+            case SPAWNER_SPEED -> "Generator Upgrade";
+            case DESTROY_BEDS -> "Destroy Beds";
+            case SUDDEN_DEATH -> "Sudden Death";
+            case MATCH_END -> "Match End";
+            case RESOURCE_BURST -> "Resource Burst";
+            case TEAM_BUFF -> "Everyone Buff";
+            case TRAP_CHAOS -> "Trap Chaos";
+            case WEATHER_CHANGE -> "Weather Change";
+            case TIME_CHANGE -> "Time Change";
+            case ANNOUNCEMENT -> "Announcement";
+            case FIREWORKS -> "Fireworks";
+            case HEAL_ALL -> "Heal Pulse";
+            case CLEAR_ITEMS -> "Item Cleanup";
+            case BALANCE_TEAMS -> "Team Reshuffle";
+            case CLEAR_TRAPS -> "Trap Purge";
+            case RESET_UPGRADES -> "Upgrade Reset";
+        };
+    }
+
+    /** The icon the custom-event wizard shows for the type. */
+    public static Material typeIcon(Type type) {
+        return switch (type) {
+            case SPAWNER_SPEED -> Material.DIAMOND;
+            case DESTROY_BEDS, SUDDEN_DEATH -> Material.RED_BED;
+            case MATCH_END -> Material.CLOCK;
+            case RESOURCE_BURST -> Material.CHEST;
+            case TEAM_BUFF -> Material.POTION;
+            case TRAP_CHAOS -> Material.TRIPWIRE_HOOK;
+            case WEATHER_CHANGE -> Material.PAINTING;
+            case TIME_CHANGE -> Material.CLOCK;
+            case ANNOUNCEMENT -> Material.PAPER;
+            case FIREWORKS -> Material.FIREWORK_ROCKET;
+            case HEAL_ALL -> Material.GOLDEN_APPLE;
+            case CLEAR_ITEMS -> Material.HOPPER;
+            case BALANCE_TEAMS -> Material.COMPASS;
+            case CLEAR_TRAPS -> Material.STRING;
+            case RESET_UPGRADES -> Material.ANVIL;
+        };
+    }
+
+    /** One line explaining what the type does, for the wizard's type picker. */
+    public static String typeDescription(Type type) {
+        return switch (type) {
+            case SPAWNER_SPEED -> "Speeds up a resource's generators for the rest of the match.";
+            case DESTROY_BEDS -> "Destroys every remaining bed.";
+            case SUDDEN_DEATH -> "Sudden death — every remaining bed is destroyed.";
+            case MATCH_END -> "The match ends.";
+            case RESOURCE_BURST -> "One extra drop from every generator of one resource.";
+            case TEAM_BUFF -> "Grants everyone in the arena a timed potion effect.";
+            case TRAP_CHAOS -> "Force-triggers a random team's queued trap.";
+            case WEATHER_CHANGE -> "Switches the arena's weather mid-match.";
+            case TIME_CHANGE -> "Switches the arena's time of day mid-match.";
+            case ANNOUNCEMENT -> "Broadcasts a message you write. No gameplay effect.";
+            case FIREWORKS -> "A celebratory firework show over the arena.";
+            case HEAL_ALL -> "Fully heals and feeds every player in the arena.";
+            case CLEAR_ITEMS -> "Removes every dropped item lying in the arena.";
+            case BALANCE_TEAMS -> "Re-shuffles everyone evenly across the enabled teams.";
+            case CLEAR_TRAPS -> "Clears every team's queued (not yet triggered) traps.";
+            case RESET_UPGRADES -> "Resets every team's generator and shop upgrades.";
+        };
+    }
+
     /**
      * A configured event definition (the "what"); sessions store only id + time (or, for a
      * host-authored custom event, id + time + type + value — see
@@ -211,21 +276,21 @@ public final class TimelineService {
         String value = entry.customValue() == null ? "" : entry.customValue();
 
         return switch (type) {
-            case RESOURCE_BURST -> new Definition(entry.id(), "Resource Burst: " + value, Material.CHEST,
+            case RESOURCE_BURST -> new Definition(entry.id(), "Resource Burst: " + pretty(value), Material.CHEST,
                     entry.seconds(), type, value, 1.0,
-                    "One-time bonus drop from every " + value + " generator.", true);
-            case TEAM_BUFF -> new Definition(entry.id(), "Buff: " + value, Material.POTION,
+                    "One-time bonus drop from every " + pretty(value) + " generator.", true);
+            case TEAM_BUFF -> new Definition(entry.id(), "Buff: " + buffName(value), Material.POTION,
                     entry.seconds(), type, value, 1.0,
-                    "Grants everyone in the arena a temporary " + value + " effect.", true);
+                    "Grants everyone in the arena " + buffName(value) + " for " + buffSeconds(value) + "s.", true);
             case TRAP_CHAOS -> new Definition(entry.id(), "Trap Chaos", Material.TRIPWIRE_HOOK,
                     entry.seconds(), type, value, 1.0,
                     "Force-triggers a random team's queued trap.", true);
-            case WEATHER_CHANGE -> new Definition(entry.id(), "Weather: " + value, Material.PAINTING,
+            case WEATHER_CHANGE -> new Definition(entry.id(), "Weather: " + pretty(value), Material.PAINTING,
                     entry.seconds(), type, value, 1.0,
-                    "Changes the arena's weather to " + value + ".", true);
-            case TIME_CHANGE -> new Definition(entry.id(), "Time: " + value, Material.CLOCK,
+                    "Changes the arena's weather to " + pretty(value) + ".", true);
+            case TIME_CHANGE -> new Definition(entry.id(), "Time: " + pretty(value), Material.CLOCK,
                     entry.seconds(), type, value, 1.0,
-                    "Changes the arena's time of day to " + value + ".", true);
+                    "Changes the arena's time of day to " + pretty(value) + ".", true);
             case FIREWORKS -> new Definition(entry.id(), "Fireworks", Material.FIREWORK_ROCKET,
                     entry.seconds(), type, value, 1.0,
                     "A celebratory firework show over the arena.", true);
@@ -247,6 +312,52 @@ public final class TimelineService {
             default -> new Definition(entry.id(), "Announcement", Material.PAPER,
                     entry.seconds(), Type.ANNOUNCEMENT, value, 1.0, value, true);
         };
+    }
+
+    /**
+     * "SPEED:1:30" → "Speed II" — a buff's raw value is a machine spec, but it is what names the
+     * event everywhere a host sees it, so render it the way they picked it.
+     */
+    private static String buffName(String spec) {
+        String[] parts = spec == null ? new String[0] : spec.split(":");
+        String name = parts.length > 0 ? pretty(parts[0]) : "Effect";
+        int amplifier = parts.length > 1 ? parseIntOr(parts[1], 0) : 0;
+        return name + " " + roman(amplifier + 1);
+    }
+
+    private static int buffSeconds(String spec) {
+        String[] parts = spec == null ? new String[0] : spec.split(":");
+        return parts.length > 2 ? parseIntOr(parts[2], 30) : 30;
+    }
+
+    private static String roman(int level) {
+        return switch (Math.max(1, Math.min(5, level))) {
+            case 1 -> "I";
+            case 2 -> "II";
+            case 3 -> "III";
+            case 4 -> "IV";
+            default -> "V";
+        };
+    }
+
+    private static int parseIntOr(String raw, int fallback) {
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException | NullPointerException e) {
+            return fallback;
+        }
+    }
+
+    /** "NIGHT" / "fire_resistance" → "Night" / "Fire Resistance". */
+    public static String pretty(String raw) {
+        if (raw == null || raw.isBlank()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (String word : raw.toLowerCase(Locale.ROOT).split("[_\\s]+")) {
+            if (word.isEmpty()) continue;
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(Character.toUpperCase(word.charAt(0))).append(word.substring(1));
+        }
+        return sb.toString();
     }
 
     /** Presets per player are capped to keep the timeline from becoming unmanageable. */
@@ -396,6 +507,79 @@ public final class TimelineService {
         sortWithEndLast(timeline);
         settings.setTimeline(timeline);
         return newTime;
+    }
+
+    /**
+     * Copies an existing entry into a new, independent custom event just after it — the fast way
+     * to schedule "the same thing again later". Only works for entries whose type can be
+     * host-authored at all ({@link #isCustomCreatable}), since the copy is stored as a
+     * self-contained custom entry rather than a second reference to the same catalog id (an id
+     * may only appear once). Returns the new entry, or null when the type can't be copied, the
+     * entry doesn't exist, or the session is at {@link #MAX_CUSTOM_EVENTS}.
+     */
+    public SessionSettings.TimelineEntry duplicateEvent(SessionSettings settings, String eventId) {
+        List<SessionSettings.TimelineEntry> timeline = effectiveTimeline(settings);
+        int idx = indexOf(timeline, eventId);
+        if (idx < 0) return null;
+
+        SessionSettings.TimelineEntry source = timeline.get(idx);
+        Definition def = definitionFor(source);
+        if (def == null || !isCustomCreatable(def.type())) return null;
+
+        // A catalog announcement carries its text in `description` rather than the generic value
+        // slot (see EventTimelineEngine's ANNOUNCEMENT case) — copy whichever one holds it, or
+        // the copy would broadcast nothing.
+        String value = def.dropTypeId();
+        if ((value == null || value.isBlank()) && def.type() == Type.ANNOUNCEMENT) {
+            value = def.description();
+        }
+
+        // Offset by one editing step so the copy is visibly its own entry on the strip rather
+        // than sitting exactly on top of the original.
+        return addCustomEvent(settings, def.type(), value == null ? "" : value,
+                source.seconds() + SNAP_SECONDS);
+    }
+
+    /**
+     * Removes every event except Match End — the "start from an empty schedule" counterpart to
+     * {@link #resetTimeline}, which instead restores the configured defaults. Returns how many
+     * events were removed.
+     */
+    public int clearEvents(SessionSettings settings) {
+        List<SessionSettings.TimelineEntry> timeline = effectiveTimeline(settings);
+        int before = timeline.size();
+        timeline.removeIf(e -> !e.id().equals(matchEndId));
+        settings.setTimeline(timeline);
+        return before - timeline.size();
+    }
+
+    /** How many host-authored custom events this session has scheduled. */
+    public int customEventCount(SessionSettings settings) {
+        return (int) effectiveTimeline(settings).stream()
+                .filter(SessionSettings.TimelineEntry::isCustom).count();
+    }
+
+    /** The match's total length in seconds — i.e. when Match End is scheduled. */
+    public int matchEndSeconds(SessionSettings settings) {
+        return timeOf(effectiveTimeline(settings), matchEndId);
+    }
+
+    /** An event's scheduled time, or -1 when it isn't on this session's timeline. */
+    public int eventTime(SessionSettings settings, String eventId) {
+        List<SessionSettings.TimelineEntry> timeline = effectiveTimeline(settings);
+        int idx = indexOf(timeline, eventId);
+        return idx < 0 ? -1 : timeline.get(idx).seconds();
+    }
+
+    /** Restricts a proposed event time to the legal window: at least 5s in, and before Match End. */
+    public int clampEventTime(SessionSettings settings, int seconds) {
+        int end = matchEndSeconds(settings);
+        return clamp(seconds, MIN_EVENT_SECONDS, Math.max(MIN_EVENT_SECONDS, end - SNAP_SECONDS));
+    }
+
+    /** The editing granularity every time control steps by. */
+    public static int snapSeconds() {
+        return SNAP_SECONDS;
     }
 
     /** Deletes an event from the timeline. Match End is refused. */

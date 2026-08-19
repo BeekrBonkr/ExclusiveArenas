@@ -11,7 +11,7 @@
 # Do not change 'config-version': the plugin uses it to upgrade this file
 # in place when you install a newer version (your edits are preserved).
 # ─────────────────────────────────────────────────────────────────────────────
-config-version: 3
+config-version: 4
 
 general:
   # Sent when the console tries to run /ea.
@@ -131,6 +131,16 @@ teams:
   move-skipped: "&c%count% player(s) could not be moved (team full)."
   # %count%
   distributed: "&aDistributed &f%count%&a player(s) evenly across teams."
+  # Manage Teams → Lock Teams. The host's own confirmation…
+  locked-on: "&aTeams are now locked — players can't switch teams themselves."
+  locked-off: "&aTeams are now unlocked — players can pick their own team again."
+  # …the announcement everyone in the arena sees when it is toggled…
+  locked-broadcast: "&e&l⚠ &eThe host has locked the teams. You can't switch teams any more."
+  unlocked-broadcast: "&a&l✔ &aThe host has unlocked the teams — pick whichever you like."
+  # …what a player is told when they try to switch anyway…
+  locked-switch: "&cTeams are locked for this match. Ask the host to move you."
+  # …and what someone joining a locked lobby is told.
+  locked-notice: "&7Teams are &clocked&7 in this match — the host assigns them."
 
 # Arena Modifiers → Team Size.
 teamsize:
@@ -320,6 +330,17 @@ timeline:
   # %time%
   end-moved: "&aMatch length set to &f%time%&a. Other events were rescaled to fit."
   reset: "&aEvent timeline restored to the defaults."
+  # %count%
+  cleared: "&aRemoved &f%count%&a event(s). Only Match End is left."
+  nothing-to-clear: "&7There are no events to clear."
+  # %event%, %time%
+  duplicated: "&aDuplicated &f%event%&a — the copy fires at &f%time%&a."
+  duplicate-failed: "&cThat event can't be duplicated — only events you can build yourself can."
+  # %event%, %time% — an existing custom event was re-authored in the editor.
+  updated: "&aUpdated &f%event%&a — it fires at &f%time%&a."
+  # %max%
+  custom-limit: "&cYou've used all &f%max%&c custom events for this match — delete one first."
+  value-required: "&cPick what that event applies to first."
   # Broadcast in the arena when a timeline event fires. %event%
   event-fired: "&6&l⚡ &e%event%&6 is now active!"
   # Broadcast when the match-end timer is applied at round start. %time%

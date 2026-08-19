@@ -55,6 +55,9 @@ public final class GuiStyle {
         // The main menu's context-sensitive button: three looks of one control.
         checkPair(logger, "main.buttons.arena-management", "main.buttons.create-arena");
         checkPair(logger, "main.buttons.arena-management", "main.buttons.match-controls");
+        // Manage Teams' team lock, and the timeline editor's selection card.
+        checkPair(logger, "team-select.buttons.lock-teams", "team-select.buttons.unlock-teams");
+        checkPair(logger, "timeline.buttons.selected", "timeline.buttons.no-selection");
     }
 
     private static void checkPair(java.util.logging.Logger logger, String a, String b) {

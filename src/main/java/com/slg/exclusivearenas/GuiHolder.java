@@ -22,7 +22,13 @@ public final class GuiHolder implements InventoryHolder {
         MAIN, ARENA_LIST, ADMIN_LIST, BUILDER, ARENA_SELECT, CONTROLS, ARENA_CONFIG,
         TEAM_SELECT, TEAM_PLAYERS, QUICK_ACTIONS, HELP,
         TIMELINE, SHOP_PAGES, SHOP_ITEMS, SHOP_PRICE, PRESETS, PRESET_NAME, TEAM_SIZE,
-        BUILDER_SETTINGS, ENVIRONMENT, TIMELINE_ADD, QUICK_FORCE_WIN, QUICK_GRANT_EFFECT, MATCH_RULES
+        BUILDER_SETTINGS, ENVIRONMENT, TIMELINE_ADD, QUICK_FORCE_WIN, QUICK_GRANT_EFFECT, MATCH_RULES,
+        /** Read-only breakdown of one saved configuration, before deciding to apply it. */
+        PRESET_PREVIEW,
+        /** The custom-event wizard: pick a type, then its value, then its time. */
+        TIMELINE_CUSTOM_TYPE, TIMELINE_CUSTOM_VALUE, TIMELINE_CUSTOM_TIME,
+        /** Anvil prompt for the one custom event type whose value is free text (announcement). */
+        TIMELINE_CUSTOM_TEXT
     }
 
     private final Type type;
@@ -44,6 +50,20 @@ public final class GuiHolder implements InventoryHolder {
     private final Map<Integer, String> slotToKey = new HashMap<>();   // TIMELINE/SHOP_*: slot -> event/page/item id
 
     private String selectedEvent;                 // TIMELINE: event id being edited (nullable)
+    private Type origin;                          // which menu opened this one, for "Back" (nullable)
+    private String presetName;                    // PRESET_PREVIEW: the preset being inspected
+
+    // ── Custom-event wizard state (TIMELINE_CUSTOM_*) ────────────────────────────
+    // Carried from step to step on the holder, so a half-built event never has to be parked in
+    // a service-side map keyed by player (which would leak on disconnect and confuse two menus
+    // opened in quick succession).
+    private String customType;                    // TimelineService.Type name being built
+    private String customValue;                   // the type's value (drop type, weather, message, …)
+    private int customSeconds;                    // when it should fire
+    private int customAmplifier;                  // TEAM_BUFF only: potion amplifier (0 = I)
+    private int customDuration = 30;              // TEAM_BUFF only: effect duration in seconds
+    private String catalogId;                     // set instead of customType when adding a catalog event
+    private String editingEvent;                  // non-null when the wizard is re-editing an existing entry
     private String shopPage;                      // SHOP_ITEMS/SHOP_PRICE: MBedwars page name
     private String shopItem;                      // SHOP_PRICE: MBedwars shop item id
     private java.util.LinkedHashMap<String, String> presets; // PRESETS: name -> settings JSON
@@ -102,6 +122,33 @@ public final class GuiHolder implements InventoryHolder {
 
     public String shopItem() { return shopItem; }
     public GuiHolder shopItem(String shopItem) { this.shopItem = shopItem; return this; }
+
+    public Type origin() { return origin; }
+    public GuiHolder origin(Type origin) { this.origin = origin; return this; }
+
+    public String presetName() { return presetName; }
+    public GuiHolder presetName(String presetName) { this.presetName = presetName; return this; }
+
+    public String customType() { return customType; }
+    public GuiHolder customType(String customType) { this.customType = customType; return this; }
+
+    public String customValue() { return customValue; }
+    public GuiHolder customValue(String customValue) { this.customValue = customValue; return this; }
+
+    public int customSeconds() { return customSeconds; }
+    public GuiHolder customSeconds(int customSeconds) { this.customSeconds = customSeconds; return this; }
+
+    public int customAmplifier() { return customAmplifier; }
+    public GuiHolder customAmplifier(int customAmplifier) { this.customAmplifier = customAmplifier; return this; }
+
+    public int customDuration() { return customDuration; }
+    public GuiHolder customDuration(int customDuration) { this.customDuration = customDuration; return this; }
+
+    public String catalogId() { return catalogId; }
+    public GuiHolder catalogId(String catalogId) { this.catalogId = catalogId; return this; }
+
+    public String editingEvent() { return editingEvent; }
+    public GuiHolder editingEvent(String editingEvent) { this.editingEvent = editingEvent; return this; }
 
     public java.util.LinkedHashMap<String, String> presets() { return presets; }
     public GuiHolder presets(java.util.LinkedHashMap<String, String> presets) { this.presets = presets; return this; }
