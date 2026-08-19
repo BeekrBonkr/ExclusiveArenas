@@ -85,7 +85,8 @@ public final class GuiListener implements Listener {
             case ARENA_SELECT-> handleArenaSelect(p, gh, slot);
             case CONTROLS    -> handleControls(p, gh, slot, e.isShiftClick());
             case ARENA_CONFIG-> handleArenaConfig(p, gh, slot);
-            case PRESETS     -> handlePresets(p, gh, slot, e.isShiftClick());
+            case PRESETS     -> handlePresets(p, gh, slot, e.isShiftClick(), e.isRightClick());
+            case PRESET_PREVIEW -> handlePresetPreview(p, gh, slot);
             case QUICK_ACTIONS-> handleQuickActions(p, gh, slot);
             case TIMELINE    -> handleTimeline(p, gh, slot);
             case SHOP_PAGES  -> handleShopPages(p, gh, slot);
@@ -98,7 +99,11 @@ public final class GuiListener implements Listener {
             case TEAM_SIZE   -> handleTeamSize(p, gh, slot);
             case BUILDER_SETTINGS -> handleBuilderSettings(p, slot);
             case ENVIRONMENT -> handleEnvironment(p, gh, slot);
-            case TIMELINE_ADD -> handleTimelineAdd(p, gh, slot);
+            case TIMELINE_ADD -> handleTimelineAdd(p, gh, slot, e.isShiftClick());
+            case TIMELINE_CUSTOM_TYPE -> handleCustomType(p, gh, slot);
+            case TIMELINE_CUSTOM_VALUE -> handleCustomValue(p, gh, slot);
+            case TIMELINE_CUSTOM_TIME -> handleCustomTime(p, gh, slot);
+            case TIMELINE_CUSTOM_TEXT -> handleCustomText(p, gh, slot, e.getView());
             case QUICK_FORCE_WIN -> handleForceWin(p, gh, slot);
             case QUICK_GRANT_EFFECT -> handleGrantEffect(p, gh, slot);
             case MATCH_RULES -> handleMatchRules(p, gh, slot);
@@ -112,7 +117,8 @@ public final class GuiListener implements Listener {
      */
     @EventHandler
     public void onPrepareAnvil(PrepareAnvilEvent e) {
-        if (!(e.getInventory().getHolder() instanceof GuiHolder gh) || gh.type() != GuiHolder.Type.PRESET_NAME) return;
+        if (!(e.getInventory().getHolder() instanceof GuiHolder gh)) return;
+        if (gh.type() != GuiHolder.Type.PRESET_NAME && gh.type() != GuiHolder.Type.TIMELINE_CUSTOM_TEXT) return;
 
         String text = e.getView().getRenameText();
         if (text == null || text.isBlank()) {
@@ -370,7 +376,13 @@ public final class GuiListener implements Listener {
         boolean adminView = gh.adminView();
 
         if (slot == GuiStyle.slot("team-size.buttons.back")) {
-            openSettingsHub(p, holder, adminView);
+            // Opened from Manage Teams? Go back there, not to the Arena Modifiers hub the
+            // player never passed through.
+            if (gh.origin() == GuiHolder.Type.TEAM_SELECT && holder instanceof PrivateSession session) {
+                gui.openTeamSelect(p, session, adminView);
+            } else {
+                openSettingsHub(p, holder, adminView);
+            }
             return;
         }
 
@@ -415,7 +427,7 @@ public final class GuiListener implements Listener {
         }
         p.sendMessage(Lang.msg("teamsize.changed",
                 "%amount%", String.valueOf(next != null ? next : fallback)));
-        gui.openTeamSize(p, holder, adminView);
+        gui.openTeamSize(p, holder, adminView, gh.origin());
     }
 
     // ── Match rules ──────────────────────────────────────────────────────────────────
@@ -560,7 +572,7 @@ public final class GuiListener implements Listener {
         });
     }
 
-    private void handlePresets(Player p, GuiHolder gh, int slot, boolean shiftClick) {
+    private void handlePresets(Player p, GuiHolder gh, int slot, boolean shiftClick, boolean rightClick) {
         PrivateSession session = requireManageable(p, gh);
         if (session == null) return;
 
@@ -585,17 +597,58 @@ public final class GuiListener implements Listener {
         String name = gh.keyAt(slot);
         if (name == null || !presets.containsKey(name)) return;
 
+        // Shift-click deletes (checked first — a shift-RIGHT-click is still a delete, not a
+        // preview), right-click inspects without touching the match, plain click applies.
         if (shiftClick) {
-            plugin.getPresetService().delete(session.getOwner(), name);
-            presets.remove(name);
-            p.sendMessage(Lang.msg("presets.deleted", "%name%", name));
+            deletePreset(p, session, gh, presets, name);
+            return;
+        }
+        if (rightClick) {
+            gui.openPresetPreview(p, session, gh.adminView(), presets, name);
+            return;
+        }
+        applyPreset(p, session, presets.get(name), name);
+    }
+
+    /** Read-only inspection of one saved configuration, with Apply/Delete alongside. */
+    private void handlePresetPreview(Player p, GuiHolder gh, int slot) {
+        PrivateSession session = requireManageable(p, gh);
+        if (session == null) return;
+
+        java.util.LinkedHashMap<String, String> presets =
+                gh.presets() == null ? new java.util.LinkedHashMap<>() : new java.util.LinkedHashMap<>(gh.presets());
+        String name = gh.presetName();
+
+        if (slot == GuiStyle.slot("preset-preview.buttons.back")) {
             gui.openPresets(p, session, gh.adminView(), presets);
             return;
         }
+        if (name == null || !presets.containsKey(name)) return; // deleted underneath us
 
-        session.setSettings(SessionSettings.fromJson(presets.get(name)));
-        sessions.saveSettings(session);
+        if (slot == GuiStyle.slot("preset-preview.buttons.apply")) {
+            applyPreset(p, session, presets.get(name), name);
+            gui.openPresets(p, session, gh.adminView(), presets);
+        } else if (slot == GuiStyle.slot("preset-preview.buttons.delete")) {
+            deletePreset(p, session, gh, presets, name);
+        }
+    }
+
+    /**
+     * Applies a saved configuration to the match. The teams lock is match-local live state
+     * rather than part of the saved setup, so {@link PrivateSessionService#applyPresetSettings}
+     * carries it across untouched.
+     */
+    private void applyPreset(Player p, PrivateSession session, String json, String name) {
+        sessions.applyPresetSettings(session, json);
         p.sendMessage(Lang.msg("presets.applied", "%name%", name, "%arena%", session.getArenaName()));
+    }
+
+    private void deletePreset(Player p, PrivateSession session, GuiHolder gh,
+                              java.util.LinkedHashMap<String, String> presets, String name) {
+        plugin.getPresetService().delete(session.getOwner(), name);
+        presets.remove(name);
+        p.sendMessage(Lang.msg("presets.deleted", "%name%", name));
+        gui.openPresets(p, session, gh.adminView(), presets);
     }
 
     /** Confirms the anvil name prompt — only the result slot (2) saves; anything else is a no-op. */
@@ -771,9 +824,19 @@ public final class GuiListener implements Listener {
             p.closeInventory();
             return;
         }
+        // Paging clears the selection on purpose: the editor always follows the selected event
+        // (a move can push it onto another page), so a selection would just snap the view back.
+        if (slot == GuiStyle.slot("timeline.buttons.previous-page")) {
+            gui.openTimeline(p, holder, adminView, null, gh.page() - 1);
+            return;
+        }
+        if (slot == GuiStyle.slot("timeline.buttons.next-page")) {
+            gui.openTimeline(p, holder, adminView, null, gh.page() + 1);
+            return;
+        }
         if (slot == GuiStyle.slot("timeline.buttons.add-event")) {
             if (!timelineEditable(p, holder)) return;
-            gui.openTimelineAdd(p, holder, adminView);
+            gui.openTimelineAdd(p, holder, adminView, 0);
             return;
         }
         if (slot == GuiStyle.slot("timeline.buttons.reset")) {
@@ -784,12 +847,24 @@ public final class GuiListener implements Listener {
             gui.openTimeline(p, holder, adminView, null);
             return;
         }
+        if (slot == GuiStyle.slot("timeline.buttons.clear-all")) {
+            if (!timelineEditable(p, holder)) return;
+            int removed = timelines.clearEvents(holder.getSettings());
+            if (removed == 0) {
+                p.sendMessage(Lang.msg("timeline.nothing-to-clear"));
+                return;
+            }
+            persist(holder);
+            p.sendMessage(Lang.msg("timeline.cleared", "%count%", String.valueOf(removed)));
+            gui.openTimeline(p, holder, adminView, null);
+            return;
+        }
 
         // Selecting / deselecting an event on the strip.
         String clickedEvent = gh.keyAt(slot);
         if (clickedEvent != null) {
             String next = clickedEvent.equals(gh.selectedEvent()) ? null : clickedEvent;
-            gui.openTimeline(p, holder, adminView, next);
+            gui.openTimeline(p, holder, adminView, next, gh.page());
             return;
         }
 
@@ -818,6 +893,35 @@ public final class GuiListener implements Listener {
             return;
         }
 
+        if (slot == GuiStyle.slot("timeline.buttons.duplicate")) {
+            if (!timelineEditable(p, holder)) return;
+            // The copy is stored as a custom event, so it needs a free custom slot — say that
+            // outright rather than reporting the generic "can't be duplicated".
+            if (timelines.customEventCount(holder.getSettings()) >= TimelineService.MAX_CUSTOM_EVENTS) {
+                p.sendMessage(Lang.msg("timeline.custom-limit",
+                        "%max%", String.valueOf(TimelineService.MAX_CUSTOM_EVENTS)));
+                return;
+            }
+            SessionSettings.TimelineEntry copy = timelines.duplicateEvent(holder.getSettings(), selected);
+            if (copy == null) {
+                p.sendMessage(Lang.msg("timeline.duplicate-failed"));
+                return;
+            }
+            persist(holder);
+            TimelineService.Definition def = timelines.definitionFor(copy);
+            p.sendMessage(Lang.msg("timeline.duplicated",
+                    "%event%", def != null ? def.name() : copy.id(),
+                    "%time%", TimelineService.format(copy.seconds())));
+            gui.openTimeline(p, holder, adminView, copy.id());
+            return;
+        }
+
+        if (slot == GuiStyle.slot("timeline.buttons.edit-value")) {
+            if (!timelineEditable(p, holder)) return;
+            startValueEdit(p, holder, adminView, selected);
+            return;
+        }
+
         if (slot == GuiStyle.slot("timeline.buttons.delete")) {
             if (!timelineEditable(p, holder)) return;
             TimelineService.Definition def = timelines.definitionFor(holder.getSettings(), selected);
@@ -831,6 +935,40 @@ public final class GuiListener implements Listener {
                         "%event%", def != null ? def.name() : selected));
             }
             gui.openTimeline(p, holder, adminView, null);
+        }
+    }
+
+    /**
+     * Re-opens the custom-event wizard on an existing entry so its value can be changed without
+     * deleting and re-creating it by hand. Only host-authored entries carry an editable value —
+     * a catalog event's semantics come from config.yml.
+     */
+    private void startValueEdit(Player p, SettingsHolder holder, boolean adminView, String eventId) {
+        TimelineService timelines = plugin.getTimelineService();
+        SessionSettings.TimelineEntry entry = null;
+        for (SessionSettings.TimelineEntry e : timelines.effectiveTimeline(holder.getSettings())) {
+            if (e.id().equals(eventId)) { entry = e; break; }
+        }
+        if (entry == null || !entry.isCustom()) return;
+
+        TimelineService.Type type = GuiManager.parseType(entry.customType());
+        if (type == null) return;
+
+        GuiHolder state = wizardState(type, entry.customValue(), entry.seconds()).editingEvent(eventId);
+        if (type == TimelineService.Type.TEAM_BUFF) {
+            // Re-split "EFFECT:amplifier:seconds" back into the three dials the wizard shows.
+            String[] parts = entry.customValue() == null ? new String[0] : entry.customValue().split(":");
+            if (parts.length > 0) state.customValue(parts[0]);
+            if (parts.length > 1) state.customAmplifier(parseIntOr(parts[1], 0));
+            if (parts.length > 2) state.customDuration(parseIntOr(parts[2], 30));
+        }
+
+        if (type == TimelineService.Type.ANNOUNCEMENT) {
+            gui.openTimelineCustomText(p, holder, adminView, state);
+        } else if (TimelineService.requiresValue(type)) {
+            gui.openTimelineCustomValue(p, holder, adminView, state);
+        } else {
+            gui.openTimelineCustomTime(p, holder, adminView, state);
         }
     }
 
@@ -850,23 +988,52 @@ public final class GuiListener implements Listener {
         return true;
     }
 
-    private void handleTimelineAdd(Player p, GuiHolder gh, int slot) {
+    private void handleTimelineAdd(Player p, GuiHolder gh, int slot, boolean shiftClick) {
         SettingsHolder holder = resolveSettingsHolder(p, gh);
         if (holder == null) return;
         boolean adminView = gh.adminView();
+        TimelineService timelines = plugin.getTimelineService();
 
         if (slot == GuiStyle.slot("timeline-add.buttons.back")) {
             gui.openTimeline(p, holder, adminView, null);
             return;
         }
+        if (slot == GuiStyle.slot("timeline-add.buttons.previous-page")) {
+            gui.openTimelineAdd(p, holder, adminView, gh.page() - 1);
+            return;
+        }
+        if (slot == GuiStyle.slot("timeline-add.buttons.next-page")) {
+            gui.openTimelineAdd(p, holder, adminView, gh.page() + 1);
+            return;
+        }
         if (!timelineEditable(p, holder)) return;
+
+        if (slot == GuiStyle.slot("timeline-add.buttons.create-custom")) {
+            if (timelines.customEventCount(holder.getSettings()) >= TimelineService.MAX_CUSTOM_EVENTS) {
+                p.sendMessage(Lang.msg("timeline.custom-limit",
+                        "%max%", String.valueOf(TimelineService.MAX_CUSTOM_EVENTS)));
+                return;
+            }
+            gui.openTimelineCustomType(p, holder, adminView, null);
+            return;
+        }
 
         String id = gh.keyAt(slot);
         if (id == null) return;
 
-        TimelineService timelines = plugin.getTimelineService();
         TimelineService.Definition def = timelines.definition(id);
         int time = def != null ? def.defaultSeconds() : 60;
+
+        // Shift-click picks the time first; a plain click takes the catalog's own default so the
+        // common case stays one click.
+        if (shiftClick) {
+            GuiHolder state = new GuiHolder(GuiHolder.Type.TIMELINE_CUSTOM_TIME)
+                    .catalogId(id)
+                    .customSeconds(timelines.clampEventTime(holder.getSettings(), time));
+            gui.openTimelineCustomTime(p, holder, adminView, state);
+            return;
+        }
+
         if (!timelines.addEvent(holder.getSettings(), id, time)) {
             p.sendMessage(Lang.msg("timeline.add-failed"));
             return;
@@ -874,6 +1041,218 @@ public final class GuiListener implements Listener {
         persist(holder);
         p.sendMessage(Lang.msg("timeline.added", "%event%", def != null ? def.name() : id));
         gui.openTimeline(p, holder, adminView, id);
+    }
+
+    // ── Custom-event wizard ──────────────────────────────────────────────────────
+
+    /** A detached holder used purely to carry half-built wizard state into the next menu. */
+    private GuiHolder wizardState(TimelineService.Type type, String value, int seconds) {
+        return new GuiHolder(GuiHolder.Type.TIMELINE_CUSTOM_TYPE)
+                .customType(type == null ? null : type.name())
+                .customValue(value)
+                .customSeconds(seconds);
+    }
+
+    /** Halfway into the match is a defensible starting point for "when should this fire?". */
+    private int defaultCustomSeconds(SettingsHolder holder) {
+        TimelineService timelines = plugin.getTimelineService();
+        return timelines.clampEventTime(holder.getSettings(),
+                Math.max(60, timelines.matchEndSeconds(holder.getSettings()) / 2));
+    }
+
+    private void handleCustomType(Player p, GuiHolder gh, int slot) {
+        SettingsHolder holder = resolveSettingsHolder(p, gh);
+        if (holder == null) return;
+        boolean adminView = gh.adminView();
+
+        if (slot == GuiStyle.slot("timeline-custom-type.buttons.back")) {
+            // Re-authoring an existing event never came through Add Event — go back where the
+            // player actually started, with that event still selected.
+            if (gh.editingEvent() != null) {
+                gui.openTimeline(p, holder, adminView, gh.editingEvent());
+            } else {
+                gui.openTimelineAdd(p, holder, adminView, 0);
+            }
+            return;
+        }
+        if (!timelineEditable(p, holder)) return;
+
+        TimelineService.Type type = GuiManager.parseType(gh.keyAt(slot));
+        if (type == null || !TimelineService.isCustomCreatable(type)) return;
+
+        GuiHolder state = wizardState(type, null, defaultCustomSeconds(holder))
+                .editingEvent(gh.editingEvent());
+        if (type == TimelineService.Type.ANNOUNCEMENT) {
+            gui.openTimelineCustomText(p, holder, adminView, state);
+        } else if (TimelineService.requiresValue(type)) {
+            gui.openTimelineCustomValue(p, holder, adminView, state);
+        } else {
+            gui.openTimelineCustomTime(p, holder, adminView, state);
+        }
+    }
+
+    private void handleCustomValue(Player p, GuiHolder gh, int slot) {
+        SettingsHolder holder = resolveSettingsHolder(p, gh);
+        if (holder == null) return;
+        boolean adminView = gh.adminView();
+
+        if (slot == GuiStyle.slot("timeline-custom-value.buttons.back")) {
+            gui.openTimelineCustomType(p, holder, adminView, gh.editingEvent());
+            return;
+        }
+        String value = gh.keyAt(slot);
+        if (value == null) return;
+
+        gh.customValue(value);
+        if (gh.customSeconds() <= 0) gh.customSeconds(defaultCustomSeconds(holder));
+        gui.openTimelineCustomTime(p, holder, adminView, gh);
+    }
+
+    private void handleCustomTime(Player p, GuiHolder gh, int slot) {
+        SettingsHolder holder = resolveSettingsHolder(p, gh);
+        if (holder == null) return;
+        boolean adminView = gh.adminView();
+        TimelineService timelines = plugin.getTimelineService();
+        TimelineService.Type type = GuiManager.parseType(gh.customType());
+
+        if (slot == GuiStyle.slot("timeline-custom-time.buttons.back")) {
+            if (gh.catalogId() != null) {
+                gui.openTimelineAdd(p, holder, adminView, 0);
+            } else if (type == TimelineService.Type.ANNOUNCEMENT) {
+                gui.openTimelineCustomText(p, holder, adminView, gh);
+            } else if (type != null && TimelineService.requiresValue(type)) {
+                gui.openTimelineCustomValue(p, holder, adminView, gh);
+            } else {
+                gui.openTimelineCustomType(p, holder, adminView, gh.editingEvent());
+            }
+            return;
+        }
+
+        int delta = 0;
+        if (slot == GuiStyle.slot("timeline-custom-time.buttons.minus-minute")) delta = -60;
+        else if (slot == GuiStyle.slot("timeline-custom-time.buttons.minus-seconds")) delta = -5;
+        else if (slot == GuiStyle.slot("timeline-custom-time.buttons.plus-seconds")) delta = 5;
+        else if (slot == GuiStyle.slot("timeline-custom-time.buttons.plus-minute")) delta = 60;
+        if (delta != 0) {
+            gh.customSeconds(timelines.clampEventTime(holder.getSettings(), gh.customSeconds() + delta));
+            gui.openTimelineCustomTime(p, holder, adminView, gh);
+            return;
+        }
+
+        if (type == TimelineService.Type.TEAM_BUFF) {
+            if (slot == GuiStyle.slot("timeline-custom-time.buttons.amplifier")) {
+                gh.customAmplifier((gh.customAmplifier() + 1) % 3); // I → II → III
+                gui.openTimelineCustomTime(p, holder, adminView, gh);
+                return;
+            }
+            if (slot == GuiStyle.slot("timeline-custom-time.buttons.duration")) {
+                gh.customDuration(cycleInt(gh.customDuration(), 15, 30, 60, 120));
+                gui.openTimelineCustomTime(p, holder, adminView, gh);
+                return;
+            }
+        }
+
+        if (slot != GuiStyle.slot("timeline-custom-time.buttons.confirm")) return;
+        if (!timelineEditable(p, holder)) return;
+        confirmWizard(p, gh, holder, adminView);
+    }
+
+    /** Commits the wizard: adds the catalog event, or creates/replaces the custom one. */
+    private void confirmWizard(Player p, GuiHolder gh, SettingsHolder holder, boolean adminView) {
+        TimelineService timelines = plugin.getTimelineService();
+        int seconds = timelines.clampEventTime(holder.getSettings(), gh.customSeconds());
+
+        if (gh.catalogId() != null) {
+            TimelineService.Definition def = timelines.definition(gh.catalogId());
+            if (!timelines.addEvent(holder.getSettings(), gh.catalogId(), seconds)) {
+                p.sendMessage(Lang.msg("timeline.add-failed"));
+                return;
+            }
+            persist(holder);
+            p.sendMessage(Lang.msg("timeline.added",
+                    "%event%", def != null ? def.name() : gh.catalogId()));
+            gui.openTimeline(p, holder, adminView, gh.catalogId());
+            return;
+        }
+
+        TimelineService.Type type = GuiManager.parseType(gh.customType());
+        if (type == null) return;
+
+        String value = composeValue(type, gh);
+        if (TimelineService.requiresValue(type) && (value == null || value.isBlank())) {
+            p.sendMessage(Lang.msg("timeline.value-required"));
+            gui.openTimelineCustomValue(p, holder, adminView, gh);
+            return;
+        }
+
+        // Replacing an existing entry: remember it first, so a failed re-add (custom-event cap,
+        // rejected type) can put the original back rather than silently losing it.
+        SessionSettings.TimelineEntry replaced = null;
+        if (gh.editingEvent() != null) {
+            for (SessionSettings.TimelineEntry e : timelines.effectiveTimeline(holder.getSettings())) {
+                if (e.id().equals(gh.editingEvent())) { replaced = e; break; }
+            }
+            if (replaced != null) timelines.deleteEvent(holder.getSettings(), replaced.id());
+        }
+
+        SessionSettings.TimelineEntry entry =
+                timelines.addCustomEvent(holder.getSettings(), type, value, seconds);
+        if (entry == null) {
+            if (replaced != null && replaced.isCustom()) {
+                timelines.addCustomEvent(holder.getSettings(),
+                        GuiManager.parseType(replaced.customType()), replaced.customValue(), replaced.seconds());
+            }
+            p.sendMessage(Lang.msg("timeline.add-failed"));
+            return;
+        }
+
+        persist(holder);
+        TimelineService.Definition def = timelines.definitionFor(entry);
+        p.sendMessage(Lang.msg(replaced != null ? "timeline.updated" : "timeline.added",
+                "%event%", def != null ? def.name() : entry.id(),
+                "%time%", TimelineService.format(entry.seconds())));
+        gui.openTimeline(p, holder, adminView, entry.id());
+    }
+
+    /** The single value string the engine stores for this event type. */
+    private static String composeValue(TimelineService.Type type, GuiHolder gh) {
+        if (!TimelineService.requiresValue(type)) return "";
+        String value = gh.customValue();
+        if (type == TimelineService.Type.TEAM_BUFF && value != null && !value.isBlank()) {
+            return value + ":" + gh.customAmplifier() + ":" + gh.customDuration();
+        }
+        return value;
+    }
+
+    /** The anvil where an announcement event's message is typed; only the result slot confirms. */
+    private void handleCustomText(Player p, GuiHolder gh, int slot, InventoryView view) {
+        if (slot != 2) return;
+        SettingsHolder holder = resolveSettingsHolder(p, gh);
+        if (holder == null) return;
+
+        String typed = view instanceof AnvilView anvil ? anvil.getRenameText() : null;
+        if (typed == null || typed.isBlank()) {
+            p.sendMessage(Lang.msg("timeline.value-required"));
+            return;
+        }
+        // The anvil's own field is short, but trim defensively — this string is broadcast to
+        // every player in the arena and stored in the session's replicated settings blob.
+        String message = typed.trim();
+        if (message.length() > MAX_ANNOUNCEMENT_LENGTH) message = message.substring(0, MAX_ANNOUNCEMENT_LENGTH);
+
+        gh.customValue(message);
+        if (gh.customSeconds() <= 0) gh.customSeconds(defaultCustomSeconds(holder));
+        gui.openTimelineCustomTime(p, holder, gh.adminView(), gh);
+    }
+
+    private static final int MAX_ANNOUNCEMENT_LENGTH = 96;
+
+    private static int parseIntOr(String raw, int fallback) {
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException | NullPointerException e) {
+            return fallback;
+        }
     }
 
     /** Syncs a live session's settings across the network; a no-op for a not-yet-created draft. */
@@ -1037,12 +1416,11 @@ public final class GuiListener implements Listener {
     // ── Team management ────────────────────────────────────────────────────────────
 
     private void handleTeamSelect(Player p, GuiHolder gh, int slot) {
-        PrivateSession session = sessions.getById(gh.sessionId());
-        if (session == null) {
-            p.sendMessage(Lang.msg("general.match-gone"));
-            reopenList(p, gh.adminView(), 0);
-            return;
-        }
+        // Team management mutates the live arena roster — hold it to the same host/admin check
+        // every other management menu uses, rather than trusting that the menu was only ever
+        // opened by someone entitled to it.
+        PrivateSession session = requireManageable(p, gh);
+        if (session == null) return;
 
         if (slot == GuiStyle.slot("team-select.buttons.back")) {
             gui.openControls(p, session, gh.adminView());
@@ -1053,6 +1431,19 @@ public final class GuiListener implements Listener {
             gui.openTeamSelect(p, session, gh.adminView());
             return;
         }
+        // Lock / Unlock share a slot: two looks of one toggle, so decide from live state.
+        if (slot == GuiStyle.slot("team-select.buttons.lock-teams")
+                || slot == GuiStyle.slot("team-select.buttons.unlock-teams")) {
+            boolean nowLocked = !session.getSettings().isTeamsLocked();
+            plugin.setTeamsLocked(session, nowLocked);
+            p.sendMessage(Lang.msg(nowLocked ? "teams.locked-on" : "teams.locked-off"));
+            gui.openTeamSelect(p, session, gh.adminView());
+            return;
+        }
+        if (slot == GuiStyle.slot("team-select.buttons.team-size")) {
+            gui.openTeamSize(p, session, gh.adminView(), GuiHolder.Type.TEAM_SELECT);
+            return;
+        }
 
         Team team = gh.teamAt(slot);
         if (team == null) return;
@@ -1060,12 +1451,8 @@ public final class GuiListener implements Listener {
     }
 
     private void handleTeamPlayers(Player p, GuiHolder gh, int slot, boolean shiftClick) {
-        PrivateSession session = sessions.getById(gh.sessionId());
-        if (session == null) {
-            p.sendMessage(Lang.msg("general.match-gone"));
-            reopenList(p, gh.adminView(), 0);
-            return;
-        }
+        PrivateSession session = requireManageable(p, gh);
+        if (session == null) return;
 
         Team team = gh.targetTeam();
         if (team == null || slot == GuiStyle.slot("team-players.buttons.back")) {

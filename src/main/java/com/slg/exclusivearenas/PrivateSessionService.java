@@ -267,6 +267,23 @@ public final class PrivateSessionService {
         writeThrough(session);
     }
 
+    /**
+     * Applies a saved configuration to a live session and persists it network-wide.
+     *
+     * The teams lock is deliberately carried over rather than taken from the preset: it is
+     * live lobby state ("nobody may switch right now"), not part of the setup a preset
+     * describes, so applying a configuration must never quietly unlock — or lock — a lobby
+     * whose players are standing in it.
+     */
+    public void applyPresetSettings(PrivateSession session, String settingsJson) {
+        if (session == null) return;
+        boolean lockedNow = session.getSettings().isTeamsLocked();
+        SessionSettings applied = SessionSettings.fromJson(settingsJson);
+        applied.setTeamsLocked(lockedNow);
+        session.setSettings(applied);
+        saveSettings(session);
+    }
+
     /** Re-writes every in-memory session to the DB. Used after a reconnect on reload. */
     public void resyncAll() {
         if (db == null) return;

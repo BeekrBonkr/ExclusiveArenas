@@ -154,13 +154,16 @@ Open via the arena's entry in **Arena Management**, `/ea lobby`, or the host-onl
   an already-created match, unlike the automatic builder above).
 - **Public / Locked** (Code policy) or **Summon Party** (Party policy).
 - **Regenerate Code** (Code policy) — invalidates the old code and issues a new one.
-- **Manage Teams** — move players between teams while in the lobby (see below). Requires being
-  on the arena's own server (MBedwars doesn't expose per-player team data remotely).
+- **Manage Teams** — move players between teams, lock team selection, and change the per-team
+  size while in the lobby (see below). Requires being on the arena's own server (MBedwars doesn't
+  expose per-player team data remotely).
 - **Go to Arena** — teleport/connect to the match yourself.
 - **Kick All Players** — clears the arena; shift-click keeps you (the host) in it.
 - **Arena Modifiers** — opens [Event Timeline](#event-timeline), [Shop Items](#shop-overrides),
   [Team Size](#team-size), [Match Rules](#match-rules), [Environment](#environment-time--weather),
-  and [Saved Configurations](#saved-configurations-presets) for this match. Event Timeline/Shop
+  and [Saved Configurations](#saved-configurations-presets) for this match. Each button's lore
+  carries a live one-line summary of what this match has actually changed there, so you can see
+  the whole setup at a glance without opening every editor. Event Timeline/Shop
   Items/Team Size/Match Rules are editable any time the match hasn't started yet (Event
   Timeline/Shop Items again once it has, taking effect from the next round; Match Rules changes
   only take effect from the next round too); Environment is editable any time, match running or
@@ -260,12 +263,40 @@ the team has room for flips the menu's title into a warning until you free up a 
 the lobby evenly across the enabled teams in one click, respecting each team's capacity —
 handy for quickly randomizing teams instead of moving people one at a time.
 
+**Lock Teams** freezes team selection for everyone but you: the team menu simply refuses to open
+for them, and a player moved onto another team by any other route is put straight back. You keep
+moving anyone anywhere from this menu — Distribute Players, the player picker and a team-size
+change all still work normally, and admins (`exclusivearenas.admin` / `.bypass`) are exempt.
+Everyone in the arena is told when you lock or unlock, anyone joining a locked lobby is told on
+arrival, and a player who tries to switch is told why they can't. Click the button again to
+unlock. The lock only applies while the arena is in its lobby (there is nothing to switch once
+the round is running) and travels with the match's settings, so it holds on the arena's own
+server even when you toggled it from a hub.
+
+**Team Size** (bottom-left) is the same editor as [Team Size](#team-size) under Arena Modifiers,
+put where a wrong per-team cap is usually noticed. Back returns you to Manage Teams.
+
 ### Event Timeline
 
 Each event fires this many minutes into the match, left to right; click one to select it, then
 use the buttons below to nudge it ±1 minute / ±5 seconds, or delete it (Match End can be moved
 but never deleted — shortening it proportionally rescales every other event to still fit inside
 the shorter match). **Match End**'s lore shows the *total* match time, not a delta.
+
+The editor also gives you:
+
+- a **schedule summary** card — how many events, how long the match runs, how many of your 15
+  custom-event slots are used, and whether the timings are still the server's defaults;
+- a **detail card** for the selected event — its type, what it applies to, its effect and its
+  exact time;
+- **Duplicate Event** — schedules the same thing a second time just after the original (works on
+  anything you could have built yourself; a generator upgrade or Match End can't be copied);
+- **Change What It Does** — re-runs the value step of the wizard on an event you built, so an
+  announcement's text or a buff's effect can be changed without deleting and re-adding it;
+- **Clear All Events** — empties the schedule to start from scratch (Match End always stays),
+  next to **Reset to Defaults** which does the opposite and restores the server's own schedule;
+- **paging** — a schedule longer than one screen pages with the arrows at the bottom (selecting
+  an event always jumps to the page it's on).
 
 - **Without MBedwarsTweaks**: events come from `timeline.events` in `config.yml` — spawner
   speed-ups (tied to a resource type and a drop-duration multiplier), a bed-destruction event,
@@ -291,9 +322,20 @@ the shorter match). **Match End**'s lore shows the *total* match time, not a del
 **Add Event** (top-right of the editor) lists every catalog event not currently on this match's
 timeline — either previously deleted, or one an admin defined with `default: false` in
 `config.yml` so it's an optional extra rather than part of every match's starting schedule.
-Click one to add it at its configured default time, then move it like any other event.
+Click one to add it at its configured default time, or shift-click to pick the time first.
 
-For something the catalog doesn't have at all, create a one-off custom event:
+For something the catalog doesn't have at all, **Build Your Own Event** (bottom of Add Event)
+walks you through it in three steps:
+
+1. **What it does** — pick the event type (see the table below).
+2. **What it applies to** — pick the resource, the effect, the weather or the time of day. Buff
+   events also get strength (I–III) and duration (15s/30s/60s/120s) dials on the next screen;
+   an announcement's message is typed into an anvil instead.
+3. **When it fires** — nudge the time ±1 minute / ±5 seconds against the match's length, then
+   confirm. The new event lands on the timeline already selected, ready to fine-tune.
+
+The same events can still be created from the command line, which is quicker once you know the
+syntax:
 
 ```
 /ea timeline custom <type> <value> <time>
@@ -309,8 +351,9 @@ For something the catalog doesn't have at all, create a one-off custom event:
 | `announcement` | any message | Pure broadcast, no gameplay effect — script your own callouts |
 | `fireworks` | — | Cosmetic firework show over the arena |
 
-Custom events are capped at 15 per session and can be moved/deleted like any other entry once
-created (reference them by the id `/ea timeline list` shows for them).
+Custom events are capped at 15 per session and can be moved, duplicated, re-valued or deleted
+like any other entry once created (from the command line, reference them by the id
+`/ea timeline list` shows for them).
 
 ### Shop Overrides
 
@@ -323,8 +366,9 @@ alike — or hidden entirely if `shop.disabled_display: remove`.
 
 ### Team Size
 
-Change how many players fit on each team for this match from Arena Modifiers → **Team Size**
-(±1 buttons, 1–8, reset to the arena's own default) or `/ea teamsize <amount|reset>`. Editable
+Change how many players fit on each team for this match from Arena Modifiers → **Team Size**,
+Match Controls → Manage Teams → **Team Size**, or `/ea teamsize <amount|reset>` (±1 buttons,
+1–8, reset to the arena's own default). Editable
 for the whole lobby phase, regardless of how many players are already in — only locked once the
 match is actually `RUNNING`. Changing it while players already hold teams **unassigns everyone
 from their team** (they stay in the lobby, not kicked from the arena) with a message explaining
@@ -344,8 +388,17 @@ want them to happen automatically partway through a match instead of being set u
 
 ### Saved Configurations (Presets)
 
-Snapshot a match's event timeline and shop overrides as a named preset from Arena Modifiers →
-**Saved Configurations**, then apply it to any later match (click), or delete it (shift-click).
+Snapshot a match's setup — event timeline, shop overrides, team size, match rules and
+environment — as a named preset from Arena Modifiers → **Saved Configurations**, then apply it to
+any later match (click), preview it first (right-click), or delete it (shift-click).
+
+**Preview** opens a read-only breakdown so you never have to apply a configuration just to find
+out what's in it: every scheduled event with its time, the disabled and repriced shop items by
+name, the team size, which match rules it changes, its environment, and a *What would change*
+card comparing all of that against the match's current setup. Apply and Delete are on that
+screen too. Whether teams are currently locked is deliberately *not* part of a preset — it's
+live lobby state, so applying a configuration never locks or unlocks a lobby underneath the
+players standing in it.
 Clicking **Save Current Setup** opens an anvil where you type the name — take the result item to
 confirm, or press Escape to cancel; nothing is spent, the level-cost UI is cosmetic only. Also
 editable via `/ea preset list|save|apply|delete`. Capped at 20 saved presets per player; names
@@ -559,6 +612,10 @@ as one party — this is a property of the party plugin, not something Exclusive
   it's `/ea swapteams <team-a> <team-b>` only; the Quick Actions menu item just points you at it.
 - **Reveal Border only works on the arena's own server.** The border particles are shown to you
   directly and can't be relayed cross-server, unlike most other quick actions.
+- **Locking teams can't stop a plugin that reassigns teams outright.** MBedwars has no cancellable
+  "player wants a different team" hook, so the lock refuses the team-selection UI and, as a
+  backstop, puts anyone moved by another route back on their previous team a tick later. A third
+  plugin that force-assigns teams would therefore see its change reverted rather than blocked.
 
 ---
 

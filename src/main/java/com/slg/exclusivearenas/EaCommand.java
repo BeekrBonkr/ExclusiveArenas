@@ -825,8 +825,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                         p.sendMessage(Lang.msg("general.match-gone"));
                         return;
                     }
-                    live.setSettings(SessionSettings.fromJson(presets.get(name)));
-                    sessions.saveSettings(live);
+                    sessions.applyPresetSettings(live, presets.get(name));
                     p.sendMessage(Lang.msg("presets.applied",
                             "%name%", name, "%arena%", live.getArenaName()));
                 });

@@ -62,6 +62,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     private SpectateOnStartHandler spectateOnStartHandler;
     private SpectatorRejoinHandler spectatorRejoinHandler;
     private PartySummonLobbyItemHandler partySummonLobbyItemHandler;
+    private TeamLockListener teamLockListener;
     private MatchControlsLobbyItemHandler matchControlsLobbyItemHandler;
 
     @Override
@@ -114,6 +115,8 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                 new ShopRulesListener(this, sessionService), this);
         Bukkit.getPluginManager().registerEvents(
                 new ArenaModifiersListener(this, sessionService), this);
+        this.teamLockListener = new TeamLockListener(this, sessionService);
+        Bukkit.getPluginManager().registerEvents(teamLockListener, this);
 
         // Periodic cleanup (every 30 seconds)
         new SessionCleanupTask(this, sessionService).runTaskTimer(this, 600L, 600L);
@@ -282,7 +285,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
     /** Loads lang.yml and guis.yml (versioned, self-healing) and points the static accessors at them. */
     private void loadLangAndGuis() {
-        this.langYaml = new VersionedYaml(this, addon.getDataFolder(), "lang.yml", 3, (config, fromVersion) -> {
+        this.langYaml = new VersionedYaml(this, addon.getDataFolder(), "lang.yml", 4, (config, fromVersion) -> {
             boolean changed = false;
             if (fromVersion < 2) {
                 // v2 retired the toggle-spectate item's two-state (on/off) rendering — it's now
@@ -309,12 +312,15 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                 }
                 changed = true;
             }
+            // v4 only ADDS keys (the team lock's messages, the timeline editor's new
+            // operations) — VersionedYaml restores those by itself, so there is nothing to
+            // transform for that step beyond the version stamp.
             return changed;
         });
         this.langYaml.load();
         Lang.init(langYaml);
 
-        this.guisYaml = new VersionedYaml(this, addon.getDataFolder(), "guis.yml", 4, (config, fromVersion) -> {
+        this.guisYaml = new VersionedYaml(this, addon.getDataFolder(), "guis.yml", 5, (config, fromVersion) -> {
             boolean changed = false;
             if (fromVersion < 2) {
                 // v2 grew the Help menu a row (command reference cards for the new /ea
@@ -354,6 +360,15 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                 // v4 removed the "Cosmetics (Unavailable)" stub — MBedwars exposes no cosmetics
                 // API to hook into, so there was nothing an admin could ever configure there.
                 config.set("arena-config.buttons.cosmetics-unavailable", null);
+                changed = true;
+            }
+            if (fromVersion < 5) {
+                // v5 replaced Add Event's "run this command instead" note with a real
+                // build-your-own-event wizard (timeline-add.buttons.create-custom, restored
+                // automatically as a new key), and gave the timeline editor a third content row
+                // — summary card, selection card, Clear All Events. Only move buttons still
+                // sitting at their v4 defaults, so a re-laid-out editor keeps its arrangement.
+                config.set("timeline-add.buttons.custom-info", null);
                 changed = true;
             }
             return changed;
@@ -1284,7 +1299,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         for (Player player : arena.getPlayers()) {
             try {
                 if (arena.getPlayerTeam(player) == null) continue;
-                arena.setPlayerTeam(player, null);
+                runHostTeamAction(() -> arena.setPlayerTeam(player, null));
                 player.sendMessage(Lang.msg("teamsize.reassign"));
             } catch (Throwable t) {
                 // One player failing to unassign shouldn't leave everyone else stuck on a
@@ -1412,6 +1427,32 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     }
 
     /**
+     * Runs a host-initiated team change with {@link TeamLockListener}'s lock backstop
+     * suspended, so a locked lobby still lets the host move people around. Safe to call before
+     * the listener exists (it simply runs the action as-is).
+     */
+    public void runHostTeamAction(Runnable action) {
+        if (teamLockListener != null) teamLockListener.hostAction(action);
+        else action.run();
+    }
+
+    /**
+     * Locks/unlocks team switching for a match's lobby (Manage Teams → Lock Teams) and tells
+     * everyone in the arena. The flag lives on the session's replicated settings, so the server
+     * actually hosting the arena enforces it even when it was toggled from elsewhere.
+     */
+    public void setTeamsLocked(PrivateSession session, boolean locked) {
+        if (session == null || session.getSettings().isTeamsLocked() == locked) return;
+        session.getSettings().setTeamsLocked(locked);
+        sessionService.saveSettings(session);
+
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        if (arena != null && arena.exists()) {
+            arena.broadcast(Lang.msg(locked ? "teams.locked-broadcast" : "teams.unlocked-broadcast"));
+        }
+    }
+
+    /**
      * Moves a batch of players (already in the arena) onto {@code team}, while the arena is
      * still in its lobby. Re-checks the team's remaining capacity as it goes, so a stale GUI
      * selection can never overfill a team even if arena state changed underneath it.
@@ -1428,13 +1469,16 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         }
 
         int cap = arena.getPlayersPerTeam();
-        int moved = 0, skipped = 0;
-        for (UUID id : playerIds) {
-            Player target = Bukkit.getPlayer(id);
-            if (target == null || !target.isOnline() || !arena.getPlayers().contains(target)) continue;
-            if (arena.getPlayersInTeam(team).size() >= cap) { skipped++; continue; }
-            if (arena.moveToTeamDuringLobby(target, team)) moved++; else skipped++;
-        }
+        int[] counts = new int[2]; // [moved, skipped] — mutable across the host-action lambda
+        runHostTeamAction(() -> {
+            for (UUID id : playerIds) {
+                Player target = Bukkit.getPlayer(id);
+                if (target == null || !target.isOnline() || !arena.getPlayers().contains(target)) continue;
+                if (arena.getPlayersInTeam(team).size() >= cap) { counts[1]++; continue; }
+                if (arena.moveToTeamDuringLobby(target, team)) counts[0]++; else counts[1]++;
+            }
+        });
+        int moved = counts[0], skipped = counts[1];
 
         if (moved > 0) {
             actor.sendMessage(Lang.msg("teams.moved", "%count%", String.valueOf(moved), "%team%", team.getDisplayName()));
@@ -1473,7 +1517,9 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         // capacity check even though this pass is about to redistribute it).
         for (Player target : players) {
             try {
-                if (arena.getPlayerTeam(target) != null) arena.setPlayerTeam(target, null);
+                if (arena.getPlayerTeam(target) != null) {
+                    runHostTeamAction(() -> arena.setPlayerTeam(target, null));
+                }
             } catch (Throwable t) {
                 getLogger().warning("Could not unassign " + target.getName() + " before distributing in "
                         + arena.getName() + ": " + t.getMessage());
@@ -1493,7 +1539,10 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                 }
             }
             if (assigned == null) break; // every team is at capacity
-            if (arena.moveToTeamDuringLobby(target, assigned)) moved++;
+            Team destination = assigned;
+            boolean[] ok = new boolean[1];
+            runHostTeamAction(() -> ok[0] = arena.moveToTeamDuringLobby(target, destination));
+            if (ok[0]) moved++;
         }
 
         actor.sendMessage(Lang.msg("teams.distributed", "%count%", String.valueOf(moved)));

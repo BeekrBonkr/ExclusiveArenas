@@ -413,13 +413,18 @@ public final class GuiManager {
         // left as a bare hole instead of reading as an intentional, evenly-filled row.
         fillInteriorRow(inv, 9, accentMaterial());
 
+        // Every editor's button carries a live "what this match has changed so far" line, so the
+        // hub answers "did I already set that?" without opening each editor to find out.
         if (plugin.getTimelineService().isEnabled()) {
-            GuiStyle.place(inv, "arena-config.buttons.event-timeline");
+            GuiStyle.place(inv, "arena-config.buttons.event-timeline", "%summary%", timelineSummary(session));
         }
-        GuiStyle.place(inv, "arena-config.buttons.shop-config");
-        GuiStyle.place(inv, "arena-config.buttons.presets");
-        int teamSizeSlot = GuiStyle.place(inv, "arena-config.buttons.team-size");
-        int environmentSlot = GuiStyle.place(inv, "arena-config.buttons.environment");
+        GuiStyle.place(inv, "arena-config.buttons.shop-config", "%summary%", shopSummary(session));
+        GuiStyle.place(inv, "arena-config.buttons.presets", "%summary%", changeCountSummary(session));
+        int teamSizeSlot = GuiStyle.place(inv, "arena-config.buttons.team-size",
+                "%summary%", teamSizeSummary(session));
+        GuiStyle.place(inv, "arena-config.buttons.match-rules", "%summary%", matchRulesSummary(session));
+        int environmentSlot = GuiStyle.place(inv, "arena-config.buttons.environment",
+                "%summary%", environmentSummary(session));
         GuiStyle.place(inv, "arena-config.buttons.back");
 
         // Team Size and Environment act on the live arena object directly, so they only work
@@ -443,12 +448,131 @@ public final class GuiManager {
         fillInteriorRow(inv, 9, accentMaterial());
 
         if (plugin.getTimelineService().isEnabled()) {
-            GuiStyle.place(inv, "builder-settings.buttons.event-timeline");
+            GuiStyle.place(inv, "builder-settings.buttons.event-timeline", "%summary%", timelineSummary(draft));
         }
-        GuiStyle.place(inv, "builder-settings.buttons.shop-config");
-        GuiStyle.place(inv, "builder-settings.buttons.team-size");
+        GuiStyle.place(inv, "builder-settings.buttons.shop-config", "%summary%", shopSummary(draft));
+        GuiStyle.place(inv, "builder-settings.buttons.team-size", "%summary%", teamSizeSummary(draft));
+        GuiStyle.place(inv, "builder-settings.buttons.match-rules", "%summary%", matchRulesSummary(draft));
         GuiStyle.place(inv, "builder-settings.buttons.back");
         p.openInventory(inv);
+    }
+
+    // ── Arena Modifiers hub summaries ─────────────────────────────────────────────
+    //
+    // Each returns a single short, already-colored line for the matching hub button's
+    // "%summary%" placeholder: what this match has actually changed, or the untouched default.
+
+    private String timelineSummary(SettingsHolder holder) {
+        return timelineSummaryOf(holder.getSettings());
+    }
+
+    private String timelineSummaryOf(SessionSettings settings) {
+        TimelineService timelines = plugin.getTimelineService();
+        List<SessionSettings.TimelineEntry> timeline = timelines.effectiveTimeline(settings);
+        int events = Math.max(0, timeline.size() - 1); // Match End isn't one of the "events"
+        String length = TimelineService.format(timelines.matchEndSeconds(settings));
+
+        String state = settings.getTimeline() == null ? "&7Default schedule" : "&eCustomized";
+        return state + " &8· &f" + events + "&7 event" + (events == 1 ? "" : "s")
+                + "&7, ends &f" + length;
+    }
+
+    private String shopSummary(SettingsHolder holder) {
+        return shopSummaryOf(holder.getSettings());
+    }
+
+    private String shopSummaryOf(SessionSettings settings) {
+        long disabled = settings.getShopOverrides().values().stream()
+                .filter(SessionSettings.ShopOverride::isDisabled).count();
+        long priced = settings.getShopOverrides().values().stream()
+                .filter(SessionSettings.ShopOverride::hasPriceOverride).count();
+        if (disabled == 0 && priced == 0) return "&7No changes";
+        return "&e" + disabled + "&7 disabled, &e" + priced + "&7 repriced";
+    }
+
+    private String teamSizeSummary(SettingsHolder holder) {
+        Integer override = holder.getSettings().getPlayersPerTeam();
+        Integer arenaDefault = arenaDefaultPlayersPerTeam(holder);
+        if (override == null) {
+            return arenaDefault == null ? "&7Arena default" : "&7Arena default &8(&f" + arenaDefault + "&8)";
+        }
+        return "&e" + override + "&7 per team"
+                + (arenaDefault == null ? "" : " &8(default &f" + arenaDefault + "&8)");
+    }
+
+    /**
+     * The arena's own players-per-team value, or null when it can't be read from here (the
+     * arena lives on another server). For a live session the snapshot taken before any override
+     * was applied is the truthful answer — the live arena object already carries the override.
+     */
+    private Integer arenaDefaultPlayersPerTeam(SettingsHolder holder) {
+        if (holder instanceof PrivateSession session && session.getOriginalPlayersPerTeam() != null) {
+            return session.getOriginalPlayersPerTeam();
+        }
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(holder.getArenaName());
+        return arena != null && arena.exists() ? arena.getPlayersPerTeam() : null;
+    }
+
+    private String environmentSummary(SettingsHolder holder) {
+        return environmentSummaryOf(holder.getSettings());
+    }
+
+    private String environmentSummaryOf(SessionSettings settings) {
+        ArenaWeatherType weather = ExclusiveArenasPlugin.parseWeatherType(settings.getWeatherType());
+        ArenaTimeType time = ExclusiveArenasPlugin.parseTimeType(settings.getTimeType());
+        if (weather == ArenaWeatherType.UNTOUCHED && time == ArenaTimeType.UNTOUCHED) return "&7Untouched";
+
+        List<String> parts = new ArrayList<>(2);
+        if (time != ArenaTimeType.UNTOUCHED) parts.add(timeLabel(time));
+        if (weather != ArenaWeatherType.UNTOUCHED) parts.add(weatherLabel(weather));
+        return String.join("&7, ", parts);
+    }
+
+    private String matchRulesSummary(SettingsHolder holder) {
+        return matchRulesSummaryOf(holder.getSettings());
+    }
+
+    private String matchRulesSummaryOf(SessionSettings settings) {
+        List<String> changed = changedRuleNames(settings.getModifiers());
+        if (changed.isEmpty()) return "&7All default";
+
+        // Naming the first few reads far better than a bare count, but the whole list would
+        // blow the lore line apart — cap it and count the rest.
+        String named = String.join("&7, ", changed.subList(0, Math.min(3, changed.size())));
+        return "&e" + changed.size() + "&7 changed &8· &f" + named
+                + (changed.size() > 3 ? " &8+" + (changed.size() - 3) + " more" : "");
+    }
+
+    /** The display names of every match rule currently away from its vanilla default. */
+    private static List<String> changedRuleNames(SessionSettings.ArenaModifiers mods) {
+        List<String> out = new ArrayList<>();
+        if (mods.isFriendlyFire()) out.add("Friendly Fire");
+        if (mods.isNoFallDamage()) out.add("No Fall Damage");
+        if (mods.isNoExplosionBlockDamage()) out.add("No Explosion Damage");
+        if (mods.getKillBountyMultiplier() != 0) out.add("Kill Bounty");
+        if (mods.getShopCurrencyMultiplier() != 1.0) out.add("Shop Prices");
+        if (mods.isBonusStartingKit()) out.add("Bonus Kit");
+        if (mods.getPvpGraceSeconds() != 0) out.add("PvP Grace");
+        if (mods.getHealthMultiplier() != 1.0) out.add("Health");
+        if (mods.isWorldBorderShrink()) out.add("World Border");
+        if (mods.isBedRespawnOnce()) out.add("Bed Respawn Once");
+        if (mods.getSpawnProtectionSeconds() != 0) out.add("Spawn Protection");
+        if (mods.getKillGoal() != 0) out.add("Kill Goal");
+        return out;
+    }
+
+    /** How many of the six editors this match has actually changed — the Presets button's line. */
+    private String changeCountSummary(SettingsHolder holder) {
+        SessionSettings settings = holder.getSettings();
+        int changed = 0;
+        if (settings.getTimeline() != null) changed++;
+        if (!settings.getShopOverrides().isEmpty()) changed++;
+        if (settings.getPlayersPerTeam() != null) changed++;
+        if (!settings.getModifiers().isDefault()) changed++;
+        if (settings.getWeatherType() != null || settings.getTimeType() != null) changed++;
+        return changed == 0
+                ? "&7Nothing customized yet"
+                : "&f" + changed + "&7 setting" + (changed == 1 ? "" : "s") + " customized";
     }
 
     /** Bounds on the players-per-team override — generous for every real BedWars team format. */
@@ -456,9 +580,17 @@ public final class GuiManager {
     static final int MAX_PLAYERS_PER_TEAM = 8;
 
     public void openTeamSize(Player p, SettingsHolder holder, boolean adminView) {
+        openTeamSize(p, holder, adminView, null);
+    }
+
+    /**
+     * @param origin the menu to return to — {@code TEAM_SELECT} when opened from Manage Teams,
+     *               null for the usual Arena Modifiers hub route.
+     */
+    public void openTeamSize(Player p, SettingsHolder holder, boolean adminView, GuiHolder.Type origin) {
         UUID sessionId = holder instanceof PrivateSession ps ? ps.getSessionId() : null;
         GuiHolder gh = new GuiHolder(GuiHolder.Type.TEAM_SIZE)
-                .sessionId(sessionId).adminView(adminView);
+                .sessionId(sessionId).adminView(adminView).origin(origin);
         Inventory inv = create(gh, GuiStyle.size("team-size", 27),
                 GuiStyle.title("team-size", "%arena%", holder.getArenaName()));
         frame(inv);
@@ -646,7 +778,12 @@ public final class GuiManager {
                             "%name%", entry.getKey(),
                             "%timeline%", timelineSummary,
                             "%disabled%", String.valueOf(disabled),
-                            "%priced%", String.valueOf(priced)));
+                            "%priced%", String.valueOf(priced),
+                            "%teamsize%", settings.getPlayersPerTeam() == null
+                                    ? "&8Arena default" : "&7" + settings.getPlayersPerTeam() + " per team",
+                            "%rules%", changedRuleNames(settings.getModifiers()).isEmpty()
+                                    ? "&8Default rules"
+                                    : "&7" + changedRuleNames(settings.getModifiers()).size() + " rule change(s)"));
             if (GuiStyle.glint("presets.items.preset")) ItemUtil.glint(item);
             inv.setItem(slot, item);
             holder.mapKeySlot(slot, entry.getKey());
@@ -659,6 +796,159 @@ public final class GuiManager {
         }
         GuiStyle.place(inv, "presets.buttons.back");
         p.openInventory(inv);
+    }
+
+    /**
+     * A read-only breakdown of one saved configuration — every editor's contents plus what would
+     * actually change if it were applied — so a host can check a preset is the one they meant
+     * before overwriting the match's current setup with it.
+     */
+    public void openPresetPreview(Player p, PrivateSession session, boolean adminView,
+                                  java.util.LinkedHashMap<String, String> presets, String name) {
+        SessionSettings preset = SessionSettings.fromJson(presets.get(name));
+
+        GuiHolder holder = new GuiHolder(GuiHolder.Type.PRESET_PREVIEW)
+                .sessionId(session.getSessionId()).adminView(adminView)
+                .presets(presets).presetName(name);
+        Inventory inv = create(holder, GuiStyle.size("preset-preview", 45),
+                GuiStyle.title("preset-preview", "%name%", name, "%arena%", session.getArenaName()));
+        frame(inv);
+        fillInteriorRow(inv, 9, accentMaterial());
+        fillInteriorRow(inv, 18, accentMaterial());
+
+        GuiStyle.place(inv, "preset-preview.buttons.header", "%name%", name);
+        GuiStyle.place(inv, "preset-preview.buttons.timeline",
+                "%summary%", timelineSummaryOf(preset), "%detail%", timelineDetail(preset));
+        GuiStyle.place(inv, "preset-preview.buttons.shop",
+                "%summary%", shopSummaryOf(preset), "%detail%", shopDetail(preset));
+        GuiStyle.place(inv, "preset-preview.buttons.team-size",
+                "%summary%", preset.getPlayersPerTeam() == null
+                        ? "&7Arena default" : "&e" + preset.getPlayersPerTeam() + "&7 per team");
+        GuiStyle.place(inv, "preset-preview.buttons.match-rules",
+                "%summary%", matchRulesSummaryOf(preset), "%detail%", matchRulesDetail(preset));
+        GuiStyle.place(inv, "preset-preview.buttons.environment",
+                "%summary%", environmentSummaryOf(preset));
+        GuiStyle.place(inv, "preset-preview.buttons.diff",
+                "%detail%", diffDetail(session.getSettings(), preset));
+
+        GuiStyle.place(inv, "preset-preview.buttons.apply", "%name%", name);
+        GuiStyle.place(inv, "preset-preview.buttons.delete", "%name%", name);
+        GuiStyle.place(inv, "preset-preview.buttons.back");
+        p.openInventory(inv);
+    }
+
+    /** Each event as one "&7m:ss &8— &fName" line, capped so the lore stays readable. */
+    private String timelineDetail(SessionSettings settings) {
+        TimelineService timelines = plugin.getTimelineService();
+        List<SessionSettings.TimelineEntry> timeline = timelines.effectiveTimeline(settings);
+
+        StringBuilder sb = new StringBuilder();
+        int shown = 0;
+        for (SessionSettings.TimelineEntry entry : timeline) {
+            if (shown >= 10) {
+                sb.append("\n&8… and ").append(timeline.size() - shown).append(" more");
+                break;
+            }
+            TimelineService.Definition def = timelines.definitionFor(entry);
+            if (sb.length() > 0) sb.append('\n');
+            sb.append("&7").append(TimelineService.format(entry.seconds()))
+                    .append(" &8— &f").append(def != null ? def.name() : entry.id());
+            shown++;
+        }
+        return sb.toString();
+    }
+
+    /** Disabled / repriced shop items, by name, capped the same way. */
+    private String shopDetail(SessionSettings settings) {
+        StringBuilder sb = new StringBuilder();
+        int shown = 0;
+        int total = settings.getShopOverrides().size();
+        for (Map.Entry<String, SessionSettings.ShopOverride> e : settings.getShopOverrides().entrySet()) {
+            if (shown >= 8) {
+                sb.append("\n&8… and ").append(total - shown).append(" more");
+                break;
+            }
+            SessionSettings.ShopOverride o = e.getValue();
+            ShopItem item = BedwarsAPI.getGameAPI().getShopItemById(e.getKey());
+            String label = item != null ? plainName(item.getDisplayName()) : e.getKey();
+            if (sb.length() > 0) sb.append('\n');
+            if (o.isDisabled()) {
+                sb.append("&c✖ &7").append(label);
+            } else {
+                sb.append("&e● &7").append(label).append(" &8→ &f")
+                        .append(o.getPrice()).append(' ').append(currencyLabel(o.getCurrency()));
+            }
+            shown++;
+        }
+        return sb.toString();
+    }
+
+    private String matchRulesDetail(SessionSettings settings) {
+        List<String> changed = changedRuleNames(settings.getModifiers());
+        StringBuilder sb = new StringBuilder();
+        for (String rule : changed) {
+            if (sb.length() > 0) sb.append('\n');
+            sb.append("&e● &7").append(rule);
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Which editors this preset would actually change if applied over the match's current setup.
+     * Compares the underlying values, not the cards rendered above them — those truncate long
+     * lists, and a difference past the cut-off would otherwise read as "nothing would change".
+     */
+    private String diffDetail(SessionSettings current, SessionSettings preset) {
+        List<String> differences = new ArrayList<>();
+        if (!timelineSignature(current).equals(timelineSignature(preset))) differences.add("Event Timeline");
+        if (!sameShopOverrides(current, preset)) differences.add("Shop Items");
+        if (!java.util.Objects.equals(current.getPlayersPerTeam(), preset.getPlayersPerTeam())) {
+            differences.add("Team Size");
+        }
+        if (!current.getModifiers().sameValuesAs(preset.getModifiers())) differences.add("Match Rules");
+        if (!java.util.Objects.equals(current.getWeatherType(), preset.getWeatherType())
+                || !java.util.Objects.equals(current.getTimeType(), preset.getTimeType())) {
+            differences.add("Environment");
+        }
+
+        if (differences.isEmpty()) return "&a✔ Nothing would change — this is already the setup.";
+        StringBuilder sb = new StringBuilder();
+        for (String d : differences) {
+            if (sb.length() > 0) sb.append('\n');
+            sb.append("&6● &7").append(d);
+        }
+        return sb.toString();
+    }
+
+    /**
+     * A comparable form of a schedule. Custom events are keyed by what they DO rather than by
+     * their id — every save mints a fresh id, so identical schedules would otherwise never
+     * compare equal.
+     */
+    private List<String> timelineSignature(SessionSettings settings) {
+        List<String> out = new ArrayList<>();
+        for (SessionSettings.TimelineEntry e : plugin.getTimelineService().effectiveTimeline(settings)) {
+            out.add((e.isCustom() ? e.customType() + "|" + e.customValue() : e.id()) + "@" + e.seconds());
+        }
+        java.util.Collections.sort(out);
+        return out;
+    }
+
+    private static boolean sameShopOverrides(SessionSettings a, SessionSettings b) {
+        Map<String, SessionSettings.ShopOverride> left = a.getShopOverrides();
+        Map<String, SessionSettings.ShopOverride> right = b.getShopOverrides();
+        if (left.size() != right.size()) return false;
+        for (Map.Entry<String, SessionSettings.ShopOverride> e : left.entrySet()) {
+            SessionSettings.ShopOverride other = right.get(e.getKey());
+            SessionSettings.ShopOverride mine = e.getValue();
+            if (other == null
+                    || other.isDisabled() != mine.isDisabled()
+                    || !java.util.Objects.equals(other.getPrice(), mine.getPrice())
+                    || !java.util.Objects.equals(other.getCurrency(), mine.getCurrency())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Opens the anvil prompt where the host types a name for the preset they're about to save. */
@@ -679,6 +969,19 @@ public final class GuiManager {
     // ── Event timeline editor ─────────────────────────────────────────────────────
 
     public void openTimeline(Player p, SettingsHolder holder, boolean adminView, String selectedEventId) {
+        openTimeline(p, holder, adminView, selectedEventId, 0);
+    }
+
+    /**
+     * The schedule editor. The interior strip lists the match's events in order (paged, since a
+     * host can add far more than one screen holds); selecting one reveals its detail card and
+     * the move/delete/duplicate/edit controls beneath it.
+     *
+     * @param page which strip page to show — ignored while something is selected, since the
+     *             editor always follows the selected event (a move can push it onto another page).
+     */
+    public void openTimeline(Player p, SettingsHolder holder, boolean adminView,
+                             String selectedEventId, int page) {
         TimelineService timelines = plugin.getTimelineService();
         List<SessionSettings.TimelineEntry> timeline = timelines.effectiveTimeline(holder.getSettings());
 
@@ -688,17 +991,36 @@ public final class GuiManager {
             selectedEventId = null;
         }
 
+        int perPage = STRIP_SLOTS.length;
+        int pages = Math.max(1, (int) Math.ceil(timeline.size() / (double) perPage));
+        int selectedIndex = indexOfEvent(timeline, selectedEventId);
+        int pg = selectedIndex >= 0
+                ? selectedIndex / perPage                       // always show what's being edited
+                : Math.max(0, Math.min(page, pages - 1));
+
         UUID sessionId = holder instanceof PrivateSession ps ? ps.getSessionId() : null;
         GuiHolder gh = new GuiHolder(GuiHolder.Type.TIMELINE)
-                .sessionId(sessionId).adminView(adminView).selectedEvent(selectedEventId);
+                .sessionId(sessionId).adminView(adminView).selectedEvent(selectedEventId).page(pg);
         Inventory inv = create(gh, GuiStyle.size("timeline", 54),
-                GuiStyle.title("timeline", "%arena%", holder.getArenaName()));
+                GuiStyle.title("timeline", "%arena%", holder.getArenaName(),
+                        "%page%", String.valueOf(pg + 1), "%pages%", String.valueOf(pages)));
         frame(inv);
+        // Fill all four content rows first: the strip is rarely exactly full, and the editor row
+        // is empty until something is selected — without this the menu reads as a grid of holes.
+        fillInteriorRow(inv, 9, accentMaterial());
+        fillInteriorRow(inv, 18, accentMaterial());
+        fillInteriorRow(inv, 27, accentMaterial());
+        fillInteriorRow(inv, 36, accentMaterial());
+
+        boolean editable = isTimelineEditable(holder);
+        String lockNote = editable ? "" : "&c✖ The round has started — edits apply from the next one.";
 
         GuiStyle.place(inv, "timeline.buttons.info");
-        GuiStyle.place(inv, "timeline.buttons.add-event");
+        GuiStyle.place(inv, "timeline.buttons.add-event", "%locked%", lockNote);
 
-        for (int i = 0; i < timeline.size() && i < STRIP_SLOTS.length; i++) {
+        int start = pg * perPage;
+        int end = Math.min(timeline.size(), start + perPage);
+        for (int i = start; i < end; i++) {
             SessionSettings.TimelineEntry entry = timeline.get(i);
             TimelineService.Definition def = timelines.definitionFor(entry);
             if (def == null) continue;
@@ -714,24 +1036,70 @@ public final class GuiManager {
                             "%time%", TimelineService.format(entry.seconds())),
                     GuiStyle.lore(template, "%event%", def.name(),
                             "%time%", TimelineService.format(entry.seconds()),
-                            "%effect%", def.description()));
+                            "%effect%", def.description(),
+                            "%index%", String.valueOf(i + 1),
+                            "%total%", String.valueOf(timeline.size()),
+                            "%origin%", entry.isCustom() ? "&d&oYour own custom event" : ""));
             if (GuiStyle.glint(template)) ItemUtil.glint(item);
 
-            int slot = STRIP_SLOTS[i];
+            int slot = STRIP_SLOTS[i - start];
             inv.setItem(slot, item);
             gh.mapKeySlot(slot, entry.id());
         }
 
+        if (pg > 0) GuiStyle.place(inv, "timeline.buttons.previous-page", "%target%", String.valueOf(pg));
+        if (pg < pages - 1) GuiStyle.place(inv, "timeline.buttons.next-page", "%target%", String.valueOf(pg + 2));
+
+        int events = Math.max(0, timeline.size() - 1);
+        GuiStyle.place(inv, "timeline.buttons.summary",
+                "%events%", String.valueOf(events),
+                "%length%", TimelineService.format(timelines.matchEndSeconds(holder.getSettings())),
+                "%custom%", String.valueOf(timelines.customEventCount(holder.getSettings())),
+                "%max_custom%", String.valueOf(TimelineService.MAX_CUSTOM_EVENTS),
+                "%source%", holder.getSettings().getTimeline() == null
+                        ? "&7Server defaults" : "&eCustomized for this match",
+                "%backend%", tweaksBackendNote(),
+                "%locked%", lockNote);
+
+        // Nothing to clear on a schedule that's only Match End — the button would be a no-op
+        // advertising "Remove all 0 events".
+        if (events > 0) {
+            GuiStyle.place(inv, "timeline.buttons.clear-all", "%events%", String.valueOf(events));
+        }
+
+        // Detail card + editor controls — "selected" and "no-selection" share a slot.
         if (selectedEventId != null) {
-            TimelineService.Definition def = timelines.definitionFor(holder.getSettings(), selectedEventId);
+            SessionSettings.TimelineEntry entry = timeline.get(selectedIndex);
+            TimelineService.Definition def = timelines.definitionFor(entry);
             String eventName = def != null ? def.name() : selectedEventId;
+            boolean isEnd = def != null && def.type() == TimelineService.Type.MATCH_END;
+
+            GuiStyle.place(inv, "timeline.buttons.selected",
+                    "%event%", eventName,
+                    "%time%", TimelineService.format(entry.seconds()),
+                    "%effect%", def != null ? def.description() : "",
+                    "%type%", def != null ? TimelineService.typeName(def.type()) : "?",
+                    "%value%", valueOrWholeArena(eventValueLabel(def)));
+
             GuiStyle.place(inv, "timeline.buttons.minus-minute", "%event%", eventName);
             GuiStyle.place(inv, "timeline.buttons.minus-seconds", "%event%", eventName);
-            if (def != null && def.type() != TimelineService.Type.MATCH_END) {
-                GuiStyle.place(inv, "timeline.buttons.delete", "%event%", eventName);
-            }
             GuiStyle.place(inv, "timeline.buttons.plus-seconds", "%event%", eventName);
             GuiStyle.place(inv, "timeline.buttons.plus-minute", "%event%", eventName);
+            if (!isEnd) {
+                GuiStyle.place(inv, "timeline.buttons.delete", "%event%", eventName);
+            }
+            // Only a host-authored event with a value of its own has anything to re-pick; a
+            // catalog entry's semantics belong to config.yml, and the value-less types
+            // (fireworks, heal pulse, …) have nothing but their time to change.
+            if (entry.isCustom() && def != null && TimelineService.requiresValue(def.type())) {
+                GuiStyle.place(inv, "timeline.buttons.edit-value", "%event%", eventName,
+                        "%value%", eventValueLabel(def));
+            }
+            if (def != null && TimelineService.isCustomCreatable(def.type())) {
+                GuiStyle.place(inv, "timeline.buttons.duplicate", "%event%", eventName);
+            }
+        } else {
+            GuiStyle.place(inv, "timeline.buttons.no-selection");
         }
 
         GuiStyle.place(inv, "timeline.buttons.reset");
@@ -741,13 +1109,96 @@ public final class GuiManager {
     }
 
     /**
-     * Catalog definitions not currently on this match's timeline — either never scheduled by
-     * default ({@code default: false} in config.yml) or previously deleted by the host. Custom
-     * (host-authored, non-catalog) events are created via {@code /ea timeline custom} instead —
-     * see the "Want something else?" info item — a type + free-value picker isn't worth a
-     * multi-step GUI wizard when a single command line already does the job.
+     * With MBedwarsTweaks driving the timeline, its gen tiers run the schedule and event types
+     * that have no gen-tier equivalent (buffs, weather, announcements, …) are skipped at runtime.
+     * Say so where a host would otherwise build one and wonder why it never fired.
      */
-    public void openTimelineAdd(Player p, SettingsHolder holder, boolean adminView) {
+    private String tweaksBackendNote() {
+        return plugin.getTimelineService().isTweaksBackend()
+                ? "&c⚠ MBedwarsTweaks runs this server's timeline — events it has no equivalent "
+                        + "for (buffs, weather, announcements, …) won't fire."
+                : "";
+    }
+
+    private static int indexOfEvent(List<SessionSettings.TimelineEntry> timeline, String id) {
+        if (id == null) return -1;
+        for (int i = 0; i < timeline.size(); i++) {
+            if (timeline.get(i).id().equals(id)) return i;
+        }
+        return -1;
+    }
+
+    /**
+     * Mirrors {@code GuiListener#timelineEditable} without messaging anyone — used to show the
+     * "the round already started" state on the editor's own buttons rather than only saying so
+     * after a click that turns out to do nothing.
+     */
+    private boolean isTimelineEditable(SettingsHolder holder) {
+        if (!(holder instanceof PrivateSession session)) return true; // a draft has no round yet
+        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+        return arena == null || arena.getStatus().isLobby();
+    }
+
+    /**
+     * What an event with no value of its own "applies to" — several types simply act on the
+     * whole arena, and an "Applies to:" line trailing off into nothing reads like a bug.
+     */
+    private static String valueOrWholeArena(String label) {
+        return label == null || label.isBlank() ? "&7The whole arena" : label;
+    }
+
+    /** A human-readable rendering of an event's single type-specific value, or "" if it has none. */
+    private static String eventValueLabel(TimelineService.Definition def) {
+        if (def == null) return "";
+        String value = def.dropTypeId();
+        if (value == null || value.isBlank()) return "";
+        return switch (def.type()) {
+            case TEAM_BUFF -> buffLabel(value);
+            case RESOURCE_BURST -> "&f" + currencyLabel(value);
+            case SPAWNER_SPEED -> "&f" + currencyLabel(value) + " &7×" + def.multiplier();
+            default -> "&f" + value;
+        };
+    }
+
+    /** "SPEED:1:30" → "Speed II for 30s". */
+    private static String buffLabel(String spec) {
+        String[] parts = spec.split(":");
+        String name = prettyEnumName(parts[0]);
+        int amplifier = parts.length > 1 ? parseIntOr(parts[1], 0) : 0;
+        int seconds = parts.length > 2 ? parseIntOr(parts[2], 30) : 30;
+        return "&f" + name + " " + romanNumeral(amplifier + 1) + " &7for &f" + seconds + "s";
+    }
+
+    private static String prettyEnumName(String raw) {
+        return TimelineService.pretty(raw);
+    }
+
+    private static String romanNumeral(int level) {
+        return switch (Math.max(1, Math.min(5, level))) {
+            case 1 -> "I";
+            case 2 -> "II";
+            case 3 -> "III";
+            case 4 -> "IV";
+            default -> "V";
+        };
+    }
+
+    private static int parseIntOr(String raw, int fallback) {
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException | NullPointerException e) {
+            return fallback;
+        }
+    }
+
+    // ── Event timeline: Add Event ─────────────────────────────────────────────────
+
+    /**
+     * Catalog definitions not currently on this match's timeline — either never scheduled by
+     * default ({@code default: false} in config.yml) or previously deleted by the host — plus the
+     * entry point into the custom-event wizard for anything the catalog doesn't cover at all.
+     */
+    public void openTimelineAdd(Player p, SettingsHolder holder, boolean adminView, int page) {
         TimelineService timelines = plugin.getTimelineService();
         java.util.Set<String> scheduled = new java.util.HashSet<>();
         for (SessionSettings.TimelineEntry e : timelines.effectiveTimeline(holder.getSettings())) {
@@ -762,18 +1213,29 @@ public final class GuiManager {
             }
         }
 
+        int perPage = LIST_SLOTS.length;
+        int pages = Math.max(1, (int) Math.ceil(available.size() / (double) perPage));
+        int pg = Math.max(0, Math.min(page, pages - 1));
+
         UUID sessionId = holder instanceof PrivateSession ps ? ps.getSessionId() : null;
-        GuiHolder gh = new GuiHolder(GuiHolder.Type.TIMELINE_ADD).sessionId(sessionId).adminView(adminView);
+        GuiHolder gh = new GuiHolder(GuiHolder.Type.TIMELINE_ADD)
+                .sessionId(sessionId).adminView(adminView).page(pg);
         Inventory inv = create(gh, GuiStyle.size("timeline-add", 54),
-                GuiStyle.title("timeline-add", "%arena%", holder.getArenaName()));
+                GuiStyle.title("timeline-add", "%arena%", holder.getArenaName(),
+                        "%page%", String.valueOf(pg + 1), "%pages%", String.valueOf(pages)));
         frame(inv);
 
-        for (int i = 0; i < available.size() && i < LIST_SLOTS.length; i++) {
+        int start = pg * perPage;
+        int end = Math.min(available.size(), start + perPage);
+        for (int i = start; i < end; i++) {
             TimelineService.Definition def = available.get(i);
-            int slot = LIST_SLOTS[i];
+            int slot = LIST_SLOTS[i - start];
             inv.setItem(slot, ItemUtil.button(def.icon(),
                     GuiStyle.name("timeline-add.items.event", "%event%", def.name()),
-                    GuiStyle.lore("timeline-add.items.event", "%event%", def.name(), "%effect%", def.description())));
+                    GuiStyle.lore("timeline-add.items.event",
+                            "%event%", def.name(),
+                            "%effect%", def.description(),
+                            "%time%", TimelineService.format(def.defaultSeconds()))));
             gh.mapKeySlot(slot, def.id());
         }
         if (available.isEmpty()) {
@@ -781,10 +1243,283 @@ public final class GuiManager {
                     "&8Every catalog event is already scheduled.");
         }
 
-        GuiStyle.place(inv, "timeline-add.buttons.custom-info");
+        if (pg > 0) GuiStyle.place(inv, "timeline-add.buttons.previous-page", "%target%", String.valueOf(pg));
+        if (pg < pages - 1) GuiStyle.place(inv, "timeline-add.buttons.next-page", "%target%", String.valueOf(pg + 2));
+
+        int used = timelines.customEventCount(holder.getSettings());
+        GuiStyle.place(inv, "timeline-add.buttons.create-custom",
+                "%used%", String.valueOf(used),
+                "%max%", String.valueOf(TimelineService.MAX_CUSTOM_EVENTS),
+                "%full%", used >= TimelineService.MAX_CUSTOM_EVENTS
+                        ? "&c✖ You've used every custom event slot." : "");
         GuiStyle.place(inv, "timeline-add.buttons.back");
         p.openInventory(inv);
     }
+
+    // ── Event timeline: custom-event wizard ───────────────────────────────────────
+
+    /**
+     * Step 1 — pick what the event should DO. Only the self-contained types can be authored
+     * from scratch (see {@link TimelineService#isCustomCreatable}); the rest need
+     * admin-configured semantics and live in the catalog instead.
+     *
+     * @param editingEvent when non-null, the wizard is re-authoring that existing custom entry
+     *                     rather than creating a new one.
+     */
+    public void openTimelineCustomType(Player p, SettingsHolder holder, boolean adminView, String editingEvent) {
+        GuiHolder gh = wizardHolder(GuiHolder.Type.TIMELINE_CUSTOM_TYPE, holder, adminView, null)
+                .editingEvent(editingEvent);
+        Inventory inv = create(gh, GuiStyle.size("timeline-custom-type", 54),
+                GuiStyle.title("timeline-custom-type", "%arena%", holder.getArenaName()));
+        frame(inv);
+
+        GuiStyle.place(inv, "timeline-custom-type.buttons.info", "%backend%", tweaksBackendNote());
+
+        int i = 0;
+        for (TimelineService.Type type : TimelineService.Type.values()) {
+            if (!TimelineService.isCustomCreatable(type)) continue;
+            if (i >= LIST_SLOTS.length) break;
+            int slot = LIST_SLOTS[i++];
+            inv.setItem(slot, ItemUtil.button(TimelineService.typeIcon(type),
+                    GuiStyle.name("timeline-custom-type.items.type", "%type%", TimelineService.typeName(type)),
+                    GuiStyle.lore("timeline-custom-type.items.type",
+                            "%type%", TimelineService.typeName(type),
+                            "%effect%", TimelineService.typeDescription(type),
+                            "%needs_value%", TimelineService.requiresValue(type)
+                                    ? "&8Next: pick what it applies to" : "&8Next: pick when it fires")));
+            gh.mapKeySlot(slot, type.name());
+        }
+
+        GuiStyle.place(inv, "timeline-custom-type.buttons.back");
+        p.openInventory(inv);
+    }
+
+    /**
+     * Step 2 — pick the value the chosen type acts on (a resource, an effect, a weather/time
+     * setting). Types that need no value skip straight past this; the announcement's free text
+     * is typed into an anvil instead ({@link #openTimelineCustomText}).
+     */
+    public void openTimelineCustomValue(Player p, SettingsHolder holder, boolean adminView, GuiHolder state) {
+        TimelineService.Type type = parseType(state.customType());
+        if (type == null) {
+            openTimelineCustomType(p, holder, adminView, state.editingEvent());
+            return;
+        }
+
+        GuiHolder gh = wizardHolder(GuiHolder.Type.TIMELINE_CUSTOM_VALUE, holder, adminView, state);
+        Inventory inv = create(gh, GuiStyle.size("timeline-custom-value", 54),
+                GuiStyle.title("timeline-custom-value", "%type%", TimelineService.typeName(type)));
+        frame(inv);
+
+        GuiStyle.place(inv, "timeline-custom-value.buttons.info",
+                "%type%", TimelineService.typeName(type),
+                "%effect%", TimelineService.typeDescription(type));
+
+        int i = 0;
+        for (ValueOption option : valueOptions(type)) {
+            if (i >= LIST_SLOTS.length) break;
+            int slot = LIST_SLOTS[i++];
+            inv.setItem(slot, ItemUtil.button(option.icon(),
+                    GuiStyle.name("timeline-custom-value.items.option", "%option%", option.label()),
+                    GuiStyle.lore("timeline-custom-value.items.option",
+                            "%option%", option.label(), "%detail%", option.detail())));
+            gh.mapKeySlot(slot, option.value());
+        }
+        if (i == 0) {
+            GuiStyle.place(inv, "timeline-custom-value.buttons.empty", "%reason%",
+                    "&8Nothing on this server can be picked for that event type.");
+        }
+
+        GuiStyle.place(inv, "timeline-custom-value.buttons.back");
+        p.openInventory(inv);
+    }
+
+    /** Step 2b — the anvil where an announcement event's message is typed. */
+    public void openTimelineCustomText(Player p, SettingsHolder holder, boolean adminView, GuiHolder state) {
+        GuiHolder gh = wizardHolder(GuiHolder.Type.TIMELINE_CUSTOM_TEXT, holder, adminView, state);
+        Inventory inv = Bukkit.createInventory(gh, InventoryType.ANVIL,
+                GuiStyle.title("timeline-custom-text", "%arena%", holder.getArenaName()));
+        gh.setInventory(inv);
+
+        String suggested = state.customValue() == null || state.customValue().isBlank()
+                ? GuiStyle.rawString("timeline-custom-text.suggested", "Good luck!")
+                : state.customValue();
+        inv.setItem(0, GuiStyle.item("timeline-custom-text.buttons.icon", "%text%", suggested));
+        p.openInventory(inv);
+    }
+
+    /**
+     * Step 3 — when it fires, plus the two extra dials a buff needs (strength and duration),
+     * then confirm. Also the "pick a time first" landing spot for a shift-clicked catalog event,
+     * in which case the holder carries a {@code catalogId} instead of a type/value.
+     */
+    public void openTimelineCustomTime(Player p, SettingsHolder holder, boolean adminView, GuiHolder state) {
+        TimelineService timelines = plugin.getTimelineService();
+        TimelineService.Type type = parseType(state.customType());
+        TimelineService.Definition catalog = state.catalogId() == null
+                ? null : timelines.definition(state.catalogId());
+        if (type == null && catalog == null) {
+            openTimelineCustomType(p, holder, adminView, state.editingEvent());
+            return;
+        }
+
+        GuiHolder gh = wizardHolder(GuiHolder.Type.TIMELINE_CUSTOM_TIME, holder, adminView, state);
+        // Clamp on the way in, so a match-end change made since the previous step can never
+        // leave the wizard pointing past the end of the match.
+        int seconds = timelines.clampEventTime(holder.getSettings(), state.customSeconds());
+        gh.customSeconds(seconds);
+
+        String label = catalog != null ? catalog.name() : TimelineService.typeName(type);
+        Inventory inv = create(gh, GuiStyle.size("timeline-custom-time", 27),
+                GuiStyle.title("timeline-custom-time", "%event%", label));
+        frame(inv);
+        fillInteriorRow(inv, 9, accentMaterial());
+        fillInteriorRow(inv, 18, accentMaterial());
+
+        String valueLabel = valueOrWholeArena(catalog != null
+                ? eventValueLabel(catalog)
+                : describeWizardValue(type, state));
+        GuiStyle.place(inv, "timeline-custom-time.buttons.display",
+                "%event%", label,
+                "%time%", TimelineService.format(seconds),
+                "%value%", valueLabel,
+                "%effect%", catalog != null ? catalog.description() : TimelineService.typeDescription(type),
+                "%length%", TimelineService.format(timelines.matchEndSeconds(holder.getSettings())));
+
+        GuiStyle.place(inv, "timeline-custom-time.buttons.minus-minute");
+        GuiStyle.place(inv, "timeline-custom-time.buttons.minus-seconds");
+        GuiStyle.place(inv, "timeline-custom-time.buttons.plus-seconds");
+        GuiStyle.place(inv, "timeline-custom-time.buttons.plus-minute");
+
+        // A buff is the one type with more to say than "what" and "when".
+        if (type == TimelineService.Type.TEAM_BUFF) {
+            GuiStyle.place(inv, "timeline-custom-time.buttons.amplifier",
+                    "%current%", romanNumeral(state.customAmplifier() + 1));
+            GuiStyle.place(inv, "timeline-custom-time.buttons.duration",
+                    "%current%", state.customDuration() + "s");
+        }
+
+        GuiStyle.place(inv, "timeline-custom-time.buttons.confirm",
+                "%event%", label,
+                "%time%", TimelineService.format(seconds),
+                "%verb%", state.editingEvent() != null ? "Save changes" : "Add to timeline");
+        GuiStyle.place(inv, "timeline-custom-time.buttons.back");
+        p.openInventory(inv);
+    }
+
+    /** Carries the half-built event from one wizard step to the next. */
+    private GuiHolder wizardHolder(GuiHolder.Type type, SettingsHolder holder, boolean adminView, GuiHolder from) {
+        UUID sessionId = holder instanceof PrivateSession ps ? ps.getSessionId() : null;
+        GuiHolder gh = new GuiHolder(type).sessionId(sessionId).adminView(adminView);
+        if (from != null) {
+            gh.customType(from.customType())
+                    .customValue(from.customValue())
+                    .customSeconds(from.customSeconds())
+                    .customAmplifier(from.customAmplifier())
+                    .customDuration(from.customDuration())
+                    .catalogId(from.catalogId())
+                    .editingEvent(from.editingEvent());
+        }
+        return gh;
+    }
+
+    static TimelineService.Type parseType(String name) {
+        if (name == null) return null;
+        try {
+            return TimelineService.Type.valueOf(name);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /** How the wizard's current value reads on the confirm screen. */
+    private String describeWizardValue(TimelineService.Type type, GuiHolder state) {
+        String value = state.customValue();
+        if (type == null || !TimelineService.requiresValue(type)) return "";
+        if (value == null || value.isBlank()) return "&8—";
+        return switch (type) {
+            case TEAM_BUFF -> "&f" + prettyEnumName(value) + " "
+                    + romanNumeral(state.customAmplifier() + 1)
+                    + " &7for &f" + state.customDuration() + "s";
+            case RESOURCE_BURST -> "&f" + currencyLabel(value);
+            case WEATHER_CHANGE, TIME_CHANGE -> "&f" + prettyEnumName(value);
+            default -> "&f" + value;
+        };
+    }
+
+    /** One pickable value on the wizard's step-2 grid. */
+    private record ValueOption(String value, String label, String detail, Material icon) {}
+
+    /** The values that make sense for {@code type} on this server, right now. */
+    private List<ValueOption> valueOptions(TimelineService.Type type) {
+        List<ValueOption> out = new ArrayList<>();
+        switch (type) {
+            case RESOURCE_BURST -> {
+                for (de.marcely.bedwars.api.game.spawner.DropType drop : BedwarsAPI.getGameAPI().getDropTypes()) {
+                    Material icon = Material.IRON_INGOT;
+                    ItemStack[] materials = drop.getDroppingMaterials();
+                    if (materials != null && materials.length > 0 && materials[0] != null) {
+                        icon = materials[0].getType();
+                    }
+                    out.add(new ValueOption(drop.getId(), plainName(drop.getName()),
+                            "&7One extra drop from every &f" + plainName(drop.getName()) + "&7 generator.", icon));
+                }
+            }
+            case TEAM_BUFF -> {
+                for (BuffOption buff : BUFF_OPTIONS) {
+                    String resolved = buff.resolve();
+                    if (resolved == null) continue; // this server's Bukkit doesn't know that effect
+                    out.add(new ValueOption(resolved, buff.label(),
+                            "&7Everyone in the arena gets it.", buff.icon()));
+                }
+            }
+            case WEATHER_CHANGE -> {
+                out.add(new ValueOption("CLEAR", "Clear Skies", "&7Stops any rain.", Material.SUNFLOWER));
+                out.add(new ValueOption("RAINING", "Rain", "&7Starts raining.", Material.WATER_BUCKET));
+                out.add(new ValueOption("UNTOUCHED", "Server Default",
+                        "&7Hands the weather back to the world.", Material.BARRIER));
+            }
+            case TIME_CHANGE -> {
+                out.add(new ValueOption("NOON", "Noon", "&7Broad daylight.", Material.CLOCK));
+                out.add(new ValueOption("SUNSET", "Sunset", "&7Golden hour.", Material.ORANGE_DYE));
+                out.add(new ValueOption("NIGHT", "Night", "&7Lights out.", Material.BLACK_DYE));
+                out.add(new ValueOption("UNTOUCHED", "Server Default",
+                        "&7Hands the time back to the world.", Material.BARRIER));
+            }
+            default -> { /* no value to pick */ }
+        }
+        return out;
+    }
+
+    /**
+     * A buff the wizard offers. Bukkit renamed several potion effects over the years, so each
+     * entry lists the names it may go by and resolves to whichever one this server knows —
+     * an entry that resolves to none is simply not offered.
+     */
+    private record BuffOption(String label, Material icon, String... names) {
+        String resolve() {
+            for (String name : names) {
+                if (org.bukkit.potion.PotionEffectType.getByName(name) != null) return name;
+            }
+            return null;
+        }
+    }
+
+    private static final List<BuffOption> BUFF_OPTIONS = List.of(
+            new BuffOption("Speed", Material.SUGAR, "SPEED"),
+            new BuffOption("Jump Boost", Material.RABBIT_FOOT, "JUMP_BOOST", "JUMP"),
+            new BuffOption("Regeneration", Material.GHAST_TEAR, "REGENERATION"),
+            new BuffOption("Strength", Material.BLAZE_POWDER, "STRENGTH", "INCREASE_DAMAGE"),
+            new BuffOption("Resistance", Material.IRON_CHESTPLATE, "RESISTANCE", "DAMAGE_RESISTANCE"),
+            new BuffOption("Fire Resistance", Material.MAGMA_CREAM, "FIRE_RESISTANCE"),
+            new BuffOption("Haste", Material.GOLDEN_PICKAXE, "HASTE", "FAST_DIGGING"),
+            new BuffOption("Absorption", Material.GOLDEN_APPLE, "ABSORPTION"),
+            new BuffOption("Night Vision", Material.GOLDEN_CARROT, "NIGHT_VISION"),
+            new BuffOption("Water Breathing", Material.PUFFERFISH, "WATER_BREATHING"),
+            new BuffOption("Invisibility", Material.GLASS_BOTTLE, "INVISIBILITY"),
+            new BuffOption("Slowness", Material.SOUL_SAND, "SLOWNESS", "SLOW"),
+            new BuffOption("Weakness", Material.FERMENTED_SPIDER_EYE, "WEAKNESS"),
+            new BuffOption("Blindness", Material.INK_SAC, "BLINDNESS"));
 
     // ── Shop configuration ────────────────────────────────────────────────────────
 
@@ -1004,6 +1739,7 @@ public final class GuiManager {
             return;
         }
 
+        boolean locked = session.getSettings().isTeamsLocked();
         List<Team> teams = new ArrayList<>(arena.getEnabledTeams());
         teams.sort(Comparator.comparing(Team::name));
 
@@ -1037,6 +1773,17 @@ public final class GuiManager {
 
         if (teams.isEmpty()) GuiStyle.place(inv, "team-select.buttons.empty");
         else GuiStyle.place(inv, "team-select.buttons.distribute");
+
+        // Lock / Unlock are two looks of one control and share a slot (see guis.yml).
+        GuiStyle.place(inv, locked ? "team-select.buttons.unlock-teams" : "team-select.buttons.lock-teams");
+
+        // The same Team Size editor the Arena Modifiers hub offers, reachable from where a host
+        // actually notices the cap is wrong. Its own screen explains the lobby-only rule.
+        GuiStyle.place(inv, "team-select.buttons.team-size",
+                "%amount%", String.valueOf(arena.getPlayersPerTeam()),
+                "%availability%", plugin.canChangeTeamSize(arena)
+                        ? "&8▶ Click to change"
+                        : "&cLocked — the match is running.");
 
         GuiStyle.place(inv, "team-select.buttons.back");
         p.openInventory(inv);

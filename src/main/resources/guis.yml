@@ -23,7 +23,7 @@
 # Do not change 'config-version': the plugin uses it to upgrade this file in
 # place when you install a newer version (your edits are preserved).
 # ─────────────────────────────────────────────────────────────────────────────
-config-version: 4
+config-version: 5
 
 # Materials used to decorate every menu.
 global:
@@ -748,6 +748,8 @@ arena-config:
         - "&7(Diamond II, Emerald II, …) happen"
         - "&7and how long the match lasts."
         - "&8"
+        - "&7Now: %summary%"
+        - "&8"
         - "&8▶ Click to edit"
       glint: false
     shop-config:
@@ -758,6 +760,8 @@ arena-config:
         - "&7Disable specific shop items for"
         - "&7this match, or change what they"
         - "&7cost."
+        - "&8"
+        - "&7Now: %summary%"
         - "&8"
         - "&8▶ Click to configure"
       glint: false
@@ -770,6 +774,8 @@ arena-config:
         - "&7shop setup, or apply one you"
         - "&7saved earlier."
         - "&8"
+        - "&7Now: %summary%"
+        - "&8"
         - "&8▶ Click to manage"
       glint: false
     team-size:
@@ -779,6 +785,8 @@ arena-config:
       lore:
         - "&7Change how many players fit on"
         - "&7each team for this match."
+        - "&8"
+        - "&7Now: %summary%"
         - "&8"
         - "&8▶ Click to configure"
       glint: false
@@ -791,6 +799,8 @@ arena-config:
         - "&7damage, kill bounties, world"
         - "&7border, and more standing rules."
         - "&8"
+        - "&7Now: %summary%"
+        - "&8"
         - "&8▶ Click to configure"
       glint: false
     environment:
@@ -800,6 +810,8 @@ arena-config:
       lore:
         - "&7Change the arena's time of day"
         - "&7and weather."
+        - "&8"
+        - "&7Now: %summary%"
         - "&8"
         - "&8▶ Click to configure"
       glint: false
@@ -1025,6 +1037,8 @@ builder-settings:
         - "&7(Diamond II, Emerald II, …) happen"
         - "&7and how long the match lasts."
         - "&8"
+        - "&7Now: %summary%"
+        - "&8"
         - "&8▶ Click to edit"
       glint: false
     shop-config:
@@ -1036,6 +1050,8 @@ builder-settings:
         - "&7this match, or change what they"
         - "&7cost."
         - "&8"
+        - "&7Now: %summary%"
+        - "&8"
         - "&8▶ Click to configure"
       glint: false
     team-size:
@@ -1045,6 +1061,8 @@ builder-settings:
       lore:
         - "&7Change how many players fit on"
         - "&7each team for this match."
+        - "&8"
+        - "&7Now: %summary%"
         - "&8"
         - "&8▶ Click to configure"
       glint: false
@@ -1056,6 +1074,8 @@ builder-settings:
         - "&7Friendly fire, fall/explosion"
         - "&7damage, kill bounties, world"
         - "&7border, and more standing rules."
+        - "&8"
+        - "&7Now: %summary%"
         - "&8"
         - "&8▶ Click to configure"
       glint: false
@@ -1134,10 +1154,11 @@ presets:
       name: "&6&lSaved Configurations"
       lore:
         - "&7A saved configuration stores a match's"
-        - "&7event timeline and shop overrides so"
-        - "&7you can reuse them in later matches."
+        - "&7timeline, shop, team size, match rules"
+        - "&7and environment so you can reuse them."
         - "&8"
         - "&8▶ Click a preset to apply it"
+        - "&8▶ Right-click to preview it first"
         - "&8▶ Shift-click a preset to delete it"
       glint: false
     empty:
@@ -1175,13 +1196,111 @@ presets:
         - "%timeline%"
         - "&7Disabled items: &f%disabled%"
         - "&7Price overrides: &f%priced%"
+        - "&7Team size: %teamsize%"
+        - "&7Match rules: %rules%"
         - "&8"
         - "&8▶ Click to apply"
+        - "&8▶ Right-click to preview"
         - "&8▶ Shift-click to delete"
       glint: false
   # The %timeline% summary line on each preset item. Custom: %events%.
   summary-default-timeline: "&8Default timeline"
   summary-custom-timeline: "&7Custom timeline &8(%events% events)"
+
+# ── Saved configuration preview ───────────────────────────────────────────────
+# Opened by right-clicking a saved configuration. Read-only: it shows exactly what
+# the preset contains and what applying it would change, with Apply/Delete here so
+# you never have to apply one just to find out what's in it.
+# Title placeholders: %name%, %arena%. Cards use %summary% and (where listed) a
+# multi-line %detail%.
+preset-preview:
+  title: "&1&lPreview &8· %name%"
+  size: 45
+  buttons:
+    header:
+      slot: 4
+      material: BOOK
+      name: "&6&l%name%"
+      lore:
+        - "&7Everything this saved configuration"
+        - "&7would set for the match."
+        - "&8"
+        - "&8Nothing changes until you click Apply."
+      glint: false
+    timeline:
+      slot: 10
+      material: CLOCK
+      name: "&e&lEvent Timeline"
+      lore:
+        - "%summary%"
+        - "&8"
+        - "%detail%"
+      glint: false
+    shop:
+      slot: 12
+      material: EMERALD
+      name: "&a&lShop Items"
+      lore:
+        - "%summary%"
+        - "&8"
+        - "%detail%"
+      glint: false
+    team-size:
+      slot: 14
+      material: WHITE_BANNER
+      name: "&d&lTeam Size"
+      lore: ["%summary%"]
+      glint: false
+    match-rules:
+      slot: 16
+      material: NETHERITE_SWORD
+      name: "&c&lMatch Rules"
+      lore:
+        - "%summary%"
+        - "&8"
+        - "%detail%"
+      glint: false
+    environment:
+      slot: 21
+      material: SUNFLOWER
+      name: "&b&lEnvironment"
+      lore: ["%summary%"]
+      glint: false
+    diff:
+      slot: 23
+      material: COMPARATOR
+      name: "&6&lWhat would change"
+      lore:
+        - "&7Compared with this match's"
+        - "&7current setup:"
+        - "&8"
+        - "%detail%"
+      glint: false
+    apply:
+      slot: 40
+      material: EMERALD_BLOCK
+      name: "&a&lApply This Configuration"
+      lore:
+        - "&7Replace the match's current setup"
+        - "&7with &f%name%&7."
+        - "&8"
+        - "&8▶ Click to apply"
+      glint: true
+    delete:
+      slot: 43
+      material: LAVA_BUCKET
+      name: "&4&lDelete"
+      lore:
+        - "&7Delete &f%name%&7 permanently."
+        - "&8"
+        - "&8▶ Click to delete"
+      glint: false
+    back:
+      slot: 37
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to saved configurations."]
+      glint: false
 
 # ── Preset naming (anvil) ─────────────────────────────────────────────────────
 # Opens when a player clicks "Save Current Setup". Type a name in the anvil's
@@ -1203,7 +1322,7 @@ preset-name:
 # The interior top two rows show the events left→right in match order. Click
 # an event to select it; the editor controls appear on the bottom row.
 timeline:
-  title: "&1&lEvent Timeline &8· %arena%"
+  title: "&1&lEvent Timeline &8· %arena% &8(%page%/%pages%)"
   size: 54
   buttons:
     info:
@@ -1215,14 +1334,16 @@ timeline:
         - "&7the match starts, from left to right."
         - "&8"
         - "&7• &fClick&7 an event to select it, then"
-        - "&7  use the buttons below to move it."
+        - "&7  use the buttons below to move it,"
+        - "&7  delete it, copy it, or change what"
+        - "&7  it does."
         - "&7• &fMatch End&7 shows the &ftotal match"
         - "&7  time&7 instead — it can be moved but"
         - "&7  never deleted, and shortening the"
         - "&7  match rescales every other event."
         - "&7• &fAdd Event&7 (top-right) adds more —"
-        - "&7  from the server's catalog, or your"
-        - "&7  own custom event."
+        - "&7  from the server's catalog, or an"
+        - "&7  event you build yourself."
         - "&8"
         - "&7Changes apply when the match starts."
       glint: false
@@ -1233,9 +1354,57 @@ timeline:
       lore:
         - "&7Add another event to this match's"
         - "&7timeline — from the server's catalog,"
-        - "&7or your own custom event."
+        - "&7or build your own."
         - "&8"
+        - "%locked%"
         - "&8▶ Click to add"
+      glint: false
+    # Live totals for the whole schedule. %events%, %length% (match end),
+    # %custom% / %max_custom% (custom events used), %source%, %locked%
+    summary:
+      slot: 28
+      material: PAPER
+      name: "&e&lThis Match's Schedule"
+      lore:
+        - "&7Events: &f%events%"
+        - "&7Match length: &f%length%"
+        - "&7Custom events: &f%custom%&7/&f%max_custom%"
+        - "&7Source: %source%"
+        - "&8"
+        - "%backend%"
+        - "%locked%"
+      glint: false
+    # The selected event's full detail. %event%, %time%, %effect%, %type%, %value%
+    # Shares its slot with 'no-selection' below — they are two states of one card.
+    selected:
+      slot: 31
+      material: ITEM_FRAME
+      name: "&a&lSelected: &f%event%"
+      lore:
+        - "&7Fires at: &f%time%"
+        - "&7Type: &f%type%"
+        - "&7Applies to: %value%"
+        - "&8"
+        - "&7%effect%"
+      glint: true
+    no-selection:
+      slot: 31
+      material: ITEM_FRAME
+      name: "&7Nothing selected"
+      lore:
+        - "&8Click an event above to select it."
+        - "&8Its controls appear on the row below."
+      glint: false
+    clear-all:
+      slot: 34
+      material: CAULDRON
+      name: "&c&lClear All Events"
+      lore:
+        - "&7Remove all &f%events%&7 events and start"
+        - "&7from an empty schedule."
+        - "&7Match End always stays."
+        - "&8"
+        - "&8▶ Click to clear"
       glint: false
     minus-minute:
       slot: 37
@@ -1249,6 +1418,17 @@ timeline:
       name: "&c-5 Seconds"
       lore: ["&7Move &f%event%&7 five seconds earlier."]
       glint: false
+    # Only shown for events you built yourself — a catalog event's effect is
+    # defined in config.yml, not per match.
+    edit-value:
+      slot: 39
+      material: WRITABLE_BOOK
+      name: "&b&lChange What It Does"
+      lore:
+        - "&7Currently: %value%"
+        - "&8"
+        - "&8▶ Click to re-pick"
+      glint: false
     delete:
       slot: 40
       material: LAVA_BUCKET
@@ -1256,6 +1436,17 @@ timeline:
       lore:
         - "&7Remove &f%event%&7 from this match"
         - "&7entirely — it will never fire."
+      glint: false
+    # Copies the selected event into a second, independent one just after it.
+    duplicate:
+      slot: 41
+      material: BOOK
+      name: "&d&lDuplicate Event"
+      lore:
+        - "&7Schedule &f%event%&7 a second time,"
+        - "&7just after this one."
+        - "&8"
+        - "&8▶ Click to duplicate"
       glint: false
     plus-seconds:
       slot: 42
@@ -1268,6 +1459,18 @@ timeline:
       material: LIME_CONCRETE
       name: "&a&l+1 Minute"
       lore: ["&7Move &f%event%&7 one minute later."]
+      glint: false
+    previous-page:
+      slot: 46
+      material: ARROW
+      name: "&e◀ Previous Page"
+      lore: ["&8Go to page %target%."]
+      glint: false
+    next-page:
+      slot: 52
+      material: ARROW
+      name: "&eNext Page ▶"
+      lore: ["&8Go to page %target%."]
       glint: false
     reset:
       slot: 49
@@ -1292,12 +1495,15 @@ timeline:
       glint: false
   items:
     # A regular timeline event. %event%, %time% (m:ss from match start),
-    # %effect% (what it does, from config.yml's description).
+    # %effect% (what it does), %index%/%total% (its place in the order),
+    # %origin% (marks an event you built yourself).
     event:
       name: "&e&l%event%"
       lore:
         - "&7Fires at: &f%time%&7 into the match"
         - "&7Effect: %effect%"
+        - "&8#%index% of %total%"
+        - "%origin%"
         - "&8"
         - "&8▶ Click to select & edit"
       glint: false
@@ -1307,9 +1513,11 @@ timeline:
       lore:
         - "&7Fires at: &f%time%&7 into the match"
         - "&7Effect: %effect%"
+        - "&8#%index% of %total%"
+        - "%origin%"
         - "&8"
-        - "&8Use the buttons below to move or"
-        - "&8delete it. Click again to deselect."
+        - "&8Use the buttons below to move, copy"
+        - "&8or delete it. Click again to deselect."
       glint: true
     # Match End — always the last item on the timeline. %time%, %effect%
     match-end:
@@ -1336,31 +1544,42 @@ timeline:
       glint: true
 
 # ── Event timeline: Add Event ─────────────────────────────────────────────────
-# Title placeholders: %arena%
+# Title placeholders: %arena%, %page%, %pages%
 timeline-add:
-  title: "&1&lAdd Event &8· %arena%"
+  title: "&1&lAdd Event &8· %arena% &8(%page%/%pages%)"
   size: 54
   buttons:
-    custom-info:
+    # Opens the build-your-own event wizard. %used%/%max% custom events used, %full%
+    create-custom:
       slot: 49
       material: WRITABLE_BOOK
-      name: "&d&lWant something else?"
+      name: "&d&lBuild Your Own Event"
       lore:
-        - "&7Create your own event with"
-        - "&7&f/ea timeline custom <type> [value] <time>&7."
+        - "&7Create an event the catalog doesn't"
+        - "&7have: a resource burst, a buff for"
+        - "&7everyone, weather, an announcement…"
         - "&8"
-        - "&7Needs a value: &fresource_burst, team_buff,"
-        - "&7weather_change, time_change, announcement"
-        - "&8"
-        - "&7No value needed: &ftrap_chaos, fireworks,"
-        - "&7heal_all, clear_items, balance_teams,"
-        - "&7clear_traps, reset_upgrades"
+        - "&7Custom events used: &f%used%&7/&f%max%"
+        - "%full%"
+        - "&8▶ Click to build one"
       glint: false
     empty:
       slot: 22
       material: BARRIER
       name: "&cNothing to add"
       lore: ["%reason%"]
+      glint: false
+    previous-page:
+      slot: 47
+      material: ARROW
+      name: "&e◀ Previous Page"
+      lore: ["&8Go to page %target%."]
+      glint: false
+    next-page:
+      slot: 51
+      material: ARROW
+      name: "&eNext Page ▶"
+      lore: ["&8Go to page %target%."]
       glint: false
     back:
       slot: 45
@@ -1369,13 +1588,179 @@ timeline-add:
       lore: ["&8Return to the timeline."]
       glint: false
   items:
-    # A catalog definition not currently on this match's timeline. %event%, %effect%
+    # A catalog definition not currently on this match's timeline.
+    # %event%, %effect%, %time% (the time it would be added at)
     event:
       name: "&a&l%event%"
       lore:
         - "&7Effect: %effect%"
+        - "&7Default time: &f%time%"
         - "&8"
-        - "&8▶ Click to add"
+        - "&8▶ Click to add at its default time"
+        - "&8▶ Shift-click to pick the time first"
+      glint: false
+
+# ── Build your own event: step 1, what it does ────────────────────────────────
+# Title placeholders: %arena%
+timeline-custom-type:
+  title: "&1&lBuild an Event &8· What it does"
+  size: 54
+  buttons:
+    info:
+      slot: 4
+      material: KNOWLEDGE_BOOK
+      name: "&b&lStep 1 of 3"
+      lore:
+        - "&7Pick what your event should do."
+        - "&7You'll choose what it applies to"
+        - "&7and when it fires next."
+        - "&8"
+        - "%backend%"
+      glint: false
+    back:
+      slot: 49
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to Add Event."]
+      glint: false
+  items:
+    # One per creatable event type. %type%, %effect%, %needs_value%
+    type:
+      name: "&a&l%type%"
+      lore:
+        - "&7%effect%"
+        - "&8"
+        - "%needs_value%"
+        - "&8▶ Click to choose this"
+      glint: false
+
+# ── Build your own event: step 2, what it applies to ──────────────────────────
+# Title placeholders: %type%
+timeline-custom-value:
+  title: "&1&lBuild an Event &8· %type%"
+  size: 54
+  buttons:
+    info:
+      slot: 4
+      material: KNOWLEDGE_BOOK
+      name: "&b&lStep 2 of 3"
+      lore:
+        - "&7%type%: %effect%"
+        - "&8"
+        - "&7Pick what it should apply to."
+      glint: false
+    empty:
+      slot: 22
+      material: BARRIER
+      name: "&cNothing to pick"
+      lore: ["%reason%"]
+      glint: false
+    back:
+      slot: 49
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to the event type."]
+      glint: false
+  items:
+    # One pickable value. %option%, %detail%
+    option:
+      name: "&a&l%option%"
+      lore:
+        - "%detail%"
+        - "&8"
+        - "&8▶ Click to choose"
+      glint: false
+
+# ── Build your own event: the announcement's message (anvil) ──────────────────
+# Type your message in the anvil's text field, then take the result item to keep it.
+# No XP is spent; the level cost shown is cosmetic and ignored.
+timeline-custom-text:
+  title: "&1Type your announcement"
+  suggested: "Good luck!"
+  buttons:
+    icon:
+      material: PAPER
+      name: "%text%"
+      lore:
+        - "&7Type the message above, then take"
+        - "&7the result to continue."
+        - "&8Colour codes with &f&&7 work."
+      glint: false
+
+# ── Build your own event: step 3, when it fires ───────────────────────────────
+# Title placeholders: %event%
+# Also used when you shift-click a catalog event to pick its time before adding.
+timeline-custom-time:
+  title: "&1&lWhen? &8· %event%"
+  size: 27
+  buttons:
+    # %event%, %time%, %value% (what it applies to), %effect%, %length% (match length)
+    display:
+      slot: 13
+      material: CLOCK
+      name: "&e&l%event% &8· &f%time%"
+      lore:
+        - "&7%effect%"
+        - "&7Applies to: %value%"
+        - "&8"
+        - "&7Fires &f%time%&7 into a &f%length%&7 match."
+      glint: true
+    minus-minute:
+      slot: 10
+      material: RED_CONCRETE
+      name: "&c&l-1 Minute"
+      lore: ["&7Fire one minute earlier."]
+      glint: false
+    minus-seconds:
+      slot: 11
+      material: RED_TERRACOTTA
+      name: "&c-5 Seconds"
+      lore: ["&7Fire five seconds earlier."]
+      glint: false
+    plus-seconds:
+      slot: 15
+      material: LIME_TERRACOTTA
+      name: "&a+5 Seconds"
+      lore: ["&7Fire five seconds later."]
+      glint: false
+    plus-minute:
+      slot: 16
+      material: LIME_CONCRETE
+      name: "&a&l+1 Minute"
+      lore: ["&7Fire one minute later."]
+      glint: false
+    # Buff events only. %current%
+    amplifier:
+      slot: 20
+      material: GLOWSTONE_DUST
+      name: "&d&lStrength: &f%current%"
+      lore:
+        - "&7How strong the effect is."
+        - "&8▶ Click to cycle"
+      glint: false
+    duration:
+      slot: 21
+      material: REDSTONE
+      name: "&d&lDuration: &f%current%"
+      lore:
+        - "&7How long the effect lasts."
+        - "&8▶ Click to cycle"
+      glint: false
+    # %verb% reads "Add to timeline" or "Save changes" when editing an existing event.
+    confirm:
+      slot: 24
+      material: EMERALD_BLOCK
+      name: "&a&l%verb%"
+      lore:
+        - "&7Schedule &f%event%&7 at &f%time%&7."
+        - "&8"
+        - "&8▶ Click to confirm"
+      glint: true
+    back:
+      slot: 22
+      material: ARROW
+      name: "&7◀ Back"
+      lore: ["&8Return to the previous step."]
       glint: false
 
 # ── Shop configuration: page list ────────────────────────────────────────────
@@ -1745,6 +2130,40 @@ team-select:
         - "&7the lobby across the enabled teams."
         - "&8"
         - "&8▶ Click to distribute"
+      glint: false
+    # lock-teams / unlock-teams are two looks of ONE toggle and should keep the same slot.
+    # While locked, players can't switch teams themselves (the team menu simply refuses);
+    # you can still move anyone anywhere from here.
+    lock-teams:
+      slot: 47
+      material: TRIPWIRE_HOOK
+      name: "&a&lTeams Unlocked"
+      lore:
+        - "&7Players can pick and switch teams"
+        - "&7themselves right now."
+        - "&8"
+        - "&8▶ Click to lock teams"
+      glint: false
+    unlock-teams:
+      slot: 47
+      material: IRON_DOOR
+      name: "&c&lTeams Locked"
+      lore:
+        - "&7Players can't switch teams — only"
+        - "&7you can move them from here."
+        - "&8"
+        - "&8▶ Click to unlock teams"
+      glint: true
+    # %amount% (the arena's current players-per-team), %availability%
+    team-size:
+      slot: 45
+      material: WHITE_BANNER
+      name: "&d&lTeam Size: &f%amount%"
+      lore:
+        - "&7How many players fit on each"
+        - "&7team in this match."
+        - "&8"
+        - "%availability%"
       glint: false
     unavailable:
       slot: 31

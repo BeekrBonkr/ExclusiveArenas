@@ -263,18 +263,22 @@ public final class QuickActionsService implements Listener {
         if (plugin.getSessionService().getById(session.getSessionId()) == null) return;
         if (!arena.exists() || arena.getStatus() != ArenaStatus.LOBBY) return;
 
-        for (Map.Entry<UUID, String> entry : snapshot.playerTeams.entrySet()) {
-            Player p = Bukkit.getPlayer(entry.getKey());
-            if (p == null || !p.isOnline()) continue;
+        // Host-initiated restoration: never let a locked lobby's backstop fight putting people
+        // back where the regen found them.
+        plugin.runHostTeamAction(() -> {
+            for (Map.Entry<UUID, String> entry : snapshot.playerTeams.entrySet()) {
+                Player p = Bukkit.getPlayer(entry.getKey());
+                if (p == null || !p.isOnline()) continue;
 
-            plugin.getTicketService().grant(p.getUniqueId(), session.getSessionId(), arena.getName());
-            Team team = teamByName(arena, entry.getValue());
-            if (team != null) {
-                if (arena.addPlayer(p, team) != null) arena.addPlayer(p); // team full/gone → any team
-            } else {
-                arena.addPlayer(p);
+                plugin.getTicketService().grant(p.getUniqueId(), session.getSessionId(), arena.getName());
+                Team team = teamByName(arena, entry.getValue());
+                if (team != null) {
+                    if (arena.addPlayer(p, team) != null) arena.addPlayer(p); // team full/gone → any team
+                } else {
+                    arena.addPlayer(p);
+                }
             }
-        }
+        });
         for (UUID id : snapshot.spectators) {
             Player p = Bukkit.getPlayer(id);
             if (p == null || !p.isOnline()) continue;
@@ -400,8 +404,10 @@ public final class QuickActionsService implements Listener {
         if (a == null || b == null || a == b) return;
         List<Player> aPlayers = playersOnTeam(arena, a);
         List<Player> bPlayers = playersOnTeam(arena, b);
-        for (Player p : aPlayers) arena.setPlayerTeam(p, b);
-        for (Player p : bPlayers) arena.setPlayerTeam(p, a);
+        plugin.runHostTeamAction(() -> {
+            for (Player p : aPlayers) arena.setPlayerTeam(p, b);
+            for (Player p : bPlayers) arena.setPlayerTeam(p, a);
+        });
         tell(actor, arena, Lang.msg("quick.teams-swapped",
                 "%team-a%", a.getDisplayName(null), "%team-b%", b.getDisplayName(null)));
     }
@@ -413,11 +419,13 @@ public final class QuickActionsService implements Listener {
         List<Player> players = new ArrayList<>(arena.getPlayers());
         java.util.Collections.shuffle(players);
 
-        int i = 0;
-        for (Player p : players) {
-            arena.setPlayerTeam(p, teams.get(i % teams.size()));
-            i++;
-        }
+        plugin.runHostTeamAction(() -> {
+            int i = 0;
+            for (Player p : players) {
+                arena.setPlayerTeam(p, teams.get(i % teams.size()));
+                i++;
+            }
+        });
         tell(actor, arena, Lang.msg("quick.teams-balanced", "%count%", String.valueOf(players.size())));
     }
 
