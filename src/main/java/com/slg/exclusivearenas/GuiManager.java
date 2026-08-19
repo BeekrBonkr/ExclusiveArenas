@@ -11,17 +11,21 @@ import de.marcely.bedwars.api.game.shop.ShopPage;
 import de.marcely.bedwars.api.game.shop.price.ShopPrice;
 import de.marcely.bedwars.api.remote.RemoteAPI;
 import de.marcely.bedwars.api.remote.RemoteArena;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
-import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.MenuType;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.view.AnvilView;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -106,6 +110,13 @@ public final class GuiManager {
     }
 
     public void openAdminList(Player p, int page) {
+        // Every route into the network-wide list funnels through here (main menu, "Back" from
+        // Controls, error-path reopens), so a single live check closes them all for a viewer
+        // whose admin permission was revoked while menus referencing it were still open.
+        if (!p.hasPermission(ADMIN_PERM)) {
+            openArenaList(p, 0);
+            return;
+        }
         List<PrivateSession> all = new ArrayList<>(sessions.getAllSessions());
         all.sort(Comparator.comparing(PrivateSession::getArenaName, String.CASE_INSENSITIVE_ORDER));
         GuiHolder holder = new GuiHolder(GuiHolder.Type.ADMIN_LIST).adminView(true);
@@ -121,23 +132,55 @@ public final class GuiManager {
 
         Inventory inv = create(holder, GuiStyle.size(menu, 54),
                 GuiStyle.title(menu, "%page%", String.valueOf(pg + 1), "%pages%", String.valueOf(pages)));
-        renderSessionListInto(p, holder, inv, menu, list, pg, pages, allowCreate);
+        renderSessionListInto(p, holder, inv, menu, list, pg, pages, allowCreate, false);
         p.openInventory(inv);
     }
 
-    /** Fills a session-list page — also called by the live refresh to re-render in place. */
+    /**
+     * Fills a session-list page — also called by the live refresh to re-render in place.
+     *
+     * @param preserveSlots true for the once-a-second in-place refresh: entries still present
+     *                      keep the slot they already occupy (instead of compacting the page),
+     *                      so an in-flight click can't land on a neighbour that just slid over
+     *                      because an earlier entry vanished. Fresh opens and page turns pass
+     *                      false and compact as usual.
+     */
     private void renderSessionListInto(Player p, GuiHolder holder, Inventory inv, String menu,
-                                       List<PrivateSession> list, int pg, int pages, boolean allowCreate) {
+                                       List<PrivateSession> list, int pg, int pages, boolean allowCreate,
+                                       boolean preserveSlots) {
         int perPage = LIST_SLOTS.length;
+        Map<Integer, UUID> previous = preserveSlots ? holder.slotIdSnapshot() : Map.of();
         holder.clearSlotMaps();
         inv.clear();
         frame(inv);
 
         int start = pg * perPage;
         int end = Math.min(list.size(), start + perPage);
-        for (int i = start; i < end; i++) {
-            PrivateSession session = list.get(i);
-            int slot = LIST_SLOTS[i - start];
+        List<PrivateSession> pageList = list.subList(start, end);
+
+        // First pass: pin every entry that was already on screen to its previous slot.
+        Map<UUID, Integer> pinned = new HashMap<>();
+        Set<Integer> usedSlots = new HashSet<>();
+        for (PrivateSession session : pageList) {
+            for (Map.Entry<Integer, UUID> prev : previous.entrySet()) {
+                if (prev.getValue().equals(session.getSessionId())) {
+                    pinned.put(session.getSessionId(), prev.getKey());
+                    usedSlots.add(prev.getKey());
+                    break;
+                }
+            }
+        }
+        // Second pass: place everything — pinned entries where they were, the rest (all of
+        // them, on a fresh render) into the remaining template slots in order.
+        int nextFree = 0;
+        for (PrivateSession session : pageList) {
+            Integer slot = pinned.get(session.getSessionId());
+            if (slot == null) {
+                while (nextFree < LIST_SLOTS.length && usedSlots.contains(LIST_SLOTS[nextFree])) nextFree++;
+                if (nextFree >= LIST_SLOTS.length) break; // page holds at most LIST_SLOTS entries
+                slot = LIST_SLOTS[nextFree];
+                usedSlots.add(slot);
+            }
             inv.setItem(slot, sessionItem(menu, session, holder.adminView()));
             holder.mapSlot(slot, session.getSessionId());
         }
@@ -186,7 +229,7 @@ public final class GuiManager {
                 int pages = Math.max(1, (int) Math.ceil(owned.size() / (double) LIST_SLOTS.length));
                 int pg = Math.max(0, Math.min(holder.page(), pages - 1));
                 holder.page(pg);
-                renderSessionListInto(p, holder, inv, "arena-list", owned, pg, pages, true);
+                renderSessionListInto(p, holder, inv, "arena-list", owned, pg, pages, true, true);
             }
             case ADMIN_LIST -> {
                 List<PrivateSession> all = new ArrayList<>(sessions.getAllSessions());
@@ -194,7 +237,7 @@ public final class GuiManager {
                 int pages = Math.max(1, (int) Math.ceil(all.size() / (double) LIST_SLOTS.length));
                 int pg = Math.max(0, Math.min(holder.page(), pages - 1));
                 holder.page(pg);
-                renderSessionListInto(p, holder, inv, "admin-list", all, pg, pages, false);
+                renderSessionListInto(p, holder, inv, "admin-list", all, pg, pages, false, true);
             }
             default -> { /* static menus don't need refreshing */ }
         }
@@ -957,13 +1000,47 @@ public final class GuiManager {
         java.util.LinkedHashMap<String, String> snapshot = new java.util.LinkedHashMap<>(presets);
         GuiHolder holder = new GuiHolder(GuiHolder.Type.PRESET_NAME)
                 .sessionId(session.getSessionId()).adminView(adminView).presets(snapshot);
-        Inventory inv = Bukkit.createInventory(holder, InventoryType.ANVIL,
-                GuiStyle.title("preset-name", "%arena%", session.getArenaName()));
-        holder.setInventory(inv);
 
         String suggested = PresetService.nextFreeName(snapshot);
-        inv.setItem(0, GuiStyle.item("preset-name.buttons.icon", "%name%", suggested));
-        p.openInventory(inv);
+        openAnvilPrompt(p, holder,
+                GuiStyle.title("preset-name", "%arena%", session.getArenaName()),
+                GuiStyle.item("preset-name.buttons.icon", "%name%", suggested));
+    }
+
+    // ── Anvil text prompts ────────────────────────────────────────────────────────
+    //
+    // Only a REAL anvil container view processes rename packets (and fires PrepareAnvilEvent) —
+    // a Bukkit.createInventory(…, InventoryType.ANVIL) chest-alike silently drops them. Real
+    // views can't carry a custom InventoryHolder, so the GuiHolder that routes a prompt's
+    // clicks is parked here per player instead: registered when the prompt opens, consulted by
+    // GuiListener's click/prepare handlers, and cleared when the view closes or the player quits.
+
+    private final Map<UUID, GuiHolder> pendingPrompts = new HashMap<>();
+
+    /** The anvil-prompt context awaiting this player's input, or null when none is open. */
+    GuiHolder pendingPrompt(UUID playerId) {
+        return pendingPrompts.get(playerId);
+    }
+
+    void clearPendingPrompt(UUID playerId) {
+        pendingPrompts.remove(playerId);
+    }
+
+    /**
+     * Opens a real anvil view carrying {@code gh} through {@link #pendingPrompt}. The input
+     * item's name pre-fills the text field; the typed text comes back via
+     * {@code AnvilView#getRenameText()} on click/prepare.
+     */
+    private void openAnvilPrompt(Player p, GuiHolder gh, String title, ItemStack input) {
+        AnvilView view = MenuType.ANVIL.create(p,
+                LegacyComponentSerializer.legacySection().deserialize(ItemUtil.color(title)));
+        gh.setInventory(view.getTopInventory());
+        // Register before opening: opening closes whatever menu was showing, and the close
+        // handler only clears a prompt whose inventory matches, so this can't be swept away.
+        pendingPrompts.put(p.getUniqueId(), gh);
+        p.openInventory(view);
+        view.getTopInventory().setItem(0, input);
+        view.setRepairCost(0);
     }
 
     // ── Event timeline editor ─────────────────────────────────────────────────────
@@ -1135,8 +1212,11 @@ public final class GuiManager {
      */
     private boolean isTimelineEditable(SettingsHolder holder) {
         if (!(holder instanceof PrivateSession session)) return true; // a draft has no round yet
-        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
-        return arena == null || arena.getStatus().isLobby();
+        // Remote-aware on purpose: for a session hosted on another server the local lookup
+        // resolves null, and treating that as "editable" would let a mid-round match be edited
+        // from the hub — the save would look successful but never apply (the engine snapshots
+        // the schedule at round start).
+        return ArenaNames.isLobbyStatus(session.getArenaName());
     }
 
     /**
@@ -1337,15 +1417,13 @@ public final class GuiManager {
     /** Step 2b — the anvil where an announcement event's message is typed. */
     public void openTimelineCustomText(Player p, SettingsHolder holder, boolean adminView, GuiHolder state) {
         GuiHolder gh = wizardHolder(GuiHolder.Type.TIMELINE_CUSTOM_TEXT, holder, adminView, state);
-        Inventory inv = Bukkit.createInventory(gh, InventoryType.ANVIL,
-                GuiStyle.title("timeline-custom-text", "%arena%", holder.getArenaName()));
-        gh.setInventory(inv);
 
         String suggested = state.customValue() == null || state.customValue().isBlank()
                 ? GuiStyle.rawString("timeline-custom-text.suggested", "Good luck!")
                 : state.customValue();
-        inv.setItem(0, GuiStyle.item("timeline-custom-text.buttons.icon", "%text%", suggested));
-        p.openInventory(inv);
+        openAnvilPrompt(p, gh,
+                GuiStyle.title("timeline-custom-text", "%arena%", holder.getArenaName()),
+                GuiStyle.item("timeline-custom-text.buttons.icon", "%text%", suggested));
     }
 
     /**
@@ -2056,6 +2134,9 @@ public final class GuiManager {
             case LOBBY -> Material.LIGHT_BLUE_CONCRETE;
             case END_LOBBY, RESETTING -> Material.YELLOW_CONCRETE;
             case STOPPED -> Material.RED_CONCRETE;
+            // A status constant added by a future MBedwars must not throw mid-render — that
+            // would break the initial open and be silently swallowed on every refresh.
+            default -> Material.FILLED_MAP;
         };
     }
 

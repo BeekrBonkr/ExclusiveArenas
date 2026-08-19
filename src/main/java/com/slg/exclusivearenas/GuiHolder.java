@@ -101,6 +101,9 @@ public final class GuiHolder implements InventoryHolder {
     public void mapSlot(int slot, UUID id) { slotToId.put(slot, id); }
     public UUID idAt(int slot) { return slotToId.get(slot); }
 
+    /** Copy of the current slot -> id map — lets the live refresh keep entries at stable slots. */
+    Map<Integer, UUID> slotIdSnapshot() { return new HashMap<>(slotToId); }
+
     public void mapTeamSlot(int slot, Team team) { slotToTeam.put(slot, team); }
     public Team teamAt(int slot) { return slotToTeam.get(slot); }
 

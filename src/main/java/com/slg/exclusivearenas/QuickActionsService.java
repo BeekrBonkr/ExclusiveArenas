@@ -609,6 +609,11 @@ public final class QuickActionsService implements Listener {
         }
     }
 
+    /** True while {@link #togglePvp} currently has PvP damage blocked for this arena. */
+    public boolean isPvpSuspended(Arena arena) {
+        return arena != null && pvpDisabledArenas.contains(key(arena.getName()));
+    }
+
     @EventHandler(ignoreCancelled = true)
     public void onPvpDamage(EntityDamageByEntityEvent event) {
         if (pvpDisabledArenas.isEmpty()) return;
@@ -720,7 +725,14 @@ public final class QuickActionsService implements Listener {
         int kicked = 0;
         for (Player p : new ArrayList<>(arena.getPlayers())) {
             Long last = lastActivity.get(p.getUniqueId());
-            if (last == null || now - last < thresholdMs) continue;
+            if (last == null) {
+                // Never seen moving — joined and stood still (the canonical AFK case), or the
+                // map was emptied by a reload. Treat as "AFK since first seen": seed with now,
+                // so they become kickable one full threshold from this sweep.
+                lastActivity.put(p.getUniqueId(), now);
+                continue;
+            }
+            if (now - last < thresholdMs) continue;
             try {
                 arena.kickPlayer(p, KickReason.KICK);
                 kicked++;

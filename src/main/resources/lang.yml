@@ -11,7 +11,7 @@
 # Do not change 'config-version': the plugin uses it to upgrade this file
 # in place when you install a newer version (your edits are preserved).
 # ─────────────────────────────────────────────────────────────────────────────
-config-version: 4
+config-version: 5
 
 general:
   # Sent when the console tries to run /ea.
@@ -32,6 +32,8 @@ general:
 join:
   usage: "&cUsage: /ea join <code>"
   invalid-code: "&cInvalid or expired join code."
+  # Too many failed join-code attempts in a row. %seconds% = time left on the cooldown.
+  too-many-attempts: "&cToo many failed join attempts — wait &f%seconds%&cs before trying again."
   not-accepting: "&cThat arena is currently private and not accepting joins."
   # Sent after the plugin pulls a player back in after MBedwars' kick-right-after-join bug. %arena%
   rejoined-after-kick: "&eYou were sent back to &f%arena% &e— you were kicked right after joining."
@@ -370,6 +372,12 @@ cmd:
   forcewin-usage: "&cUsage: /ea forcewin <team>"
   swapteams-usage: "&cUsage: /ea swapteams <team-a> <team-b>"
   buff-usage: "&cUsage: /ea buff <speed|jump|regen|strength|potion_type> [amplifier] [seconds]"
+  # %potion% — the typed potion effect name didn't match any known effect.
+  buff-unknown-potion: "&cUnknown potion effect &f%potion%&c."
+  # %value%
+  buff-bad-amplifier: "&cInvalid amplifier &f%value%&c — use 0 to 9."
+  # %value%
+  buff-bad-seconds: "&cInvalid duration &f%value%&c — use 1 to 3600 seconds."
   timeline-disabled: "&cThe event timeline is disabled on this server."
   timeline-usage: "&cUsage: /ea timeline <list|add|custom|move|set|delete|reset> [event] [time]"
   timeline-add-usage: "&cUsage: /ea timeline add <event> [time]"
@@ -435,5 +443,7 @@ presets:
   applied: "&aApplied &f%name%&a to &f%arena%&a."
   # %name%
   deleted: "&cDeleted the saved configuration &f%name%&c."
+  # %name% — the delete itself failed (database unreachable, disk full, …); see console.
+  delete-failed: "&cCouldn't delete &f%name%&c — see the console for details. It is still saved."
   # %max%
   limit: "&cYou already have %max% saved configurations — delete one first."

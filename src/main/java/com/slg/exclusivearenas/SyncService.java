@@ -1,9 +1,13 @@
 package com.slg.exclusivearenas;
 
+import de.marcely.bedwars.api.BedwarsAPI;
+import de.marcely.bedwars.api.arena.Arena;
 import org.bukkit.Bukkit;
 import org.bukkit.scheduler.BukkitTask;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.logging.Level;
 
 /**
@@ -86,17 +90,61 @@ public final class SyncService {
         if (deadServerSweepTicks > 0) {
             this.deadServerTask = Bukkit.getScheduler().runTaskTimerAsynchronously(plugin, () -> {
                 try {
-                    long staleBefore = System.currentTimeMillis() - deadServerStaleMillis;
-                    for (String deadServerId : db.findDeadServers(staleBefore)) {
-                        plugin.getLogger().warning("ExclusiveArenas: server '" + deadServerId
-                                + "' hasn't sent a heartbeat in over " + (deadServerStaleMillis / 1000)
-                                + "s — treating it as crashed and purging its sessions.");
-                        db.purgeDeadServer(deadServerId);
-                    }
+                    List<String> deadServers = db.findDeadServers(deadServerStaleMillis);
+                    if (deadServers.isEmpty()) return;
+                    // A row's server_id is stamped by whichever server last WROTE it — a match
+                    // created/edited from a hub carries the hub's id while its arena runs on a
+                    // backend. So a dead server's rows can't just be deleted wholesale: load
+                    // them here (still async), then vet each one on the main thread against
+                    // MBedwars' own (remote-aware) arena status before purging.
+                    List<Database.SessionRow> rows = db.loadSessions();
+                    Bukkit.getScheduler().runTask(plugin, () -> sweepDeadServers(deadServers, rows));
                 } catch (Throwable t) {
                     plugin.getLogger().log(Level.WARNING, "Dead-server sweep failed: " + t.getMessage());
                 }
             }, deadServerSweepTicks, deadServerSweepTicks);
+        }
+    }
+
+    /**
+     * Main-thread half of the dead-server sweep: decides, per session row attributed to a
+     * dead server, whether it is truly orphaned. A session whose arena is still active
+     * anywhere on the network (per {@link ArenaNames#isActiveStatus}) is never purged — and
+     * when that arena is active HERE, the row is adopted (re-written under our own server_id)
+     * so it gets a live owner. Everything else is handed to
+     * {@link Database#purgeDeadServer}, which also only drops the heartbeat row once no
+     * sessions remain attributed to the dead server — so rows skipped now are retried on a
+     * later sweep.
+     */
+    private void sweepDeadServers(List<String> deadServers, List<Database.SessionRow> rows) {
+        for (String deadServerId : deadServers) {
+            List<UUID> purgeIds = new ArrayList<>();
+            List<String> purgeArenas = new ArrayList<>();
+            int spared = 0;
+            for (Database.SessionRow row : rows) {
+                if (!deadServerId.equals(row.serverId())) continue;
+                if (ArenaNames.isActiveStatus(row.arenaName())) {
+                    spared++;
+                    Arena local = BedwarsAPI.getGameAPI()
+                            .getArenaByExactName(ArenaNames.canonical(row.arenaName()));
+                    if (local != null && local.exists()) sessions.adoptSession(row.sessionId());
+                    continue;
+                }
+                purgeIds.add(row.sessionId());
+                purgeArenas.add(row.arenaName());
+            }
+            if (!purgeIds.isEmpty() || spared == 0) {
+                plugin.getLogger().warning("ExclusiveArenas: server '" + deadServerId
+                        + "' has stopped sending heartbeats — treating it as crashed; purging "
+                        + purgeIds.size() + " orphaned session(s)"
+                        + (spared > 0 ? " (" + spared + " spared: arena still active)" : "") + ".");
+            } else {
+                // Everything it wrote is still live — nothing to purge yet, so don't warn on
+                // every sweep; the heartbeat row stays until its sessions end (or get adopted).
+                plugin.debug("dead server '" + deadServerId + "': all " + spared
+                        + " session(s) still active — purge deferred");
+            }
+            db.purgeDeadServer(deadServerId, purgeIds, purgeArenas);
         }
     }
 

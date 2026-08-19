@@ -31,8 +31,24 @@ import java.util.Set;
  */
 public final class EaCommand implements CommandExecutor, TabCompleter {
 
-    private static final String PERM_USE    = "exclusivearenas.command";
-    private static final String PERM_BYPASS = "exclusivearenas.bypass";
+    private static final String PERM_USE = "exclusivearenas.command";
+
+    /** Join-code brute-force throttle: after this many failed code attempts within the
+     *  window, further attempts are refused for a short cooldown. A code at the minimum
+     *  allowed length (4 chars, ~1M combinations) is otherwise guessable by an unthrottled
+     *  bot. Entries are pruned lazily (on a successful join, or once fully lapsed). */
+    private static final int MAX_FAILED_JOINS = 3;
+    private static final long FAIL_WINDOW_MILLIS = 60_000L;
+    private static final long JOIN_COOLDOWN_MILLIS = 10_000L;
+
+    private static final class JoinAttempts {
+        int failures;
+        long windowStart;
+        long cooldownUntil;
+    }
+
+    /** Only touched on the main thread (see {@link #handleJoin}'s runTask hop). */
+    private final Map<java.util.UUID, JoinAttempts> joinAttempts = new java.util.HashMap<>();
 
     private final ExclusiveArenasPlugin plugin;
     private final DraftService drafts;
@@ -103,7 +119,14 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                 if (arena == null) { p.sendMessage(Lang.msg("general.not-in-arena")); return true; }
                 PrivateSession session = sessions.getByArena(arena);
                 if (session == null) { p.sendMessage(Lang.msg("general.not-private-match")); return true; }
-                gui.openControls(p, session, p.hasPermission(GuiManager.ADMIN_PERM));
+                // Owner-or-admin only, like every other host command — Match Controls' status
+                // card shows the live join code, which must never leak to a mere occupant.
+                boolean admin = p.hasPermission(GuiManager.ADMIN_PERM);
+                if (!p.getUniqueId().equals(session.getOwner()) && !admin) {
+                    p.sendMessage(Lang.msg("host.only-host-menu"));
+                    return true;
+                }
+                gui.openControls(p, session, admin);
             }
 
             case "join" -> handleJoin(p, args.length >= 2 ? args[1].trim() : null);
@@ -279,10 +302,26 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
         }
         String payload = BUFF_SHORTHANDS.get(args[1].toLowerCase(Locale.ROOT));
         if (payload == null) {
-            // Advanced form: /ea buff <potion_type> [amplifier] [seconds]
+            // Advanced form: /ea buff <potion_type> [amplifier] [seconds]. Validate here —
+            // the executor's QUICK_GRANT_EFFECT branch drops a malformed payload silently
+            // (it stays as a defensive backstop for relayed payloads), so without this the
+            // player would get no feedback at all on a typo.
             String type = args[1].toUpperCase(Locale.ROOT);
-            String amplifier = args.length >= 3 ? args[2] : "0";
-            String seconds = args.length >= 4 ? args[3] : "30";
+            // Same lookup the executor resolves the payload with (see runArenaAction).
+            if (org.bukkit.potion.PotionEffectType.getByName(type) == null) {
+                p.sendMessage(Lang.msg("cmd.buff-unknown-potion", "%potion%", args[1]));
+                return;
+            }
+            Integer amplifier = args.length >= 3 ? parseIntOrNull(args[2]) : Integer.valueOf(0);
+            if (amplifier == null || amplifier < 0 || amplifier > 9) {
+                p.sendMessage(Lang.msg("cmd.buff-bad-amplifier", "%value%", args[2]));
+                return;
+            }
+            Integer seconds = args.length >= 4 ? parseIntOrNull(args[3]) : Integer.valueOf(30);
+            if (seconds == null || seconds < 1 || seconds > 3600) {
+                p.sendMessage(Lang.msg("cmd.buff-bad-seconds", "%value%", args[3]));
+                return;
+            }
             payload = type + ":" + amplifier + ":" + seconds;
         }
         plugin.runArenaAction(p, session, RemoteCommandService.Type.QUICK_GRANT_EFFECT, payload);
@@ -467,10 +506,19 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                     return;
                 }
                 TimelineService.Definition def = timelines.definition(id);
-                int time = args.length >= 4
-                        ? (parseDuration(args[3]) != null ? parseDuration(args[3])
-                                : def != null ? def.defaultSeconds() : 60)
-                        : def != null ? def.defaultSeconds() : 60;
+                // A MISSING time keeps the event's default; a present-but-unparseable one is
+                // rejected (same as move/set) rather than silently substituting the default.
+                int time;
+                if (args.length >= 4) {
+                    Integer parsed = parseDuration(args[3]);
+                    if (parsed == null) {
+                        p.sendMessage(Lang.msg("cmd.bad-time", "%value%", args[3]));
+                        return;
+                    }
+                    time = parsed;
+                } else {
+                    time = def != null ? def.defaultSeconds() : 60;
+                }
                 if (!timelines.addEvent(session.getSettings(), id, time)) {
                     p.sendMessage(Lang.msg("timeline.add-failed"));
                     return;
@@ -861,6 +909,15 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
 
     // ── Time parsing ─────────────────────────────────────────────────────────────
 
+    /** Plain integer parse; null (not a fallback value) on bad input. */
+    private static Integer parseIntOrNull(String raw) {
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
     /** Strict "m:ss" or plain-seconds parse; null (not a fallback value) on bad input. */
     private static Integer parseDuration(String raw) {
         if (raw == null || raw.isBlank()) return null;
@@ -928,10 +985,17 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                     p.sendMessage(Lang.msg("join.usage"));
                     return;
                 }
+                long waitMillis = joinThrottleRemaining(p);
+                if (waitMillis > 0) {
+                    p.sendMessage(Lang.msg("join.too-many-attempts",
+                            "%seconds%", String.valueOf((waitMillis + 999) / 1000)));
+                    return;
+                }
                 // Session state is replicated to every server, so the code resolves locally
                 // even when the arena lives on another server.
                 PrivateSession session = sessions.getByJoinCode(code);
                 if (session == null) {
+                    recordFailedJoin(p);
                     p.sendMessage(Lang.msg("join.invalid-code"));
                     return;
                 }
@@ -945,14 +1009,43 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
             // Deliberately the same message as an unrecognized code (join.invalid-code) rather
             // than a distinct "that one's locked" — otherwise a guesser could tell a code that
             // exists-but-is-locked apart from one that doesn't exist at all, which helps an
-            // automated guesser converge faster than blind guessing would.
+            // automated guesser converge faster than blind guessing would. Counts toward the
+            // brute-force throttle for the same reason.
+            recordFailedJoin(p);
             p.sendMessage(Lang.msg("join.invalid-code"));
             return;
         }
+        joinAttempts.remove(p.getUniqueId());
 
         // Authorise this player (write-through to the shared DB) then route them to the arena.
         tickets.grant(p.getUniqueId(), session.getSessionId(), session.getArenaName());
         plugin.sendPlayerToArena(p, session.getArenaName());
+    }
+
+    /** Milliseconds this player must still wait before another code attempt; 0 when unthrottled. */
+    private long joinThrottleRemaining(Player p) {
+        JoinAttempts attempts = joinAttempts.get(p.getUniqueId());
+        if (attempts == null) return 0;
+        long now = System.currentTimeMillis();
+        if (now < attempts.cooldownUntil) return attempts.cooldownUntil - now;
+        // Lazy prune once both the failure window and any cooldown have fully lapsed.
+        if (now - attempts.windowStart > FAIL_WINDOW_MILLIS) joinAttempts.remove(p.getUniqueId());
+        return 0;
+    }
+
+    private void recordFailedJoin(Player p) {
+        long now = System.currentTimeMillis();
+        JoinAttempts attempts = joinAttempts.computeIfAbsent(p.getUniqueId(), id -> new JoinAttempts());
+        if (now - attempts.windowStart > FAIL_WINDOW_MILLIS) {
+            attempts.windowStart = now;
+            attempts.failures = 0;
+        }
+        if (++attempts.failures >= MAX_FAILED_JOINS) {
+            attempts.cooldownUntil = now + JOIN_COOLDOWN_MILLIS;
+            // Start a fresh window once the cooldown expires.
+            attempts.windowStart = now;
+            attempts.failures = 0;
+        }
     }
 
     /**
@@ -981,7 +1074,9 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
             p.sendMessage(Lang.msg("host.not-hosting"));
             return null;
         }
-        boolean privileged = p.hasPermission(PERM_BYPASS) || p.hasPermission(GuiManager.ADMIN_PERM);
+        // Deliberately NOT exclusivearenas.bypass here — bypass only skips join restrictions
+        // and must never grant control over someone else's match.
+        boolean privileged = p.hasPermission(GuiManager.ADMIN_PERM);
         if (!p.getUniqueId().equals(session.getOwner()) && !privileged) {
             p.sendMessage(Lang.msg("host.only-host"));
             return null;

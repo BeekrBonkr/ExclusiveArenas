@@ -41,6 +41,8 @@ public final class PrivateSessionService {
     // problem: a poll whose SELECT ran before that edit's UPSERT committed would otherwise
     // return the pre-edit row and silently overwrite the fresh local state with it. A row is
     // only trusted to update local state once its own updated_at catches up to this timestamp.
+    // Both sides of that comparison are this server's own writes, but a row last written by
+    // ANOTHER server carries its clock — the guard assumes NTP-level skew between servers.
     private final Map<UUID, Long> pendingWriteAt = new ConcurrentHashMap<>();
 
     // Soft "someone's got this picked in their builder" lock — local to this server only
@@ -183,11 +185,11 @@ public final class PrivateSessionService {
 
         String code = null;
         if (policy == JoinPolicy.CODE) {
-            code = draft.getJoinCode();
-            if (code == null || code.isBlank() || byCode.containsKey(code.toLowerCase(Locale.ROOT))) {
+            code = normalizeDraftCode(draft.getJoinCode());
+            if (code == null || byCode.containsKey(code.toLowerCase(Locale.ROOT))) {
                 code = generateCode();
-                draft.setJoinCode(code);
             }
+            draft.setJoinCode(code);
         } else {
             draft.setJoinCode(null);
         }
@@ -211,9 +213,11 @@ public final class PrivateSessionService {
     /**
      * Converts a PARTY-gated session to a CODE-gated one — used when the host leaves (or
      * loses leadership of) their party, so the match cleanly keeps running instead of being
-     * stuck behind a party that no longer authorises anyone. A fresh code is generated, the
-     * session opens as public (so the code actually works), and the change is persisted
-     * network-wide. Returns the new code, or the existing one when already CODE-gated.
+     * stuck behind a party that no longer authorises anyone. A fresh code is generated but
+     * the session stays LOCKED (non-public): opening it up is a privacy downgrade only the
+     * host may choose (via /ea public or the menu) — otherwise the players just removed from
+     * the party could grab the code and share it. The change is persisted network-wide.
+     * Returns the new code, or the existing one when already CODE-gated.
      */
     public String convertToCodePolicy(PrivateSession session) {
         if (session == null) return null;
@@ -222,7 +226,7 @@ public final class PrivateSessionService {
         String code = generateCode();
         session.setJoinPolicy(JoinPolicy.CODE);
         session.setJoinCode(code);
-        session.setPublic(true);
+        session.setPublic(false);
         session.setAutoSummon(false); // only meaningful for Party policy
         byCode.put(code.toLowerCase(Locale.ROOT), session.getSessionId());
 
@@ -234,7 +238,7 @@ public final class PrivateSessionService {
         if (session == null || session.getJoinPolicy() != JoinPolicy.CODE) return null;
 
         String old = session.getJoinCode();
-        if (old != null) byCode.remove(old.toLowerCase(Locale.ROOT));
+        if (old != null) byCode.remove(old.toLowerCase(Locale.ROOT), session.getSessionId());
 
         String fresh = generateCode();
         session.setJoinCode(fresh);
@@ -282,6 +286,17 @@ public final class PrivateSessionService {
         applied.setTeamsLocked(lockedNow);
         session.setSettings(applied);
         saveSettings(session);
+    }
+
+    /**
+     * Re-writes one session to the DB under this server's own {@code server_id} — used by the
+     * dead-server sweep to adopt a row whose writing server died while the arena is actually
+     * running HERE, so the session gets a live owner instead of being purged out from under a
+     * live match. No-op when the session isn't in the local cache (a later sweep retries).
+     */
+    public void adoptSession(UUID sessionId) {
+        PrivateSession session = sessionId == null ? null : byId.get(sessionId);
+        if (session != null) writeThrough(session);
     }
 
     /** Re-writes every in-memory session to the DB. Used after a reconnect on reload. */
@@ -371,6 +386,11 @@ public final class PrivateSessionService {
     }
 
     private void updateLocalFromRow(PrivateSession session, Database.SessionRow row) {
+        // Re-assert the arena mapping: arena_name is UNIQUE in the DB, so the session matching
+        // this row is the rightful owner. When two sessions briefly existed for one arena (a
+        // cross-server create race), ending the loser may have unmapped the winner — without
+        // this, the join gate for the arena would stay dropped until the session churned.
+        byArena.put(session.getArenaName().toLowerCase(Locale.ROOT), session);
         // The policy can genuinely change mid-session (PARTY → CODE conversion on the host's
         // server) — mirror it here so every other backend's join gate agrees.
         try {
@@ -382,7 +402,7 @@ public final class PrivateSessionService {
         String old = session.getJoinCode();
         String fresh = row.joinCode();
         if (old != null && (fresh == null || !old.equalsIgnoreCase(fresh))) {
-            byCode.remove(old.toLowerCase(Locale.ROOT));
+            byCode.remove(old.toLowerCase(Locale.ROOT), session.getSessionId());
         }
         session.setJoinCode(fresh);
         if (fresh != null) byCode.put(fresh.toLowerCase(Locale.ROOT), session.getSessionId());
@@ -431,7 +451,10 @@ public final class PrivateSessionService {
     }
 
     private void removeLocal(PrivateSession session) {
-        byArena.remove(session.getArenaName().toLowerCase(Locale.ROOT));
+        // Value-checked removals: when two sessions briefly exist for one arena (or one code —
+        // a cross-server create race), ending the loser must not unmap the winner's entry, or
+        // the arena's join gate would drop for good.
+        byArena.remove(session.getArenaName().toLowerCase(Locale.ROOT), session);
         byId.remove(session.getSessionId());
 
         UUID owner = session.getOwner();
@@ -443,11 +466,28 @@ public final class PrivateSessionService {
         }
 
         String code = session.getJoinCode();
-        if (code != null) byCode.remove(code.toLowerCase(Locale.ROOT));
+        if (code != null) byCode.remove(code.toLowerCase(Locale.ROOT), session.getSessionId());
 
         pendingWrite.remove(session.getSessionId());
         pendingDelete.remove(session.getSessionId());
         pendingWriteAt.remove(session.getSessionId());
+    }
+
+    /**
+     * Validates a draft-supplied join code against the same rules generated codes obey:
+     * 4..{@link #MAX_CODE_LENGTH} chars, all from {@link #ALPHABET} (after uppercasing).
+     * Returns the normalized code, or null when it doesn't qualify — the caller then
+     * generates a fresh one, so a crafted draft can't smuggle in a code the rest of the
+     * plugin (display, DB column width, charset assumptions) was never built for.
+     */
+    private static String normalizeDraftCode(String code) {
+        if (code == null || code.isBlank()) return null;
+        String upper = code.trim().toUpperCase(Locale.ROOT);
+        if (upper.length() < 4 || upper.length() > MAX_CODE_LENGTH) return null;
+        for (int i = 0; i < upper.length(); i++) {
+            if (ALPHABET.indexOf(upper.charAt(i)) < 0) return null;
+        }
+        return upper;
     }
 
     private static String randomChunk(int len) {

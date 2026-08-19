@@ -56,6 +56,9 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     private RemoteCommandService remoteCommandService;
     private org.bukkit.scheduler.BukkitTask autoSummonTask;
     private org.bukkit.scheduler.BukkitTask partyIntegrityTask;
+    private org.bukkit.scheduler.BukkitTask sessionCleanupTask;
+    private org.bukkit.scheduler.BukkitTask healthMonitorTask;
+    private org.bukkit.scheduler.BukkitTask entryGuardTask;
     private PrivacyConditionVariable privacyConditionVariable;
     private ArenaBossBarTask bossBarTask;
     private org.bukkit.scheduler.BukkitTask bossBarSchedulerTask;
@@ -72,6 +75,10 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     }
 
     private void init() {
+        // BedwarsAPI.onReady defers this callback — the plugin may have been disabled again
+        // before it fires, and registering events/tasks on a disabled plugin throws mid-init.
+        if (!isEnabled()) return;
+
         this.addon = new ExclusiveArenasAddon(this);
         this.addon.register();
 
@@ -118,23 +125,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         this.teamLockListener = new TeamLockListener(this, sessionService);
         Bukkit.getPluginManager().registerEvents(teamLockListener, this);
 
-        // Periodic cleanup (every 30 seconds)
-        new SessionCleanupTask(this, sessionService).runTaskTimer(this, 600L, 600L);
-
-        // Continuously checks live sessions against MBedwars' actual arena state and self-heals
-        // drift (stuck sessions, stuck matches, spawner desync, arena config issues).
-        long healthTicks = Math.max(200L, eaConfig.intNum("stability.health_check_seconds", 30) * 20L);
-        new ArenaHealthMonitorTask(this, sessionService).runTaskTimer(this, healthTicks, healthTicks);
-
-        // Finishes the join for anyone who ends up physically inside a private arena (e.g. after
-        // a cross-server transfer) without MBedwars having actually registered them as playing.
-        // Runs at the same cadence as the ticket poller (database.ticket_poll_seconds, default
-        // 1s) — that poll is the dominant source of the race this recovers from, so sweeping
-        // any slower would just add avoidable extra delay on top of it. The sweep itself is a
-        // pure in-memory scan (no I/O), so the tighter interval costs nothing.
-        long entryGuardTicks = Math.max(20L, eaConfig.intNum("database.ticket_poll_seconds", 1) * 20L);
-        new ArenaEntryGuardTask(sessionService, ticketService).runTaskTimer(this, entryGuardTicks, entryGuardTicks);
-
+        startMaintenanceTasks();
         startAutoSummon();
         startPartyMonitor();
         startBossBar();
@@ -142,6 +133,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         registerConditionVariable();
         registerLobbyItemHandlers();
         logEnvironment();
+        warnAboutArenaNamesWithWhitespace();
 
         getLogger().info("ExclusiveArenas v" + getDescription().getVersion() + " enabled ("
                 + (database != null ? "database mode" : "single-server mode") + ").");
@@ -171,6 +163,25 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                     + "actually hosts it, so remote arenas are hidden from the map selector. Enable "
                     + "database.* in config.yml to host private matches across the network.");
         }
+    }
+
+    /**
+     * Several features pass an arena's name through dispatched commands ({@code bw debug 13
+     * <arena>} in {@link #startMatchNow}, the network.join_command_template's {@code %arena%}
+     * substitution, the spectator-rejoin item's {@code /bw join}) — a name containing
+     * whitespace splits into extra arguments there and silently targets the wrong thing.
+     * Warn once at startup so an admin knows those features will misbehave for such arenas.
+     */
+    private void warnAboutArenaNamesWithWhitespace() {
+        List<String> offenders = new ArrayList<>();
+        for (Arena arena : BedwarsAPI.getGameAPI().getArenas()) {
+            String name = arena.getName();
+            if (name != null && name.chars().anyMatch(Character::isWhitespace)) offenders.add(name);
+        }
+        if (offenders.isEmpty()) return;
+        getLogger().warning("These arena names contain whitespace: " + String.join(", ", offenders)
+                + " — force-start, cross-server join routing, and spectator rejoin dispatch the "
+                + "name as a command argument and will misbehave for them. Rename them to avoid this.");
     }
 
     /** True when MBedwars' RemoteAPI (proxy/network mode) is up on this server. */
@@ -285,7 +296,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
     /** Loads lang.yml and guis.yml (versioned, self-healing) and points the static accessors at them. */
     private void loadLangAndGuis() {
-        this.langYaml = new VersionedYaml(this, addon.getDataFolder(), "lang.yml", 4, (config, fromVersion) -> {
+        this.langYaml = new VersionedYaml(this, addon.getDataFolder(), "lang.yml", 5, (config, fromVersion) -> {
             boolean changed = false;
             if (fromVersion < 2) {
                 // v2 retired the toggle-spectate item's two-state (on/off) rendering — it's now
@@ -315,6 +326,8 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             // v4 only ADDS keys (the team lock's messages, the timeline editor's new
             // operations) — VersionedYaml restores those by itself, so there is nothing to
             // transform for that step beyond the version stamp.
+            // v5 likewise only ADDS keys (the join-attempt throttle and the /ea buff
+            // validation messages).
             return changed;
         });
         this.langYaml.load();
@@ -437,6 +450,50 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         if (guiRefreshTask != null) {
             guiRefreshTask.cancel();
             guiRefreshTask = null;
+        }
+    }
+
+    /**
+     * (Re)starts the three core maintenance sweeps. Restarted on {@code /ea reload} like every
+     * other periodic task, so their config-driven intervals (stability.health_check_seconds,
+     * database.ticket_poll_seconds) actually pick up a changed value.
+     */
+    private void startMaintenanceTasks() {
+        stopMaintenanceTasks();
+
+        // Periodic cleanup (every 30 seconds)
+        this.sessionCleanupTask = new SessionCleanupTask(this, sessionService)
+                .runTaskTimer(this, 600L, 600L);
+
+        // Continuously checks live sessions against MBedwars' actual arena state and self-heals
+        // drift (stuck sessions, stuck matches, spawner desync, arena config issues).
+        long healthTicks = Math.max(200L, eaConfig.intNum("stability.health_check_seconds", 30) * 20L);
+        this.healthMonitorTask = new ArenaHealthMonitorTask(this, sessionService)
+                .runTaskTimer(this, healthTicks, healthTicks);
+
+        // Finishes the join for anyone who ends up physically inside a private arena (e.g. after
+        // a cross-server transfer) without MBedwars having actually registered them as playing.
+        // Runs at the same cadence as the ticket poller (database.ticket_poll_seconds, default
+        // 1s) — that poll is the dominant source of the race this recovers from, so sweeping
+        // any slower would just add avoidable extra delay on top of it. The sweep itself is a
+        // pure in-memory scan (no I/O), so the tighter interval costs nothing.
+        long entryGuardTicks = Math.max(20L, eaConfig.intNum("database.ticket_poll_seconds", 1) * 20L);
+        this.entryGuardTask = new ArenaEntryGuardTask(sessionService, ticketService)
+                .runTaskTimer(this, entryGuardTicks, entryGuardTicks);
+    }
+
+    private void stopMaintenanceTasks() {
+        if (sessionCleanupTask != null) {
+            sessionCleanupTask.cancel();
+            sessionCleanupTask = null;
+        }
+        if (healthMonitorTask != null) {
+            healthMonitorTask.cancel();
+            healthMonitorTask = null;
+        }
+        if (entryGuardTask != null) {
+            entryGuardTask.cancel();
+            entryGuardTask = null;
         }
     }
 
@@ -582,7 +639,10 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         sessionService.resyncAll();
     }
 
-    /** Cleanly tears down the database + sync tasks (safe to call when already down). */
+    /**
+     * Cleanly tears down the database + sync tasks (safe to call when already down — including
+     * from onDisable before {@link #init} ever ran, when the services below are still null).
+     */
     private void teardownDatabase() {
         dbSetupGeneration++; // invalidate any setupDatabase() attempt still connecting
         if (syncService != null) {
@@ -593,9 +653,9 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             database.shutdown();
             database = null;
         }
-        sessionService.setDatabase(null);
-        ticketService.setDatabase(null);
-        remoteCommandService.setDatabase(null);
+        if (sessionService != null) sessionService.setDatabase(null);
+        if (ticketService != null) ticketService.setDatabase(null);
+        if (remoteCommandService != null) remoteCommandService.setDatabase(null);
     }
 
     /**
@@ -612,6 +672,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         setupTweaksBridge(); // re-applies Tweaks-derived defaults over the config ones
         applyTunables();
         setupDatabase(); // connects asynchronously; resyncAll() runs once it lands (see finishDatabaseSetup)
+        startMaintenanceTasks(); // restart to pick up changed sweep intervals
         startAutoSummon(); // restart to pick up a changed poll interval
         startPartyMonitor(); // restart to pick up a changed check interval
         startBossBar();    // restart to pick up a changed enabled/disabled setting
@@ -628,6 +689,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        stopMaintenanceTasks();
         stopAutoSummon();
         stopPartyMonitor();
         stopBossBar();
@@ -1202,6 +1264,9 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         }
 
         try {
+            // Unstable contract: "13" is a numbered MBedwars debug subcommand, not public API —
+            // an MBedwars update could renumber or remove it without notice, silently breaking
+            // (or repurposing) force-start. Re-verify against the installed MBedwars on upgrades.
             Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "bw debug 13 " + arena.getName());
         } catch (Throwable t) {
             getLogger().warning("Could not force-start arena " + arena.getName() + ": " + t.getMessage());

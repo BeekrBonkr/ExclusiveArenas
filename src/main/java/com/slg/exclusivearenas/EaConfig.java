@@ -1,16 +1,19 @@
 package com.slg.exclusivearenas;
 
-import org.bukkit.ChatColor;
+import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 
 /**
  * Loads config.yml from the MBedwars-managed add-on data folder
@@ -42,17 +45,44 @@ public final class EaConfig {
 
     public void load() {
         ensureDefaultExists();
-        this.config = YamlConfiguration.loadConfiguration(configFile);
+
+        // Load via the throwing API — YamlConfiguration.loadConfiguration() swallows parse
+        // errors and returns an EMPTY config, which the migrate/ensureComplete/save below
+        // would then persist, silently replacing the admin's entire file with defaults over
+        // a single indent typo. On a parse failure we instead keep the broken file untouched
+        // (backed up alongside) and run this session on in-memory defaults.
+        YamlConfiguration loaded = new YamlConfiguration();
+        boolean parseFailed = false;
+        try {
+            loaded.load(configFile);
+        } catch (FileNotFoundException e) {
+            // Missing file (e.g. the bundled default couldn't be written) — run on defaults.
+        } catch (IOException | InvalidConfigurationException e) {
+            parseFailed = true;
+            plugin.getLogger().severe("config.yml has a syntax error and could not be loaded — "
+                    + "running on default values until it is fixed. Your file was NOT modified "
+                    + "(a copy was saved next to it). Parse error: " + e.getMessage());
+            backupBrokenFile(configFile);
+        }
+        this.config = loaded;
 
         boolean migrated = migrate();
         boolean completed = ensureComplete();
+        // Never save over the user's file when it failed to parse — that would destroy
+        // everything they wrote for the sake of one typo.
+        if (parseFailed) return;
         if (migrated || completed) save();
     }
 
-    public String msg(String path) {
-        String raw = config != null ? config.getString(path) : null;
-        if (raw == null) raw = "&cMissing message: " + path;
-        return ChatColor.translateAlternateColorCodes('&', raw);
+    /** Copies a syntactically-broken file to a timestamped .broken backup next to it. */
+    static void backupBrokenFile(File file) {
+        File backup = new File(file.getParentFile(),
+                file.getName() + ".broken-" + new SimpleDateFormat("yyyyMMdd-HHmmss").format(new Date()));
+        try {
+            Files.copy(file.toPath(), backup.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException ignored) {
+            // best effort — the original stays in place either way
+        }
     }
 
     public String str(String path, String def) {

@@ -17,7 +17,7 @@ permissions:
     description: Allows players to create and manage private arenas.
     default: true
   exclusivearenas.bypass:
-    description: Allows bypassing private-match join restrictions.
+    description: Bypasses private-match JOIN restrictions only — lets the holder enter a gated arena without a code/party. Grants NO management access over anyone's match (that is exclusivearenas.admin).
     default: op
   exclusivearenas.admin:
     description: Full admin control — the admin panel, controlling any match, and /ea reload.

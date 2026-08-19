@@ -1,7 +1,9 @@
 package com.slg.exclusivearenas;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -31,6 +33,12 @@ public final class JoinTicketService {
 
     private final Map<UUID, Ticket> tickets = new ConcurrentHashMap<>();
 
+    // Players whose ticket was consumed locally but whose async DB DELETE hasn't been confirmed
+    // by a poll yet. Without this, a poll whose SELECT ran before that delete commits would
+    // re-insert the consumed ticket into the cache, letting it be spent a second time — the
+    // same race PrivateSessionService guards with its pendingDelete set.
+    private final Set<UUID> pendingDelete = ConcurrentHashMap.newKeySet();
+
     private long ttlSeconds = DEFAULT_TTL_SECONDS;
     private Database db; // null when running single-server
 
@@ -43,10 +51,15 @@ public final class JoinTicketService {
     }
 
     public void grant(UUID player, UUID sessionId, String arenaName) {
+        // The local copy uses this server's clock (self-consistent for local reads); the DB row
+        // is anchored to the DATABASE clock instead, so the server that hosts the arena judges
+        // expiry against the one clock every server shares rather than inheriting our skew.
         long expiresAt = System.currentTimeMillis() + ttlSeconds * 1000L;
         tickets.put(player, new Ticket(sessionId, arenaName, expiresAt));
+        pendingDelete.remove(player); // a fresh grant supersedes any not-yet-confirmed consume
         if (db != null && arenaName != null) {
-            db.upsertTicket(new Database.TicketRow(player, sessionId, arenaName, expiresAt));
+            db.upsertTicket(new Database.TicketRow(player, sessionId, arenaName, expiresAt),
+                    ttlSeconds * 1000L);
         }
     }
 
@@ -65,7 +78,10 @@ public final class JoinTicketService {
             if (matches) consumed[0] = true;
             return (expired || matches) ? null : t; // drop on expiry or a successful consume, else keep
         });
-        if (consumed[0] && db != null) db.deleteTicket(player);
+        if (consumed[0] && db != null) {
+            pendingDelete.add(player);
+            db.deleteTicket(player);
+        }
         return consumed[0];
     }
 
@@ -85,10 +101,19 @@ public final class JoinTicketService {
      * Merges valid tickets from the DB into the cache and drops locally-expired ones.
      * This is a merge, not a wipe: a locally-granted ticket whose write-through has not
      * flushed yet is kept, and an incoming row only replaces a local one if it is newer.
+     * A player pending a local delete is never re-added, so a poll that raced ahead of that
+     * delete's commit can't resurrect a ticket that was already spent.
      */
     public void reconcile(List<Database.TicketRow> rows) {
         long now = System.currentTimeMillis();
+        Set<UUID> present = new HashSet<>();
+        for (Database.TicketRow row : rows) present.add(row.player());
+        pendingDelete.removeIf(player -> !present.contains(player)); // confirmed gone from the DB
+
         for (Database.TicketRow row : rows) {
+            if (pendingDelete.contains(row.player())) continue; // consumed locally; DELETE in flight
+            // Row expiry is DB-clock time; comparing it to our clock assumes NTP-level skew —
+            // safe here, since the SQL read already filtered against the DB clock.
             if (row.expiresAt() <= now) continue;
             Ticket existing = tickets.get(row.player());
             if (existing == null || existing.expiresAt < row.expiresAt()) {

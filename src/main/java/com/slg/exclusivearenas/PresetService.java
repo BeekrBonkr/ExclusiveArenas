@@ -140,6 +140,27 @@ public final class PresetService {
         saveFile(store);
     }
 
+    /**
+     * Deletes a preset and reports back on the main thread whether the delete actually
+     * persisted — mirrors the callback {@code save} overload, so a menu can message the
+     * player honestly instead of claiming success for a write that failed.
+     */
+    public void delete(UUID owner, String name, Consumer<Boolean> callback) {
+        Database db = plugin.getDatabase();
+        if (db != null) {
+            db.deletePreset(owner, name, ok -> Bukkit.getScheduler().runTask(plugin, () -> {
+                plugin.debug("presets: delete(" + owner + ", " + name + ") [database] -> " + ok);
+                callback.accept(ok);
+            }));
+            return;
+        }
+        YamlConfiguration store = fileStore();
+        store.set(ownerPath(owner) + "." + name, null);
+        boolean ok = saveFile(store); // file mode is synchronous — already on the caller's thread
+        plugin.debug("presets: delete(" + owner + ", " + name + ") [file] -> " + ok);
+        callback.accept(ok);
+    }
+
     /** The first free "Preset-N" name, or null when the player is at the cap. */
     public static String nextFreeName(LinkedHashMap<String, String> existing) {
         if (existing.size() >= MAX_PRESETS) return null;

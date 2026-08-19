@@ -28,7 +28,8 @@ import java.util.logging.Logger;
  * <p>Threading contract:
  * <ul>
  *   <li>Mutations ({@code upsert*}/{@code delete*}) are fire-and-forget on a single
- *       daemon writer thread — callers never block and failures are only logged.</li>
+ *       daemon writer thread — callers never block; a failed write is retried once
+ *       (re-queued at the tail) and then logged and dropped.</li>
  *   <li>Reads ({@link #loadSessions()}, {@link #loadValidTickets()}) are synchronous and
  *       must be invoked from an async scheduler thread, never the main thread.</li>
  * </ul>
@@ -69,6 +70,15 @@ public final class Database {
         t.setDaemon(true);
         return t;
     });
+
+    // Rough depth of the writer's queue: incremented on submit, decremented when the write
+    // finishes. Crossing the threshold logs one WARNING (re-armed once the backlog drains
+    // below half) so a database that's falling behind is visible instead of silently queueing.
+    private final java.util.concurrent.atomic.AtomicInteger queueDepth =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private volatile boolean queueDepthWarned;
+    private static final int QUEUE_DEPTH_WARN_THRESHOLD = 64;
+    private static final long RETRY_DELAY_MS = 2_000L;
 
     public Database(Logger logger, Settings settings, boolean verbose) {
         this.logger = logger;
@@ -122,14 +132,14 @@ public final class Database {
                             + "join_code VARCHAR(96) NULL,"
                             + "is_public TINYINT(1) NOT NULL DEFAULT 0,"
                             + "auto_summon TINYINT(1) NOT NULL DEFAULT 0,"
+                            + "settings TEXT NULL,"
                             + "server_id VARCHAR(64) NOT NULL,"
                             + "created_at BIGINT NOT NULL,"
                             + "updated_at BIGINT NOT NULL DEFAULT 0"
                             + ")")) {
                 ps.executeUpdate();
             }
-            // Bring older tables up to date (columns added after first deploy). MariaDB
-            // supports IF NOT EXISTS so this is a safe no-op when the column already exists.
+            // Bring older tables up to date (columns added after first deploy).
             addColumnIfMissing(c, sessionsTable, "is_public", "TINYINT(1) NOT NULL DEFAULT 0");
             addColumnIfMissing(c, sessionsTable, "auto_summon", "TINYINT(1) NOT NULL DEFAULT 0");
             addColumnIfMissing(c, sessionsTable, "settings", "TEXT NULL");
@@ -182,11 +192,27 @@ public final class Database {
     }
 
     private void addColumnIfMissing(Connection c, String table, String column, String definition) {
-        try (PreparedStatement ps = c.prepareStatement(
-                "ALTER TABLE `" + table + "` ADD COLUMN IF NOT EXISTS " + column + " " + definition)) {
-            ps.executeUpdate();
+        // Probe information_schema instead of relying on ADD COLUMN IF NOT EXISTS: that syntax
+        // is MariaDB-only, and on MySQL the swallowed failure would leave the column missing —
+        // making every later write that references it fail forever.
+        try {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "SELECT 1 FROM information_schema.columns "
+                            + "WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?")) {
+                ps.setString(1, table);
+                ps.setString(2, column);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) return; // already up to date
+                }
+            }
+            try (PreparedStatement ps = c.prepareStatement(
+                    "ALTER TABLE `" + table + "` ADD COLUMN " + column + " " + definition)) {
+                ps.executeUpdate();
+            }
         } catch (SQLException e) {
-            verbose("ALTER TABLE add " + column + " skipped: " + e.getMessage());
+            logger.warning("ExclusiveArenas: could not add column '" + column + "' to '" + table
+                    + "': " + e.getMessage() + " — writes touching that column will fail until "
+                    + "it is added manually.");
         }
     }
 
@@ -237,16 +263,23 @@ public final class Database {
         });
     }
 
-    public void upsertTicket(TicketRow row) {
+    /**
+     * Writes the ticket with an expiry anchored to the DATABASE clock (DB now + {@code
+     * ttlMillis}) rather than {@code row.expiresAt()}. The validity check happens on whichever
+     * server hosts the arena — anchoring both write and read to the one clock every server
+     * shares means a skewed backend can neither shorten nor stretch another server's tickets.
+     */
+    public void upsertTicket(TicketRow row, long ttlMillis) {
         submit("upsert ticket " + row.player(), c -> {
             try (PreparedStatement ps = c.prepareStatement(
                     "INSERT INTO `" + ticketsTable + "` (player, session_id, arena_name, expires_at) "
-                            + "VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE session_id=VALUES(session_id), "
+                            + "VALUES (?,?,?,ROUND(UNIX_TIMESTAMP(NOW(3))*1000)+?) "
+                            + "ON DUPLICATE KEY UPDATE session_id=VALUES(session_id), "
                             + "arena_name=VALUES(arena_name), expires_at=VALUES(expires_at)")) {
                 ps.setString(1, row.player().toString());
                 ps.setString(2, row.sessionId().toString());
                 ps.setString(3, row.arenaName());
-                ps.setLong(4, row.expiresAt());
+                ps.setLong(4, ttlMillis);
                 ps.executeUpdate();
             }
         });
@@ -311,13 +344,29 @@ public final class Database {
     }
 
     public void deletePreset(UUID owner, String name) {
-        submit("delete preset " + name, c -> {
-            try (PreparedStatement ps = c.prepareStatement(
+        deletePreset(owner, name, null);
+    }
+
+    /**
+     * Deletes a preset and reports whether the DELETE actually landed — the callback runs on
+     * the WRITER thread (mirroring {@link #upsertPreset(UUID, String, String,
+     * java.util.function.Consumer)}), so callers must hop to the main thread themselves.
+     */
+    public void deletePreset(UUID owner, String name, java.util.function.Consumer<Boolean> callback) {
+        writer.execute(() -> {
+            boolean ok = true;
+            try (Connection c = dataSource.getConnection();
+                 PreparedStatement ps = c.prepareStatement(
                     "DELETE FROM `" + presetsTable + "` WHERE owner=? AND name=?")) {
                 ps.setString(1, owner.toString());
                 ps.setString(2, name);
                 ps.executeUpdate();
+                verbose("write ok: delete preset " + name);
+            } catch (Throwable t) {
+                ok = false;
+                logger.log(Level.WARNING, "ExclusiveArenas DB write failed (delete preset " + name + "): " + t.getMessage());
             }
+            if (callback != null) callback.accept(ok);
         });
     }
 
@@ -373,20 +422,21 @@ public final class Database {
         return out;
     }
 
-    /** Purges expired rows, then returns the still-valid tickets. */
+    /**
+     * Purges expired rows, then returns the still-valid tickets. Expiry is judged against the
+     * DATABASE clock, matching how {@link #upsertTicket} writes it — never this server's.
+     */
     public List<TicketRow> loadValidTickets() throws SQLException {
-        long now = System.currentTimeMillis();
         List<TicketRow> out = new ArrayList<>();
         try (Connection c = dataSource.getConnection()) {
             try (PreparedStatement del = c.prepareStatement(
-                    "DELETE FROM `" + ticketsTable + "` WHERE expires_at < ?")) {
-                del.setLong(1, now);
+                    "DELETE FROM `" + ticketsTable
+                            + "` WHERE expires_at < ROUND(UNIX_TIMESTAMP(NOW(3))*1000)")) {
                 del.executeUpdate();
             }
             try (PreparedStatement ps = c.prepareStatement(
                     "SELECT player, session_id, arena_name, expires_at FROM `" + ticketsTable
-                            + "` WHERE expires_at >= ?")) {
-                ps.setLong(1, now);
+                            + "` WHERE expires_at >= ROUND(UNIX_TIMESTAMP(NOW(3))*1000)")) {
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         out.add(new TicketRow(
@@ -423,14 +473,19 @@ public final class Database {
 
     // ── Server liveness / crash cleanup ─────────────────────────────────────────────
 
-    /** Upserts this server's own heartbeat row. Call regularly (piggybacks on the session poll). */
+    /**
+     * Upserts this server's own heartbeat row, stamped with the DATABASE clock. Call regularly
+     * (piggybacks on the session poll). Anchoring to the DB clock means liveness is one
+     * server's DB-time write compared against DB-time in {@link #findDeadServers} — a backend
+     * with a skewed wall clock can neither look dead nor keep looking alive.
+     */
     public void heartbeat() {
         submit("heartbeat", c -> {
             try (PreparedStatement ps = c.prepareStatement(
-                    "INSERT INTO `" + serversTable + "` (server_id, last_heartbeat) VALUES (?,?) "
+                    "INSERT INTO `" + serversTable + "` (server_id, last_heartbeat) "
+                            + "VALUES (?,ROUND(UNIX_TIMESTAMP(NOW(3))*1000)) "
                             + "ON DUPLICATE KEY UPDATE last_heartbeat=VALUES(last_heartbeat)")) {
                 ps.setString(1, settings.serverId());
-                ps.setLong(2, System.currentTimeMillis());
                 ps.executeUpdate();
             }
         });
@@ -438,14 +493,17 @@ public final class Database {
 
     /**
      * Server ids (excluding this one, as a safety guard against ever self-purging) whose last
-     * heartbeat is older than {@code staleBeforeMillis}. Call from an async thread.
+     * heartbeat is more than {@code staleMillis} behind the DATABASE clock — the same clock
+     * {@link #heartbeat()} writes with. Call from an async thread.
      */
-    public List<String> findDeadServers(long staleBeforeMillis) throws SQLException {
+    public List<String> findDeadServers(long staleMillis) throws SQLException {
         List<String> out = new ArrayList<>();
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(
-                     "SELECT server_id FROM `" + serversTable + "` WHERE last_heartbeat < ? AND server_id <> ?")) {
-            ps.setLong(1, staleBeforeMillis);
+                     "SELECT server_id FROM `" + serversTable
+                             + "` WHERE last_heartbeat < ROUND(UNIX_TIMESTAMP(NOW(3))*1000) - ? "
+                             + "AND server_id <> ?")) {
+            ps.setLong(1, staleMillis);
             ps.setString(2, settings.serverId());
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) out.add(rs.getString(1));
@@ -455,54 +513,68 @@ public final class Database {
     }
 
     /**
-     * Removes every trace of a dead server from the shared database: its sessions, and every
-     * ticket/command row for the arenas those sessions were on (tickets/commands don't carry
-     * their own server_id, but they're only ever meaningful for an arena a live session still
-     * references, so once found via that session they're dropped too). Safe to call from
-     * multiple servers concurrently — every statement is a plain DELETE, so a second call
-     * finding nothing left just does nothing.
+     * Removes a dead server's vetted leftovers from the shared database. The caller (the
+     * sweep in {@link SyncService}) decides WHICH of the dead server's sessions are truly
+     * orphaned — a row's server_id is stamped by whichever server last WROTE it, so e.g. a
+     * hub-edited match still running on a live backend must not be purged with the hub.
+     *
+     * Guards, so a concurrent revival can't be clobbered:
+     * <ul>
+     *   <li>each session row is only deleted while still attributed to the dead server (a row
+     *       adopted by a live server in the meantime is left alone);</li>
+     *   <li>tickets/commands for an arena are only dropped once NO session row references that
+     *       arena any more — a new live session created for the same arena keeps its rows;</li>
+     *   <li>the heartbeat row only goes once no sessions remain attributed to the dead server,
+     *       so skipped/orphaned rows are retried on later sweeps.</li>
+     * </ul>
+     * Safe to call from multiple servers concurrently — every statement is a guarded DELETE,
+     * so a second call finding nothing left just does nothing.
      */
-    public void purgeDeadServer(String deadServerId) {
+    public void purgeDeadServer(String deadServerId,
+                                List<UUID> sessionIds, List<String> arenaNames) {
         submit("purge dead server " + deadServerId, c -> {
-            List<String> arenaNames = new ArrayList<>();
-            try (PreparedStatement ps = c.prepareStatement(
-                    "SELECT arena_name FROM `" + sessionsTable + "` WHERE server_id=?")) {
-                ps.setString(1, deadServerId);
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) arenaNames.add(rs.getString(1));
+            int removed = 0;
+            if (!sessionIds.isEmpty()) {
+                try (PreparedStatement ps = c.prepareStatement(
+                        "DELETE FROM `" + sessionsTable + "` WHERE session_id=? AND server_id=?")) {
+                    for (UUID sessionId : sessionIds) {
+                        ps.setString(1, sessionId.toString());
+                        ps.setString(2, deadServerId);
+                        removed += ps.executeUpdate();
+                    }
                 }
-            }
-
-            try (PreparedStatement ps = c.prepareStatement(
-                    "DELETE FROM `" + sessionsTable + "` WHERE server_id=?")) {
-                ps.setString(1, deadServerId);
-                ps.executeUpdate();
             }
             if (!arenaNames.isEmpty()) {
                 try (PreparedStatement ps = c.prepareStatement(
-                        "DELETE FROM `" + ticketsTable + "` WHERE arena_name=?")) {
+                        "DELETE FROM `" + ticketsTable + "` WHERE arena_name=? AND NOT EXISTS "
+                                + "(SELECT 1 FROM `" + sessionsTable + "` WHERE arena_name=?)")) {
                     for (String arenaName : arenaNames) {
                         ps.setString(1, arenaName);
+                        ps.setString(2, arenaName);
                         ps.addBatch();
                     }
                     ps.executeBatch();
                 }
                 try (PreparedStatement ps = c.prepareStatement(
-                        "DELETE FROM `" + commandsTable + "` WHERE arena_name=?")) {
+                        "DELETE FROM `" + commandsTable + "` WHERE arena_name=? AND NOT EXISTS "
+                                + "(SELECT 1 FROM `" + sessionsTable + "` WHERE arena_name=?)")) {
                     for (String arenaName : arenaNames) {
                         ps.setString(1, arenaName);
+                        ps.setString(2, arenaName);
                         ps.addBatch();
                     }
                     ps.executeBatch();
                 }
             }
             try (PreparedStatement ps = c.prepareStatement(
-                    "DELETE FROM `" + serversTable + "` WHERE server_id=?")) {
+                    "DELETE FROM `" + serversTable + "` WHERE server_id=? AND NOT EXISTS "
+                            + "(SELECT 1 FROM `" + sessionsTable + "` WHERE server_id=?)")) {
                 ps.setString(1, deadServerId);
+                ps.setString(2, deadServerId);
                 ps.executeUpdate();
             }
             logger.info("ExclusiveArenas: purged dead server '" + deadServerId + "' from the "
-                    + "shared database (" + arenaNames.size() + " orphaned session(s) removed).");
+                    + "shared database (" + removed + " orphaned session(s) removed).");
         });
     }
 
@@ -522,14 +594,56 @@ public final class Database {
     // ── Internals ────────────────────────────────────────────────────────────────
 
     private void submit(String what, SqlTask task) {
+        submit(what, task, true);
+    }
+
+    /**
+     * Queues a write on the single writer thread. A failed write gets one delayed retry —
+     * re-submitted to the TAIL of the same queue, never run in place, so it can't jump ahead
+     * of writes queued after it and break the upsert/delete sequencing for the same key. The
+     * retry's own failure logs at WARNING and drops the write for good (a dropped
+     * deleteSession would otherwise leave a ghost session network-wide with no trace).
+     */
+    private void submit(String what, SqlTask task, boolean retryable) {
+        int depth = queueDepth.incrementAndGet();
+        if (depth >= QUEUE_DEPTH_WARN_THRESHOLD) {
+            if (!queueDepthWarned) {
+                queueDepthWarned = true;
+                logger.warning("ExclusiveArenas: DB write queue depth reached " + depth
+                        + " — the database is falling behind (slow or unreachable?).");
+            }
+        } else if (queueDepthWarned && depth <= QUEUE_DEPTH_WARN_THRESHOLD / 2) {
+            queueDepthWarned = false; // backlog drained — re-arm the warning
+        }
         writer.execute(() -> {
             try (Connection c = dataSource.getConnection()) {
                 task.run(c);
                 verbose("write ok: " + what);
             } catch (Throwable t) {
-                logger.log(Level.WARNING, "ExclusiveArenas DB write failed (" + what + "): " + t.getMessage());
+                if (retryable) {
+                    logger.info("ExclusiveArenas DB write failed (" + what + "): "
+                            + t.getMessage() + " — retrying once in " + RETRY_DELAY_MS + "ms.");
+                    retryLater(what, task);
+                } else {
+                    logger.log(Level.WARNING, "ExclusiveArenas DB write failed twice, dropping ("
+                            + what + "): " + t.getMessage());
+                }
+            } finally {
+                queueDepth.decrementAndGet();
             }
         });
+    }
+
+    private void retryLater(String what, SqlTask task) {
+        java.util.concurrent.CompletableFuture
+                .delayedExecutor(RETRY_DELAY_MS, TimeUnit.MILLISECONDS)
+                .execute(() -> {
+                    try {
+                        submit(what + " [retry]", task, false);
+                    } catch (java.util.concurrent.RejectedExecutionException e) {
+                        // shut down while the retry was waiting — nothing left to write to
+                    }
+                });
     }
 
     private void verbose(String msg) {

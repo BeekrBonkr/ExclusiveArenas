@@ -3,6 +3,7 @@ package com.slg.exclusivearenas;
 import de.marcely.bedwars.api.arena.Arena;
 import de.marcely.bedwars.api.arena.ArenaStatus;
 import de.marcely.bedwars.api.arena.Team;
+import de.marcely.bedwars.api.event.arena.ArenaDeleteEvent;
 import de.marcely.bedwars.api.event.arena.ArenaStatusChangeEvent;
 import de.marcely.bedwars.api.event.arena.RoundEndEvent;
 import de.marcely.bedwars.api.event.arena.RoundStartEvent;
@@ -114,6 +115,10 @@ public final class EventTimelineEngine implements Listener {
         }
         if (pending.isEmpty()) return;
 
+        // A finished timeline keeps its RunState (and modifiers) until round end — if that
+        // cleanup somehow never ran for the previous round, clear it before starting fresh.
+        stop(arena);
+
         RunState state = new RunState(arena, pending);
         state.ticker = new BukkitRunnable() {
             @Override
@@ -132,6 +137,13 @@ public final class EventTimelineEngine implements Listener {
     @EventHandler
     public void onStatusChange(ArenaStatusChangeEvent event) {
         if (event.getNewStatus() != ArenaStatus.RUNNING) stop(event.getArena());
+    }
+
+    @EventHandler
+    public void onArenaDelete(ArenaDeleteEvent event) {
+        // Once the last event has fired the ticker is gone, so tick()'s own exists() check
+        // can no longer notice a deleted arena — clean the lingering state up here instead.
+        stop(event.getArena());
     }
 
     /** Tears down every live run — used on plugin reload/disable. */
@@ -162,7 +174,7 @@ public final class EventTimelineEngine implements Listener {
         SessionSettings.TimelineEntry entry = state.pending.remove(0);
         TimelineService.Definition def = timelines.definitionFor(entry);
         if (def != null) fire(state.arena, def);
-        if (state.pending.isEmpty()) stop(arena);
+        if (state.pending.isEmpty()) cancelTicker(state);
         return def;
     }
 
@@ -233,7 +245,22 @@ public final class EventTimelineEngine implements Listener {
             TimelineService.Definition def = timelines.definitionFor(entry);
             if (def != null) fire(arena, def);
         }
-        if (state.pending.isEmpty()) stop(arena);
+        if (state.pending.isEmpty()) cancelTicker(state);
+    }
+
+    /**
+     * Called when the last pending event has fired mid-round: there is nothing left to tick,
+     * but the RunState (and our spawner modifiers) must stay alive until the round actually
+     * ends — {@link #stop} tearing them down here would strip every generator upgrade the
+     * timeline just applied for the rest of the match. The real round-end paths
+     * ({@code RoundEndEvent} / the status leaving RUNNING) still call {@link #stop}, which
+     * removes the state from the map and cleans the modifiers up.
+     */
+    private void cancelTicker(RunState state) {
+        if (state.ticker != null) {
+            state.ticker.cancel();
+            state.ticker = null;
+        }
     }
 
     private void fire(Arena arena, TimelineService.Definition def) {
