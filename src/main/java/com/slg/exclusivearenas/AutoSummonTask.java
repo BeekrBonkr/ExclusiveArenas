@@ -2,6 +2,8 @@ package com.slg.exclusivearenas;
 
 import de.marcely.bedwars.api.BedwarsAPI;
 import de.marcely.bedwars.api.arena.Arena;
+import de.marcely.bedwars.api.game.spectator.KickSpectatorReason;
+import de.marcely.bedwars.api.game.spectator.Spectator;
 import de.marcely.bedwars.api.hook.PartiesHook;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
@@ -98,8 +100,19 @@ public final class AutoSummonTask extends BukkitRunnable {
             if (member.hasPermission(BYPASS_PERM)) continue;
             if (partyIds.contains(id)) continue;
 
-            arena.kickPlayer(member);
-            member.sendMessage(Lang.msg("autosummon.removed", "%owner%", ownerName(session)));
+            // Spectators aren't removed by kickPlayer — they need their spectate data kicked,
+            // and either way only message when someone was actually removed (otherwise every
+            // poll would spam a lingering player).
+            boolean removed;
+            if (arena.isSpectating(member)) {
+                Spectator data = arena.getSpectateData(member);
+                removed = data != null && data.kick(KickSpectatorReason.KICK);
+            } else {
+                removed = arena.kickPlayer(member);
+            }
+            if (removed) {
+                member.sendMessage(Lang.msg("autosummon.removed", "%owner%", ownerName(session)));
+            }
         }
     }
 

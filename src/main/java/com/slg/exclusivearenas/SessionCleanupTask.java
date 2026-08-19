@@ -2,7 +2,6 @@ package com.slg.exclusivearenas;
 
 import de.marcely.bedwars.api.BedwarsAPI;
 import de.marcely.bedwars.api.arena.Arena;
-import de.marcely.bedwars.api.arena.ArenaStatus;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitRunnable;
@@ -59,8 +58,11 @@ public final class SessionCleanupTask extends BukkitRunnable {
 
             // --- Stale check ---
             if (Duration.between(session.getCreatedAt(), now).toMillis() > staleMs) {
-                if (arena == null || arena.getStatus() == ArenaStatus.STOPPED
-                        || arena.getStatus() == ArenaStatus.RESETTING) {
+                // Remote-aware on purpose: getArenaByExactName is local-only, so on a hub every
+                // backend-hosted arena is null — treating that like STOPPED would kill a match
+                // still RUNNING on its backend. Only stale-kill when the arena is not active
+                // anywhere on the network.
+                if (!ArenaNames.isActiveStatus(session.getArenaName())) {
                     plugin.getLogger().info("Ending stale session for arena "
                             + session.getArenaName() + " (created " + session.getCreatedAt() + ")");
                     sessions.endSession(session);

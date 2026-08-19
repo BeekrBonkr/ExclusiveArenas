@@ -9,7 +9,9 @@ import de.marcely.bedwars.api.event.arena.ArenaStatusChangeEvent;
 import de.marcely.bedwars.api.event.arena.RoundStartEvent;
 import de.marcely.bedwars.api.event.player.PlayerIngamePostRespawnEvent;
 import de.marcely.bedwars.api.event.player.PlayerKillPlayerEvent;
+import de.marcely.bedwars.api.event.player.PlayerQuitArenaEvent;
 import de.marcely.bedwars.api.game.spawner.DropType;
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.WorldBorder;
@@ -23,6 +25,8 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.server.PluginDisableEvent;
 import org.bukkit.inventory.ItemStack;
 
 import java.util.Locale;
@@ -55,6 +59,29 @@ public final class ArenaModifiersListener implements Listener {
     private final Map<UUID, Long> spawnProtectionUntil = new ConcurrentHashMap<>();
     /** Player -> their max health before a healthMultiplier was applied, so it can be restored. */
     private final Map<UUID, Double> originalMaxHealth = new ConcurrentHashMap<>();
+
+    /**
+     * World UID -> border state before a session border was applied, plus which arena's match
+     * currently owns the world's (single) border. Cleanup only ever restores the recorded
+     * pre-session state, and only when performed by the owning arena — so ending a public
+     * round never wipes a border set by vanilla/another plugin, and two session arenas
+     * sharing a world can't clobber each other's active border.
+     */
+    private final Map<UUID, BorderClaim> borderClaims = new ConcurrentHashMap<>();
+
+    private static final class BorderClaim {
+        final double size;
+        final double centerX, centerZ;
+        /** Lower-cased name of the arena whose match currently owns the border. */
+        String arenaKey;
+
+        BorderClaim(WorldBorder border, String arenaKey) {
+            this.size = border.getSize();
+            this.centerX = border.getCenter().getX();
+            this.centerZ = border.getCenter().getZ();
+            this.arenaKey = arenaKey;
+        }
+    }
 
     public ArenaModifiersListener(ExclusiveArenasPlugin plugin, PrivateSessionService sessions) {
         this.plugin = plugin;
@@ -116,27 +143,47 @@ public final class ArenaModifiersListener implements Listener {
     }
 
     private void applyWorldBorder(Arena arena, SessionSettings.ArenaModifiers mods) {
+        if (!mods.isWorldBorderShrink()) return; // never touch a border we didn't ask for
         World world = arena.getGameWorld();
         if (world == null) return;
         WorldBorder border = world.getWorldBorder();
-        if (mods.isWorldBorderShrink()) {
-            int target = plugin.getEaConfig().intNum("arena_modifiers.world_border.target_size", 60);
-            int seconds = plugin.getEaConfig().intNum("arena_modifiers.world_border.shrink_seconds", 480);
 
-            // Center on the arena's own configured region rather than the world's spawn point —
-            // a cloned game world's spawn location doesn't necessarily sit in the middle of the
-            // actual play area.
-            var min = arena.getMinRegionCorner();
-            var max = arena.getMaxRegionCorner();
-            double centerX = min != null && max != null ? (min.getX() + max.getX()) / 2 : world.getSpawnLocation().getX();
-            double centerZ = min != null && max != null ? (min.getZ() + max.getZ()) / 2 : world.getSpawnLocation().getZ();
+        int target = plugin.getEaConfig().intNum("arena_modifiers.world_border.target_size", 60);
+        int seconds = plugin.getEaConfig().intNum("arena_modifiers.world_border.shrink_seconds", 480);
 
-            border.setCenter(centerX, centerZ);
-            border.setSize(Math.max(target * 4, 200)); // a generous starting size before it shrinks
-            border.setSize(Math.max(10, target), Math.max(1, seconds));
+        // Last-writer wins on a shared world: the world only has one border, so the border the
+        // players actually see always belongs to the match that most recently applied one — that
+        // match's end is when restoring makes visual sense. The pre-session state captured by the
+        // FIRST claim is kept either way, so cleanup always restores what vanilla/other plugins
+        // had before any session touched the world.
+        BorderClaim claim = borderClaims.get(world.getUID());
+        if (claim == null) {
+            borderClaims.put(world.getUID(), new BorderClaim(border, key(arena.getName())));
         } else {
-            border.setSize(60000000); // Bukkit's effective "off" — matches the vanilla default
+            claim.arenaKey = key(arena.getName());
         }
+
+        // Center on the arena's own configured region rather than the world's spawn point —
+        // a cloned game world's spawn location doesn't necessarily sit in the middle of the
+        // actual play area.
+        var min = arena.getMinRegionCorner();
+        var max = arena.getMaxRegionCorner();
+        double centerX = min != null && max != null ? (min.getX() + max.getX()) / 2 : world.getSpawnLocation().getX();
+        double centerZ = min != null && max != null ? (min.getZ() + max.getZ()) / 2 : world.getSpawnLocation().getZ();
+
+        border.setCenter(centerX, centerZ);
+        border.setSize(Math.max(target * 4, 200)); // a generous starting size before it shrinks
+        border.setSize(Math.max(10, target), Math.max(1, seconds));
+    }
+
+    /** Restores the pre-session border, but only when {@code arenaKey}'s match owns the claim. */
+    private void restoreWorldBorder(World world, String arenaKey) {
+        BorderClaim claim = borderClaims.get(world.getUID());
+        if (claim == null || !claim.arenaKey.equals(arenaKey)) return;
+        borderClaims.remove(world.getUID());
+        WorldBorder border = world.getWorldBorder();
+        border.setCenter(claim.centerX, claim.centerZ);
+        border.setSize(claim.size);
     }
 
     // ── Round end: reset everything that doesn't belong on the arena's next match ────────
@@ -155,7 +202,37 @@ public final class ArenaModifiersListener implements Listener {
         }
 
         World world = arena.getGameWorld();
-        if (world != null) world.getWorldBorder().setSize(60000000);
+        if (world != null) restoreWorldBorder(world, k);
+    }
+
+    // ── Mid-round departures: don't let a session max health follow a player out ──
+
+    @EventHandler
+    public void onQuitArena(PlayerQuitArenaEvent event) {
+        restoreHealth(event.getPlayer());
+        spawnProtectionUntil.remove(event.getPlayer().getUniqueId());
+    }
+
+    @EventHandler
+    public void onQuitServer(PlayerQuitEvent event) {
+        // The MAX_HEALTH base value persists with player data — restore before the save.
+        restoreHealth(event.getPlayer());
+        spawnProtectionUntil.remove(event.getPlayer().getUniqueId());
+    }
+
+    /** Teardown: on our own disable, put back everything we still hold imperative state for. */
+    @EventHandler
+    public void onPluginDisable(PluginDisableEvent event) {
+        if (!event.getPlugin().equals(plugin)) return;
+        for (UUID id : originalMaxHealth.keySet().toArray(new UUID[0])) {
+            Player p = Bukkit.getPlayer(id);
+            if (p != null) restoreHealth(p);
+            else originalMaxHealth.remove(id); // offline — already restored by onQuitServer
+        }
+        for (Map.Entry<UUID, BorderClaim> entry : borderClaims.entrySet()) {
+            World world = Bukkit.getWorld(entry.getKey());
+            if (world != null) restoreWorldBorder(world, entry.getValue().arenaKey);
+        }
     }
 
     // ── Friendly fire / PvP grace / spawn protection ──────────────────────────────
@@ -173,15 +250,11 @@ public final class ArenaModifiersListener implements Listener {
         if (session == null) return;
         SessionSettings.ArenaModifiers mods = session.getSettings().getModifiers();
 
-        // Friendly fire: MBedwars already blocks same-team damage on its own — only intervene
-        // to explicitly ALLOW it back when a host has turned it on.
         Team attackerTeam = arena.getPlayerTeam(attacker);
         Team victimTeam = arena.getPlayerTeam(victim);
-        if (mods.isFriendlyFire() && attackerTeam != null && attackerTeam.equals(victimTeam)) {
-            event.setCancelled(false);
-            return;
-        }
 
+        // Grace period and spawn protection run FIRST: friendly fire being enabled must never
+        // let teammates hit each other while PvP isn't live yet for anyone else.
         Long graceUntil = pvpGraceUntil.get(key(arena.getName()));
         if (graceUntil != null && System.currentTimeMillis() < graceUntil) {
             event.setCancelled(true);
@@ -194,7 +267,18 @@ public final class ArenaModifiersListener implements Listener {
             var spawn = victimTeam != null ? arena.getTeamSpawn(victimTeam) : null;
             if (spawn != null && spawn.distance(victim.getLocation()) <= radius) {
                 event.setCancelled(true);
+                return;
             }
+        }
+
+        // Friendly fire: MBedwars already blocks same-team damage on its own — only intervene
+        // to explicitly ALLOW it back when a host has turned it on, and only while PvP is
+        // actually live (the host's Quick Actions PvP-off toggle wins). Known limitation: we
+        // can't tell MBedwars' own same-team cancellation apart from a cancellation by an
+        // unrelated protection plugin, so the latter may still be overridden here.
+        if (mods.isFriendlyFire() && attackerTeam != null && attackerTeam.equals(victimTeam)
+                && !plugin.getQuickActions().isPvpSuspended(arena)) {
+            event.setCancelled(false);
         }
     }
 

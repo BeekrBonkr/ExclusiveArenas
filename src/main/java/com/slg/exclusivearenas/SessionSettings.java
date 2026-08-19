@@ -325,7 +325,8 @@ public final class SessionSettings {
             JsonObject root = JsonParser.parseString(json).getAsJsonObject();
 
             if (root.has("ppt")) {
-                s.playersPerTeam = root.get("ppt").getAsInt();
+                s.playersPerTeam = clampInt(root.get("ppt").getAsInt(),
+                        GuiManager.MIN_PLAYERS_PER_TEAM, GuiManager.MAX_PLAYERS_PER_TEAM);
             }
             if (root.has("weather")) {
                 s.weatherType = root.get("weather").getAsString();
@@ -342,7 +343,7 @@ public final class SessionSettings {
                     JsonObject o = el.getAsJsonObject();
                     entries.add(new TimelineEntry(
                             o.get("id").getAsString(),
-                            o.get("t").getAsInt(),
+                            Math.max(0, o.get("t").getAsInt()),
                             o.has("ct") ? o.get("ct").getAsString() : null,
                             o.has("cv") ? o.get("cv").getAsString() : null));
                 }
@@ -355,25 +356,29 @@ public final class SessionSettings {
                     ShopOverride o = new ShopOverride();
                     o.setDisabled(item.has("off") && item.get("off").getAsBoolean());
                     if (item.has("price") && item.has("cur")) {
-                        o.setPrice(item.get("price").getAsInt(), item.get("cur").getAsString());
+                        o.setPrice(clampInt(item.get("price").getAsInt(), 1, 64),
+                                item.get("cur").getAsString());
                     }
                     if (!o.isNoop()) s.shop.put(itemId, o);
                 }
             }
             if (root.has("mods")) {
+                // Numeric rules are clamped to the extremes the GUI's Match Rules cycles can
+                // actually produce (see GuiListener) — a hand-edited or corrupted row must
+                // never smuggle in values like a 100x health multiplier the UI can't create.
                 JsonObject mods = root.getAsJsonObject("mods");
                 if (mods.has("ff")) s.modifiers.friendlyFire = mods.get("ff").getAsBoolean();
                 if (mods.has("nfd")) s.modifiers.noFallDamage = mods.get("nfd").getAsBoolean();
                 if (mods.has("ned")) s.modifiers.noExplosionBlockDamage = mods.get("ned").getAsBoolean();
-                if (mods.has("kbm")) s.modifiers.killBountyMultiplier = mods.get("kbm").getAsInt();
-                if (mods.has("scm")) s.modifiers.shopCurrencyMultiplier = mods.get("scm").getAsDouble();
+                if (mods.has("kbm")) s.modifiers.killBountyMultiplier = clampInt(mods.get("kbm").getAsInt(), 0, 3);
+                if (mods.has("scm")) s.modifiers.shopCurrencyMultiplier = clampMultiplier(mods.get("scm").getAsDouble());
                 if (mods.has("bsk")) s.modifiers.bonusStartingKit = mods.get("bsk").getAsBoolean();
-                if (mods.has("pvg")) s.modifiers.pvpGraceSeconds = mods.get("pvg").getAsInt();
-                if (mods.has("hpm")) s.modifiers.healthMultiplier = mods.get("hpm").getAsDouble();
+                if (mods.has("pvg")) s.modifiers.pvpGraceSeconds = clampInt(mods.get("pvg").getAsInt(), 0, 60);
+                if (mods.has("hpm")) s.modifiers.healthMultiplier = clampMultiplier(mods.get("hpm").getAsDouble());
                 if (mods.has("wbs")) s.modifiers.worldBorderShrink = mods.get("wbs").getAsBoolean();
                 if (mods.has("bro")) s.modifiers.bedRespawnOnce = mods.get("bro").getAsBoolean();
-                if (mods.has("sps")) s.modifiers.spawnProtectionSeconds = mods.get("sps").getAsInt();
-                if (mods.has("kg")) s.modifiers.killGoal = mods.get("kg").getAsInt();
+                if (mods.has("sps")) s.modifiers.spawnProtectionSeconds = clampInt(mods.get("sps").getAsInt(), 0, 20);
+                if (mods.has("kg")) s.modifiers.killGoal = clampInt(mods.get("kg").getAsInt(), 0, 30);
             }
         } catch (Exception ignored) {
             // A malformed blob (old version, manual edit) falls back to defaults rather
@@ -386,6 +391,16 @@ public final class SessionSettings {
             return new SessionSettings();
         }
         return s;
+    }
+
+    private static int clampInt(int v, int min, int max) {
+        return Math.max(min, Math.min(max, v));
+    }
+
+    /** Multipliers the GUI cycles between 0.5x and 2.0x; NaN/infinities fall back to 1.0. */
+    private static double clampMultiplier(double v) {
+        if (!Double.isFinite(v)) return 1.0;
+        return Math.max(0.5, Math.min(2.0, v));
     }
 
     /** Value comparison via the canonical JSON form — used to detect real changes on sync. */

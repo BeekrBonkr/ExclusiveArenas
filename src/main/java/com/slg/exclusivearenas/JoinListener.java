@@ -14,6 +14,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 
 import java.util.UUID;
 
@@ -46,15 +47,17 @@ public final class JoinListener implements Listener {
 
         plugin.prepareLobby(arena, session);
 
-        if (player.hasPermission(BYPASS_PERM)) return;
-
-        // Owner is always allowed; clear any abandon timer
+        // Owner is always allowed; clear any abandon timer. This must run BEFORE the bypass
+        // allow — a bypass-holding host returning through it would otherwise never clear
+        // hostLeftAt, and the abandon timeout would kill their own session under them.
         if (playerId.equals(session.getOwner())) {
             session.setHostLeftAt(null);
             session.markRecentJoin(playerId);
             plugin.syncPlayerClimate(arena, player);
             return;
         }
+
+        if (player.hasPermission(BYPASS_PERM)) return;
 
         // Valid join ticket (granted by /ea join, party summon, or network message)
         if (tickets.consumeIfValid(playerId, session.getSessionId(), arena.getName())) {
@@ -135,12 +138,13 @@ public final class JoinListener implements Listener {
         }
 
         // Code policy: a ticket (checked above) is required — a bare spectate attempt has none.
+        // The join code is deliberately NOT substituted into a denial: handing the code to the
+        // very player being turned away would make the deny message a code oracle.
         event.setCancelled(true);
         if (!session.isPublic()) {
             player.sendMessage(Lang.msg("locked.private"));
         } else {
-            player.sendMessage(Lang.msg("locked.hint-code",
-                    "%code%", session.getJoinCode() != null ? session.getJoinCode() : ""));
+            player.sendMessage(Lang.msg("locked.hint-code"));
         }
     }
 
@@ -218,6 +222,24 @@ public final class JoinListener implements Listener {
         });
     }
 
+    // ── Server quit: drop the player's in-progress builder draft ──────────────
+
+    /**
+     * {@link DraftPrivateMatch} is documented to live only "until the session is created or
+     * the player logs out" — this is the logout half. Their soft arena reservation is released
+     * too, so the map frees up immediately instead of waiting out the reservation TTL.
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onServerQuit(PlayerQuitEvent event) {
+        UUID playerId = event.getPlayer().getUniqueId();
+        DraftPrivateMatch draft = plugin.getDraftService().get(playerId);
+        if (draft == null) return;
+        if (draft.getArenaName() != null) {
+            sessions.releaseDraftArena(draft.getArenaName(), playerId);
+        }
+        plugin.getDraftService().clear(playerId);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private enum IssueKind { PARTY, CODE }
@@ -226,10 +248,11 @@ public final class JoinListener implements Listener {
         String key = kind == IssueKind.PARTY ? "locked.hint-party" : "locked.hint-code";
         String msg = Lang.raw(key, "%arena%", arena.getName());
 
+        // Only %owner% is ever substituted here: this message is a DENIAL, so filling in
+        // %code% would hand the join code to exactly the player being turned away if an admin
+        // ever added the placeholder to the lang string.
         if (kind == IssueKind.PARTY) {
             msg = msg.replace("%owner%", ownerName(session));
-        } else {
-            msg = msg.replace("%code%", session.getJoinCode() != null ? session.getJoinCode() : "");
         }
 
         return AddPlayerIssue.construct("exclusivearenas.private", ItemUtil.color(msg));

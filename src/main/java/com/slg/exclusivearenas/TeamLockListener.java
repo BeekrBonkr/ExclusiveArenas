@@ -103,14 +103,23 @@ public final class TeamLockListener implements Listener {
 
         notifyLocked(player);
         // Reverting inside the event itself would fight whatever is mid-way through applying
-        // the change; do it once that has finished.
+        // the change; do it once that has finished. The lock decision was made at event time
+        // (isLockedFor above confirmed the lobby was still open), so the backstop must NOT
+        // abort just because the match started in the meantime — a switch in the very tick the
+        // start boundary is crossed would otherwise keep the stolen slot for the whole match.
         Bukkit.getScheduler().runTask(plugin, () -> {
-            if (!player.isOnline() || !arena.exists() || !arena.getStatus().isLobby()) return;
+            if (!player.isOnline() || !arena.exists()) return;
             if (!arena.getPlayers().contains(player)) return;   // left the arena entirely
             if (oldTeam.equals(arena.getPlayerTeam(player))) return; // something already put them back
             hostAction(() -> {
                 try {
-                    arena.moveToTeamDuringLobby(player, oldTeam);
+                    if (arena.getStatus().isLobby()) {
+                        arena.moveToTeamDuringLobby(player, oldTeam);
+                    } else {
+                        // Past the start boundary the lobby mover refuses; the raw setter
+                        // still restores the team they were on when the match began.
+                        arena.setPlayerTeam(player, oldTeam);
+                    }
                 } catch (Throwable t) {
                     plugin.debug("Could not restore " + player.getName() + " to "
                             + oldTeam.name() + " in " + arena.getName() + ": " + t.getMessage());

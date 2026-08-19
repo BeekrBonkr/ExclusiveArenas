@@ -4,7 +4,9 @@ import de.marcely.bedwars.api.BedwarsAPI;
 import de.marcely.bedwars.api.arena.Arena;
 import de.marcely.bedwars.api.arena.Team;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -40,6 +42,18 @@ public final class RemoteCommandService {
     /** KICK_ALL payload marking the shift-click variant that spares the host. */
     public static final String PAYLOAD_KEEP_HOST = "keep-host";
 
+    // Commands older than this are discarded (and deleted) instead of executed: a row queued
+    // while this server was down was aimed at match state that no longer exists — replaying
+    // it into whatever runs on the arena now would be wrong. Assumes NTP-level clock skew
+    // between the enqueuing server and this one.
+    private static final long COMMAND_TTL_MS = 30_000L;
+
+    // Ids of commands this server already executed, kept a few TTLs so a poll whose SELECT ran
+    // before the async claim-delete committed can't re-execute the same row. Main-thread only
+    // (reconcile runs there), so a plain map suffices.
+    private final Map<UUID, Long> recentlyExecuted = new HashMap<>();
+    private static final long RECENTLY_EXECUTED_KEEP_MS = COMMAND_TTL_MS * 3;
+
     private final ExclusiveArenasPlugin plugin;
     private final PrivateSessionService sessions;
     private Database db;
@@ -70,11 +84,23 @@ public final class RemoteCommandService {
 
     /** Called on the main thread by {@link SyncService} once rows are loaded off-thread. */
     public void reconcile(List<Database.CommandRow> rows) {
+        long now = System.currentTimeMillis();
+        recentlyExecuted.values().removeIf(at -> now - at > RECENTLY_EXECUTED_KEEP_MS);
+
         for (Database.CommandRow row : rows) {
+            // The claim-delete is async fire-and-forget, so this row may reappear in the next
+            // poll before that delete commits — never run it twice.
+            if (recentlyExecuted.containsKey(row.id())) continue;
+            if (now - row.createdAt() > COMMAND_TTL_MS) {
+                db.deleteCommand(row.id()); // expired — discard instead of replaying
+                continue;
+            }
+
             Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(row.arenaName());
             if (arena == null || !arena.exists()) continue; // not hosted on this server
 
             db.deleteCommand(row.id()); // claim it first so a slow handler can't double-run it
+            recentlyExecuted.put(row.id(), now);
             execute(row, arena);
         }
     }
@@ -82,6 +108,13 @@ public final class RemoteCommandService {
     private void execute(Database.CommandRow row, Arena arena) {
         PrivateSession session = sessions.getById(row.sessionId());
         if (session == null) return;
+
+        // Resolving the session id alone is not enough: after a session-end/create race the id
+        // can survive attached to a different arena's session. Never execute a command against
+        // an arena its session doesn't actually own.
+        String sessionArena = ArenaNames.canonical(session.getArenaName());
+        String rowArena = ArenaNames.canonical(row.arenaName());
+        if (sessionArena == null || rowArena == null || !sessionArena.equalsIgnoreCase(rowArena)) return;
 
         Type type;
         try {

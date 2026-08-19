@@ -186,6 +186,16 @@ public final class TimelineService {
                 // the timeline editor's "Add Event" flow.
                 boolean includeByDefault = e.getBoolean("default", true) || type == Type.MATCH_END;
 
+                // A hand-edited zero/negative multiplier would silently produce zero or negative
+                // drop intervals once fed into a MULTIPLY spawner modifier — clamp it to sanity.
+                double multiplier = e.getDouble("multiplier", 1.0);
+                if (multiplier < 0.05 || multiplier > 20.0) {
+                    double clamped = Math.max(0.05, Math.min(20.0, multiplier));
+                    logger.warning("timeline.events." + id + ": multiplier " + multiplier
+                            + " is outside the sane range 0.05..20 — clamped to " + clamped + ".");
+                    multiplier = clamped;
+                }
+
                 defs.put(id, new Definition(
                         id,
                         e.getString("name", id),
@@ -193,7 +203,7 @@ public final class TimelineService {
                         parseTime(e.getString("time", "10:00")),
                         type,
                         e.getString("drop_type", null),
-                        e.getDouble("multiplier", 1.0),
+                        multiplier,
                         e.getString("description", ""),
                         includeByDefault));
             }
@@ -487,12 +497,16 @@ public final class TimelineService {
             List<SessionSettings.TimelineEntry> rescaled = new ArrayList<>();
             for (SessionSettings.TimelineEntry e : timeline) {
                 if (e.id().equals(matchEndId)) {
-                    rescaled.add(new SessionSettings.TimelineEntry(e.id(), newEnd));
+                    rescaled.add(new SessionSettings.TimelineEntry(e.id(), newEnd,
+                            e.customType(), e.customValue()));
                 } else if (newEnd < oldTime || latestOther >= newEnd) {
                     // Shrinking (or an event would fall outside): rescale proportionally.
+                    // Carry the custom type/value through — dropping them would turn a
+                    // host-authored custom entry into a dangling catalog reference.
                     int t = snap((int) Math.round(e.seconds() * ratio));
                     rescaled.add(new SessionSettings.TimelineEntry(e.id(),
-                            clamp(t, MIN_EVENT_SECONDS, newEnd - SNAP_SECONDS)));
+                            clamp(t, MIN_EVENT_SECONDS, newEnd - SNAP_SECONDS),
+                            e.customType(), e.customValue()));
                 } else {
                     rescaled.add(e); // growing with room to spare: leave others untouched
                 }
@@ -503,7 +517,9 @@ public final class TimelineService {
         }
 
         int newTime = clamp(oldTime + deltaSeconds, MIN_EVENT_SECONDS, endTime - SNAP_SECONDS);
-        timeline.set(idx, new SessionSettings.TimelineEntry(eventId, newTime));
+        SessionSettings.TimelineEntry moved = timeline.get(idx);
+        timeline.set(idx, new SessionSettings.TimelineEntry(eventId, newTime,
+                moved.customType(), moved.customValue()));
         sortWithEndLast(timeline);
         settings.setTimeline(timeline);
         return newTime;

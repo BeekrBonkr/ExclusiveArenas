@@ -310,9 +310,22 @@ public final class TweaksTimelineBridge implements Listener {
             // destroyed with MBedwars — normally harmless because the real Bed Destruction tier
             // already ran first, but a host-customized timeline can reorder or drop that tier.
             // Force it here, timed to land the moment Sudden Death itself actually fires.
-            Bukkit.getScheduler().runTaskLater(plugin,
-                    () -> { if (arena.exists()) plugin.getTimelineEngine().destroyAllBeds(arena); },
-                    Math.max(1, delay) * 20L);
+            //
+            // The timer may only ever land in THIS round of THIS private match: if the round
+            // ends early and a new (possibly public) round starts on the same arena before it
+            // fires, it must not destroy that round's beds. The queue state is created on a
+            // round's first schedule event and removed the moment the round ends, so the same
+            // instance still being registered — plus the same session still on the arena —
+            // identifies the same round.
+            final ArenaQueueState scheduledState = state;
+            final java.util.UUID scheduledSessionId = session.getSessionId();
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                if (!arena.exists() || arena.getStatus() != ArenaStatus.RUNNING) return;
+                if (queues.get(key(arena)) != scheduledState) return; // that round already ended
+                PrivateSession current = sessions.getByArena(arena);
+                if (current == null || !current.getSessionId().equals(scheduledSessionId)) return;
+                plugin.getTimelineEngine().destroyAllBeds(arena);
+            }, Math.max(1, delay) * 20L);
         }
 
         event.setNextTier(level);

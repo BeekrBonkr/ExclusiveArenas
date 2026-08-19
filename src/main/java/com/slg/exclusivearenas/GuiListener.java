@@ -13,8 +13,10 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.PrepareAnvilEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.InventoryView;
@@ -59,7 +61,26 @@ public final class GuiListener implements Listener {
     @EventHandler
     public void onDrag(InventoryDragEvent e) {
         InventoryHolder holder = e.getView().getTopInventory().getHolder();
-        if (holder instanceof GuiHolder) e.setCancelled(true);
+        if (holder instanceof GuiHolder) {
+            e.setCancelled(true);
+            return;
+        }
+        // Anvil text prompts are real anvil views without a GuiHolder — route via the
+        // pending-prompt map instead so a drag can't slip items into (or out of) the prompt.
+        if (promptFor(e.getWhoClicked() instanceof Player p ? p : null, e.getView()) != null) {
+            e.setCancelled(true);
+        }
+    }
+
+    /**
+     * The pending anvil-prompt holder for {@code p}, but only when {@code view} really is the
+     * inventory that prompt opened — a stale or unrelated anvil never matches.
+     */
+    private GuiHolder promptFor(Player p, InventoryView view) {
+        if (p == null) return null;
+        GuiHolder pending = gui.pendingPrompt(p.getUniqueId());
+        if (pending == null || view.getTopInventory() != pending.getInventory()) return null;
+        return pending;
     }
 
     @EventHandler
@@ -67,7 +88,15 @@ public final class GuiListener implements Listener {
         if (!(e.getWhoClicked() instanceof Player p)) return;
 
         InventoryHolder holder = e.getView().getTopInventory().getHolder();
-        if (!(holder instanceof GuiHolder gh)) return;
+        GuiHolder gh;
+        if (holder instanceof GuiHolder h) {
+            gh = h;
+        } else {
+            // Anvil text prompts run on a real anvil view (only those process rename packets),
+            // which cannot carry a custom InventoryHolder — identify them per player instead.
+            gh = promptFor(p, e.getView());
+            if (gh == null) return;
+        }
 
         // Any interaction with one of our menus is cancelled so items can never be taken.
         e.setCancelled(true);
@@ -117,8 +146,16 @@ public final class GuiListener implements Listener {
      */
     @EventHandler
     public void onPrepareAnvil(PrepareAnvilEvent e) {
-        if (!(e.getInventory().getHolder() instanceof GuiHolder gh)) return;
+        if (!(e.getView().getPlayer() instanceof Player p)) return;
+        GuiHolder gh = promptFor(p, e.getView());
+        if (gh == null) return;
         if (gh.type() != GuiHolder.Type.PRESET_NAME && gh.type() != GuiHolder.Type.TIMELINE_CUSTOM_TEXT) return;
+
+        // A real anvil computes an XP/repair cost for the rename — zero it so the prompt never
+        // shows a misleading "Enchantment Cost" (nothing is ever consumed anyway; every click
+        // on the prompt is cancelled).
+        e.getView().setRepairCost(0);
+        e.getView().setRepairItemCountCost(0);
 
         String text = e.getView().getRenameText();
         if (text == null || text.isBlank()) {
@@ -130,6 +167,27 @@ public final class GuiListener implements Listener {
         meta.setDisplayName(text.trim());
         result.setItemMeta(meta);
         e.setResult(result);
+    }
+
+    /**
+     * A closing anvil view hands its contents back to the player (or drops them) — clear the
+     * prompt's slots first so the input paper vanishes with the menu, and forget the pending
+     * prompt so it can never fire against a later, unrelated anvil or a stale session.
+     */
+    @EventHandler
+    public void onClose(InventoryCloseEvent e) {
+        if (!(e.getPlayer() instanceof Player p)) return;
+        GuiHolder gh = promptFor(p, e.getView());
+        if (gh == null) return;
+        gui.clearPendingPrompt(p.getUniqueId());
+        e.getView().getTopInventory().clear();
+    }
+
+    @EventHandler
+    public void onQuit(PlayerQuitEvent e) {
+        // Belt and braces — the close event normally fires on disconnect too, but a pending
+        // prompt must never outlive its player.
+        gui.clearPendingPrompt(e.getPlayer().getUniqueId());
     }
 
     // ── Main menu ─────────────────────────────────────────────────────────────────
@@ -607,7 +665,7 @@ public final class GuiListener implements Listener {
             gui.openPresetPreview(p, session, gh.adminView(), presets, name);
             return;
         }
-        applyPreset(p, session, presets.get(name), name);
+        applyPreset(p, session, gh, name);
     }
 
     /** Read-only inspection of one saved configuration, with Apply/Delete alongside. */
@@ -626,29 +684,63 @@ public final class GuiListener implements Listener {
         if (name == null || !presets.containsKey(name)) return; // deleted underneath us
 
         if (slot == GuiStyle.slot("preset-preview.buttons.apply")) {
-            applyPreset(p, session, presets.get(name), name);
+            // Return to the list first: the live re-fetch inside applyPreset may reopen it with
+            // fresh data (preset gone), and that must win over this snapshot-based render in
+            // both preset-store modes (file mode's callback runs synchronously).
             gui.openPresets(p, session, gh.adminView(), presets);
+            applyPreset(p, session, gh, name);
         } else if (slot == GuiStyle.slot("preset-preview.buttons.delete")) {
             deletePreset(p, session, gh, presets, name);
         }
     }
 
     /**
-     * Applies a saved configuration to the match. The teams lock is match-local live state
-     * rather than part of the saved setup, so {@link PrivateSessionService#applyPresetSettings}
-     * carries it across untouched.
+     * Applies a saved configuration to the match. The menu's click-time snapshot may be stale —
+     * host and admin can both have this menu open, and one may have overwritten or deleted the
+     * preset the other is about to apply — so the preset is re-fetched live and whatever is
+     * actually stored gets applied (mirroring the {@code /ea preset apply} path). The teams
+     * lock is match-local live state rather than part of the saved setup, so
+     * {@link PrivateSessionService#applyPresetSettings} carries it across untouched.
      */
-    private void applyPreset(Player p, PrivateSession session, String json, String name) {
-        sessions.applyPresetSettings(session, json);
-        p.sendMessage(Lang.msg("presets.applied", "%name%", name, "%arena%", session.getArenaName()));
+    private void applyPreset(Player p, PrivateSession session, GuiHolder gh, String requested) {
+        plugin.getPresetService().list(session.getOwner(), fresh -> {
+            if (!p.isOnline()) return;
+            PrivateSession live = sessions.getById(session.getSessionId());
+            if (live == null) {
+                p.sendMessage(Lang.msg("general.match-gone"));
+                return;
+            }
+            String name = PresetService.existingName(fresh, requested);
+            if (name == null) {
+                p.sendMessage(Lang.msg("cmd.preset-unknown", "%name%", requested));
+                gui.openPresets(p, live, gh.adminView(), fresh); // resync the stale menu
+                return;
+            }
+            sessions.applyPresetSettings(live, fresh.get(name));
+            p.sendMessage(Lang.msg("presets.applied", "%name%", name, "%arena%", live.getArenaName()));
+        });
     }
 
     private void deletePreset(Player p, PrivateSession session, GuiHolder gh,
                               java.util.LinkedHashMap<String, String> presets, String name) {
-        plugin.getPresetService().delete(session.getOwner(), name);
+        // Optimistic local removal for a snappy menu; the callback reports what the store
+        // actually did — on a failed write the preset is NOT gone, so say so and re-render
+        // with the truth rather than letting it silently reappear on the next open.
         presets.remove(name);
-        p.sendMessage(Lang.msg("presets.deleted", "%name%", name));
         gui.openPresets(p, session, gh.adminView(), presets);
+        plugin.getPresetService().delete(session.getOwner(), name, ok -> {
+            if (!p.isOnline()) return;
+            if (ok) {
+                p.sendMessage(Lang.msg("presets.deleted", "%name%", name));
+                return;
+            }
+            p.sendMessage(Lang.msg("presets.delete-failed", "%name%", name));
+            PrivateSession live = sessions.getById(session.getSessionId());
+            if (live != null) {
+                plugin.getPresetService().list(live.getOwner(),
+                        fresh -> { if (p.isOnline()) gui.openPresets(p, live, gh.adminView(), fresh); });
+            }
+        });
     }
 
     /** Confirms the anvil name prompt — only the result slot (2) saves; anything else is a no-op. */
@@ -980,8 +1072,10 @@ public final class GuiListener implements Listener {
      */
     private boolean timelineEditable(Player p, SettingsHolder holder) {
         if (!(holder instanceof PrivateSession session)) return true;
-        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
-        if (arena != null && !arena.getStatus().isLobby()) {
+        // Remote-aware on purpose (mirrors GuiManager#isTimelineEditable): a session hosted on
+        // another server resolves to no local arena, and treating that as "editable" would let
+        // a mid-round match be edited from the hub — saved, confirmed, and never applied.
+        if (!ArenaNames.isLobbyStatus(session.getArenaName())) {
             p.sendMessage(Lang.msg("timeline.lobby-only"));
             return false;
         }
@@ -1500,8 +1594,8 @@ public final class GuiListener implements Listener {
     // ── Shared guards ──────────────────────────────────────────────────────────────
 
     /**
-     * Resolves the menu's session and enforces that only its host (or an admin/bypass
-     * holder) may act. Returns null — with the player already messaged — otherwise.
+     * Resolves the menu's session and enforces that only its host (or an admin) may act.
+     * Returns null — with the player already messaged — otherwise.
      */
     /**
      * Resolves either a live session (via {@link #requireManageable}) or — when the menu was
@@ -1528,7 +1622,9 @@ public final class GuiListener implements Listener {
             reopenList(p, gh.adminView(), 0);
             return null;
         }
-        boolean admin = p.hasPermission(GuiManager.ADMIN_PERM) || p.hasPermission(GuiManager.BYPASS_PERM);
+        // ADMIN_PERM only: BYPASS_PERM is declared as a join-gate bypass, not a licence to
+        // manage other players' matches.
+        boolean admin = p.hasPermission(GuiManager.ADMIN_PERM);
         boolean owner = p.getUniqueId().equals(session.getOwner());
         if (!owner && !admin) {
             p.sendMessage(Lang.msg("host.only-host-menu"));

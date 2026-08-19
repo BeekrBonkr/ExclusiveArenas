@@ -1,9 +1,11 @@
 package com.slg.exclusivearenas;
 
+import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -66,7 +68,26 @@ public final class VersionedYaml {
 
     public void load() {
         ensureDefaultExists();
-        this.config = YamlConfiguration.loadConfiguration(file);
+
+        // Load via the throwing API — YamlConfiguration.loadConfiguration() swallows parse
+        // errors and returns an EMPTY config, which the migrate/ensureComplete/save below
+        // would then persist, silently replacing the user's entire file with defaults over
+        // a single indent typo. On a parse failure we instead keep the broken file untouched
+        // (backed up alongside) and run this session on in-memory defaults.
+        YamlConfiguration loaded = new YamlConfiguration();
+        boolean parseFailed = false;
+        try {
+            loaded.load(file);
+        } catch (FileNotFoundException e) {
+            // Missing file (e.g. the bundled default couldn't be written) — run on defaults.
+        } catch (IOException | InvalidConfigurationException e) {
+            parseFailed = true;
+            plugin.getLogger().severe(resourceName + " has a syntax error and could not be loaded — "
+                    + "running on default values until it is fixed. Your file was NOT modified "
+                    + "(a copy was saved next to it). Parse error: " + e.getMessage());
+            EaConfig.backupBrokenFile(file);
+        }
+        this.config = loaded;
 
         boolean changed = migrate();
         YamlConfiguration defaults = loadBundledDefaults();
@@ -74,6 +95,9 @@ public final class VersionedYaml {
             changed |= ensureComplete(defaults);
             changed |= syncComments(defaults);
         }
+        // Never save over the user's file when it failed to parse — that would destroy
+        // everything they wrote for the sake of one typo.
+        if (parseFailed) return;
         if (changed) save();
     }
 
