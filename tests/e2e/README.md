@@ -27,7 +27,8 @@ export MC_CONSOLE=/tmp/mc-console.in MC_LOG=/tmp/mc.log   # optional
 npm run core    # command surface: create/join/code/lock, overrides, timeline, presets, start, quick actions
 npm run gui     # menus: builder, Match Controls, Arena Modifiers, Quick Actions, hotbar items
 npm run admin   # help/list, limits, Manage Teams, Match Rules, admin panel, console reload
-npm test        # all three
+npm run quick   # every Quick Actions button clicked during a running match, ending with Force Win
+npm test        # all four
 ```
 
 Each scenario prints one line per check and writes `reports/<name>.json`. Bots send at most one
