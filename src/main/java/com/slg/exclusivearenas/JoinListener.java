@@ -7,6 +7,8 @@ import de.marcely.bedwars.api.event.player.SpectatorJoinArenaEvent;
 import de.marcely.bedwars.api.event.remote.RemotePlayerPreJoinLocalArenaEvent;
 import de.marcely.bedwars.api.game.spectator.SpectateReason;
 import de.marcely.bedwars.api.hook.PartiesHook;
+import de.marcely.bedwars.api.BedwarsAPI;
+import de.marcely.bedwars.api.remote.RemoteAPI;
 import de.marcely.bedwars.api.remote.RemotePlayer;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
@@ -16,7 +18,10 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class JoinListener implements Listener {
 
@@ -72,10 +77,16 @@ public final class JoinListener implements Listener {
         // confirms they're allowed. This also means a hook that throws or never calls back simply
         // leaves the join denied, instead of silently admitting the player.
         if (session.getJoinPolicy() == JoinPolicy.PARTY) {
-            event.addIssue(buildIssue(session, arena, IssueKind.PARTY));
+            // Most party hooks answer synchronously, though — in that case the answer is already
+            // in hand before this method returns, so a member can simply be admitted instead of
+            // being shown a denial and then summoned a tick later. The state word settles who
+            // got there first: 0 = undecided, 1 = the sync window closed (the hook will answer
+            // later, via the summon path), 2 = the hook allowed the player inside the window.
             final PrivateSession finalSession = session;
+            AtomicInteger state = new AtomicInteger(0);
             PartyResolver.isInLeadersParty(player, session.getOwner(), allowed -> {
-                if (!allowed) return; // already denied above
+                if (!allowed) return; // denied (issue added below, or never admitted)
+                if (state.compareAndSet(0, 2)) return; // answered in time — admitted directly below
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     if (!player.isOnline()) return;
                     finalSession.markRecentJoin(playerId);
@@ -83,6 +94,13 @@ public final class JoinListener implements Listener {
                     plugin.syncPlayerClimate(arena, player);
                 });
             });
+            if (!state.compareAndSet(0, 1)) {
+                // The hook already confirmed them (state 2): admit now, no denial round-trip.
+                session.markRecentJoin(playerId);
+                plugin.syncPlayerClimate(arena, player);
+                return;
+            }
+            event.addIssue(buildIssue(session, arena, IssueKind.PARTY));
             return;
         }
 
@@ -165,7 +183,11 @@ public final class JoinListener implements Listener {
             return;
         }
 
-        if (tickets.consumeIfValid(playerId, session.getSessionId(), arena.getName())) {
+        // Peek, don't consume: this is only MBedwars asking whether the transfer may go ahead.
+        // The player's actual arrival fires the regular join gate (onLocalJoin), which is where
+        // the ticket gets spent — consuming it here would leave that gate with nothing to honour
+        // and deny the very player this call just approved.
+        if (tickets.hasValidTicket(playerId, session.getSessionId(), arena.getName())) {
             session.markRecentJoin(playerId);
             return;
         }
@@ -181,6 +203,13 @@ public final class JoinListener implements Listener {
 
     // ── Server join: auto-summon to active party session ──────────────────────
 
+    /**
+     * On a proxy network a player "joins" a backend on every server switch, not just when they
+     * log in. A login that happened longer ago than this is a hop (e.g. the member deliberately
+     * left the match for the hub) and must not pull them straight back in.
+     */
+    private static final Duration LOGIN_ROUTING_WINDOW = Duration.ofSeconds(20);
+
     @EventHandler(priority = EventPriority.MONITOR)
     public void onServerJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
@@ -193,15 +222,20 @@ public final class JoinListener implements Listener {
     private void checkPartySession(Player player) {
         if (!player.isOnline()) return;
         UUID playerId = player.getUniqueId();
+        if (isServerHop(playerId)) return;
 
         PartyResolver.getPartyMember(player, opt -> {
             if (opt.isEmpty()) return;
             PartiesHook.Party party = opt.get().getParty();
 
-            // Find if any leader in the party has an active private session with PARTY policy
+            // Find if any leader in the party has an active private session with PARTY policy.
+            // The leader's own matches are never a target for the leader: a host who leaves
+            // their lobby (to the hub, or just to log out) decides for themselves when to go
+            // back — "Go to Arena" is one click away, and the abandon timer covers the rest.
             PrivateSession target = null;
             outer:
             for (PartiesHook.Member leader : party.getLeaders()) {
+                if (leader.getUniqueId().equals(playerId)) continue;
                 for (PrivateSession session : sessions.getSessionsByOwner(leader.getUniqueId())) {
                     if (session.getJoinPolicy() != JoinPolicy.PARTY) continue;
                     target = session;
@@ -216,10 +250,30 @@ public final class JoinListener implements Listener {
             Bukkit.getScheduler().runTask(plugin, () -> {
                 Player online = Bukkit.getPlayer(playerId);
                 if (online == null || !online.isOnline()) return;
+                // Already there (MBedwars seated them on arrival) — nothing to route.
+                Arena current = BedwarsAPI.getGameAPI().getArenaByPlayer(online);
+                if (current != null && finalTarget.matchesArena(current)) return;
                 tickets.grant(playerId, finalTarget.getSessionId(), finalTarget.getArenaName());
                 plugin.sendPlayerToArena(online, finalTarget.getArenaName());
             });
         });
+    }
+
+    /**
+     * True when this join is a server switch rather than a fresh login — only knowable on a
+     * network, where MBedwars' RemoteAPI tracks when the player logged into the proxy. On a
+     * standalone server every join is a login.
+     */
+    private boolean isServerHop(UUID playerId) {
+        RemoteAPI api = ArenaNames.remoteApi();
+        if (api == null) return false;
+        try {
+            RemotePlayer rp = api.getOnlinePlayer(playerId);
+            Instant login = rp == null ? null : rp.getLoginTime();
+            return login != null && Duration.between(login, Instant.now()).compareTo(LOGIN_ROUTING_WINDOW) > 0;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     // ── Server quit: drop the player's in-progress builder draft ──────────────

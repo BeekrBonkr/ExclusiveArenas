@@ -36,6 +36,7 @@ public final class ArenaEntryGuardTask extends BukkitRunnable {
 
     @Override
     public void run() {
+        tickets.purgeExpired();
         for (PrivateSession session : sessions.getAllSessions()) {
             Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
             if (arena == null || !arena.exists()) continue;

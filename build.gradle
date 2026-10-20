@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'com.slg'
-version = '1.2.0'
+version = '1.3.0'
 
 repositories {
     mavenCentral()
@@ -13,10 +13,10 @@ repositories {
 
 dependencies {
     compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
-    compileOnly files('libs/MBedwars.jar')
+    compileOnly files('libs/MBedwars-5.5.9.1.jar')
     // Optional at runtime (softdepend) — only the TweaksTimelineBridge class touches it,
     // and that class is never loaded unless the MBedwarsTweaks plugin is present.
-    compileOnly files('libs/MBedwarsTweaks-5.0.2.jar')
+    compileOnly files('libs/MBedwarsTweaks-5.1.1.jar')
 
     // Shaded into the plugin jar — this is our own, standalone cross-server store.
     implementation 'org.mariadb.jdbc:mariadb-java-client:3.5.3'
