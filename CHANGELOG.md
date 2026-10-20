@@ -92,6 +92,11 @@ All notable changes to ExclusiveArenas are documented here.
   time/weather. Configurable via the new `%summary%` placeholder in each button's lore.
 
 ### Fixed
+- **Standalone servers were detected as networked**: MBedwars always installs a RemoteAPI,
+  and `isAPIActive()` is true for its local-only stub too, so every "is this a network?" check
+  said yes on a plain single server. Detection now also requires `!isLocalOnly()`, which is
+  what separates the stub from a real ProxySync setup. The startup line now reads
+  "networked (MBedwars proxy sync active)" or "standalone (no proxy sync)".
 - **Standalone servers no longer get network wording or dead ends**: with MBedwars' RemoteAPI
   inactive, a match whose arena was unloaded or deleted now says "That arena isn't loaded on
   this server" instead of "on another server", its buttons carry a matching lore line instead
@@ -136,6 +141,18 @@ All notable changes to ExclusiveArenas are documented here.
   dropping the record; a clean shutdown ends locally hosted matches and removes the server's
   heartbeat row, so a quick restart no longer re-gates fresh arenas under ghost sessions and
   the rest of the network no longer logs a clean stop as a crash.
+- **Freeze / PvP-off / Emergency Pause toggled in the lobby leaked into the next match**: the
+  per-arena flag was only cleared when a running round ended, so a toggle made before the
+  start stayed set through End Match and the next match on that arena began frozen. These
+  three now refuse outside a running round, and ending a match clears the flags regardless.
+- **"Rejoin as Player" never worked**: the handler was registered as a lobby-hotbar item, but a
+  spectator holds MBedwars' spectator hotbar, so the item MBedwars showed from
+  `spectator-hotbar.yml` reported "missing an handler". It is now registered as a spectator
+  item (and still as a lobby item for older configs). README corrected accordingly.
+- **`/ea reload` now works from the console** (it was "Players only" like every other
+  subcommand).
+- **Kick All (keep host) printed "Missing lang key: kickall.kicked-kept-host"**: the message
+  was never added to `lang.yml`.
 - **MBedwarsTweaks 5.1.1 timeline bridge never engaged**: since Tweaks 5.1.1 loads its gen-tier
   config inside its own MBedwars ready-callback, which can run *after* ExclusiveArenas' own init
   when ExclusiveArenas happens to enable first. The bridge then found zero tiers and quietly fell

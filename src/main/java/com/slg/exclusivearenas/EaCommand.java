@@ -71,6 +71,13 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!(sender instanceof Player p)) {
+            // Everything else is menu/arena-bound, but a reload is an admin chore that has to
+            // work from the console (and from scripts / panels) too.
+            if (args.length >= 1 && args[0].equalsIgnoreCase("reload")) {
+                plugin.reload();
+                sender.sendMessage(Lang.msg("general.reloaded"));
+                return true;
+            }
             sender.sendMessage(Lang.msg("general.players-only"));
             return true;
         }
