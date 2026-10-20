@@ -98,6 +98,16 @@ public final class JoinTicketService {
     }
 
     /**
+     * Drops expired tickets from the cache. {@link #reconcile} does this as part of every
+     * database poll; on a standalone server nothing polls, so the entry-guard sweep calls this
+     * instead — otherwise a ticket for a player who never joined would linger indefinitely.
+     */
+    public void purgeExpired() {
+        long now = System.currentTimeMillis();
+        tickets.entrySet().removeIf(e -> e.getValue().expiresAt <= now);
+    }
+
+    /**
      * Merges valid tickets from the DB into the cache and drops locally-expired ones.
      * This is a merge, not a wipe: a locally-granted ticket whose write-through has not
      * flushed yet is kept, and an incoming row only replaces a local one if it is newer.

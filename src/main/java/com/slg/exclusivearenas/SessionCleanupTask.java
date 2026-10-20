@@ -42,6 +42,9 @@ public final class SessionCleanupTask extends BukkitRunnable {
                 "private.inactivity_close_grace_minutes", 5) * 60_000L);
 
         Instant now = Instant.now();
+        // With the shared database on but no RemoteAPI, every non-local arena is invisible from
+        // here — it can't be told apart from a stopped one, so the stale check must not judge it.
+        boolean blindToRemote = plugin.getDatabase() != null && !plugin.isRemoteApiActive();
 
         for (PrivateSession session : sessions.getAllSessions()) {
             Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
@@ -52,7 +55,7 @@ public final class SessionCleanupTask extends BukkitRunnable {
                 if (arena != null) {
                     arena.broadcast(Lang.msg("cleanup.host-abandoned"));
                 }
-                sessions.endSession(session);
+                end(session, arena);
                 continue;
             }
 
@@ -62,10 +65,11 @@ public final class SessionCleanupTask extends BukkitRunnable {
                 // backend-hosted arena is null — treating that like STOPPED would kill a match
                 // still RUNNING on its backend. Only stale-kill when the arena is not active
                 // anywhere on the network.
-                if (!ArenaNames.isActiveStatus(session.getArenaName())) {
+                boolean localArena = arena != null && arena.exists();
+                if (!(blindToRemote && !localArena) && !ArenaNames.isActiveStatus(session.getArenaName())) {
                     plugin.getLogger().info("Ending stale session for arena "
                             + session.getArenaName() + " (created " + session.getCreatedAt() + ")");
-                    sessions.endSession(session);
+                    end(session, arena);
                     continue;
                 }
             }
@@ -88,11 +92,21 @@ public final class SessionCleanupTask extends BukkitRunnable {
                                 + session.getArenaName() + " (no active players for "
                                 + (inactiveMs / 60_000L) + " minutes)");
                         arena.broadcast(Lang.msg("cleanup.inactivity-closed"));
-                        sessions.endSession(session);
+                        end(session, arena);
                     }
                 }
             }
         }
+    }
+
+    /**
+     * Ends a session the way the End Match button does when its arena is here — restoring the
+     * arena's min-players / team-size / weather and clearing out whoever is left — and just
+     * drops the shared record when the arena lives elsewhere (its own server cleans up).
+     */
+    private void end(PrivateSession session, Arena arena) {
+        if (arena != null && arena.exists()) plugin.endMatch(session);
+        else sessions.endSession(session);
     }
 
     /** Warns whoever's actually around — anyone in the arena, plus the host if online elsewhere. */
