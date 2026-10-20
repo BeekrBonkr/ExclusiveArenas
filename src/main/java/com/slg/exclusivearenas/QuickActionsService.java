@@ -564,10 +564,18 @@ public final class QuickActionsService implements Listener {
         if (arena == null) return;
         String k = key(arena.getName());
         if (!frozenArenas.contains(k) && !pausedArenas.contains(k)) return;
-        event.setTo(from);
-        // Without this, a player already falling/knocked back when frozen keeps their old
-        // velocity and immediately drifts again next tick despite the position snap-back.
-        player.setVelocity(new org.bukkit.util.Vector(0, 0, 0));
+        // Only horizontal movement is held. Letting gravity finish (a player scattered or
+        // knocked into the air drops to the ground and then stops generating moves) matters
+        // more than it looks: the alternative, snapping the position back every tick, goes
+        // through a Bukkit teleport, and a Bukkit teleport closes whatever menu the player has
+        // open — a host who paused the match while falling could never reopen Quick Actions
+        // to resume it. Cancelling (rather than setTo) also keeps the server-side correction
+        // on the connection level, which leaves open menus alone.
+        if (from.getX() == to.getX() && from.getZ() == to.getZ()) return;
+        event.setCancelled(true);
+        // Without this, a player already knocked back when frozen keeps their old velocity
+        // and immediately drifts again next tick despite the cancel.
+        player.setVelocity(new org.bukkit.util.Vector(0, player.getVelocity().getY(), 0));
         player.setFallDistance(0f);
     }
 
@@ -727,14 +735,27 @@ public final class QuickActionsService implements Listener {
         }
         double minX = Math.min(min.getX(), max.getX()), maxX = Math.max(min.getX(), max.getX());
         double minZ = Math.min(min.getZ(), max.getZ()), maxZ = Math.max(min.getZ(), max.getZ());
+        double minY = Math.min(min.getY(), max.getY()), maxY = Math.max(min.getY(), max.getY());
         Random random = new Random();
         int count = 0;
         for (Player p : arena.getPlayers()) {
-            Location loc = p.getLocation().clone();
-            loc.setWorld(world);
-            loc.setX(minX + random.nextDouble() * (maxX - minX));
-            loc.setZ(minZ + random.nextDouble() * (maxZ - minZ));
-            p.teleport(loc);
+            // A BedWars map is mostly void: a random X/Z at the player's current height lands
+            // them in the air above nothing far more often than on an island. Pick spots with
+            // actual ground under them, inside the arena's vertical span, and give up on a
+            // player (leaving them where they are) rather than drop them into the void.
+            Location target = null;
+            for (int attempt = 0; attempt < 40 && target == null; attempt++) {
+                double x = minX + random.nextDouble() * (maxX - minX);
+                double z = minZ + random.nextDouble() * (maxZ - minZ);
+                org.bukkit.block.Block ground = world.getHighestBlockAt((int) Math.floor(x), (int) Math.floor(z));
+                if (ground == null || ground.getY() <= world.getMinHeight()) continue;
+                if (!ground.getType().isSolid() || ground.getY() + 1 < minY || ground.getY() + 1 > maxY) continue;
+                target = new Location(world, Math.floor(x) + 0.5, ground.getY() + 1, Math.floor(z) + 0.5,
+                        p.getLocation().getYaw(), p.getLocation().getPitch());
+            }
+            if (target == null) continue;
+            p.setFallDistance(0f);
+            p.teleport(target);
             count++;
         }
         if (count > 0) arena.broadcast(Lang.msg("quick.scatter-broadcast"));
