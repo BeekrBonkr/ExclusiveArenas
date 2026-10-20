@@ -141,6 +141,15 @@ All notable changes to ExclusiveArenas are documented here.
   dropping the record; a clean shutdown ends locally hosted matches and removes the server's
   heartbeat row, so a quick restart no longer re-gates fresh arenas under ghost sessions and
   the rest of the network no longer logs a clean stop as a crash.
+- **Random Scatter dropped players into the void**: it kept each player's current height and
+  picked any X/Z in the arena region, which on a sky map is mostly air above nothing. It now
+  looks for solid ground inside the arena's vertical span (up to 40 tries per player) and
+  leaves a player put rather than send them to their death.
+- **A frozen or paused host who wasn't standing still could not open any menu**: the freeze
+  snapped positions back through a Bukkit teleport, and a Bukkit teleport closes open
+  inventories, so a host who paused while in the air (after Random Scatter, say) had every
+  menu closed the same tick it opened and could not reach Resume. The freeze now cancels
+  horizontal movement only and lets gravity finish.
 - **Freeze / PvP-off / Emergency Pause toggled in the lobby leaked into the next match**: the
   per-arena flag was only cleared when a running round ended, so a toggle made before the
   start stayed set through End Match and the next match on that arena began frozen. These
