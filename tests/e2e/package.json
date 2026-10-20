@@ -1,0 +1,20 @@
+{
+  "name": "exclusivearenas-e2e",
+  "version": "1.0.0",
+  "description": "Mineflayer end-to-end tests for ExclusiveArenas",
+  "scripts": {
+    "core": "node run-core.js",
+    "gui": "node run-gui.js",
+    "admin": "node run-admin.js",
+    "discover": "node run-discover.js",
+    "test": "node run-core.js && node run-gui.js && node run-admin.js && node run-quick.js",
+    "quick": "node run-quick.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "mineflayer": "^4.39.0"
+  },
+  "private": true
+}

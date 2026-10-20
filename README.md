@@ -477,12 +477,13 @@ add-on folder, or in the shared database on a network so they follow you across 
 
 ## Custom lobby hotbar items
 
-ExclusiveArenas registers four MBedwars lobby hotbar item handlers. Registering only makes a
-handler available by id; nothing appears until you add an entry referencing it to your live
-`lobby-hotbar.yml` under `plugins/MBedwars/configs/` (see MBedwars' docs for the exact versioned
-path). The slot is yours; name and item are placeholders, since every handler overrides its own
-icon, name and lore at render time. All four only appear inside a private match.
-`toggle-spectate` and `rejoin-as-player` are mutually exclusive, so they can share a slot.
+ExclusiveArenas registers four MBedwars hotbar item handlers. Registering only makes a
+handler available by id; nothing appears until you add an entry referencing it to MBedwars'
+hotbar files (see MBedwars' docs for the exact versioned path). Three go in `lobby-hotbar.yml`.
+`rejoin-as-player` goes in `spectator-hotbar.yml`: a spectator holds MBedwars' spectator
+hotbar, not the lobby one, so a lobby entry would never reach them. The slot is yours; name and
+item are placeholders, since every handler overrides its own icon, name and lore at render
+time. All four only appear inside a private match.
 
 ```yaml
 open-controls:
@@ -497,17 +498,21 @@ toggle-spectate:
   handler: 'exclusivearenas:toggle_spectate'   # visible to any active player
   item: 'gray_dye'                             # hidden once they are spectating
 
-rejoin-as-player:
-  name: '&aRejoin as Player'
-  slot: 3
-  handler: 'exclusivearenas:rejoin_as_player'  # visible to any spectator
-  item: 'lime_dye'                             # hidden once the round is running or full
-
 summon-party:
   name: '&eSummon Party'
   slot: 4
   handler: 'exclusivearenas:summon_party'      # host only, party-gated matches only
   item: 'ender_pearl'
+```
+
+And in `spectator-hotbar.yml`:
+
+```yaml
+rejoin-as-player:
+  name: '&aRejoin as Player'
+  slot: 1
+  handler: 'exclusivearenas:rejoin_as_player'  # visible to any spectator of a private match
+  item: 'lime_dye'                             # hidden once the round is running or full
 ```
 
 - `exclusivearenas:open_controls`: opens Match Controls for the host.
@@ -582,14 +587,33 @@ your live layout file(s) under `plugins/MBedwars/arenasgui-layouts/`:
 
 ExclusiveArenas runs single-server out of the box (fully in memory) or across any number of hubs
 and arena servers, sharing state through its own MySQL/MariaDB database. It does not use
-MBedwars' internal storage or its RemoteAPI messaging, since MBedwars exposes no general
-cross-plugin messaging channel and may run on a non-shared SQLite backend.
+MBedwars' internal storage or its RemoteAPI messaging for that state, since MBedwars may run on
+a non-shared SQLite backend. The RemoteAPI is still used, when it is active, to see remote
+arenas, resolve their routing names and move players between servers.
+
+### Standalone servers
+
+A single server with no proxy needs no configuration beyond dropping the jar in: leave
+`database.enabled: false` and ignore `server_id`, `is_hub_server` and the `network` section.
+The plugin detects that MBedwars' RemoteAPI is inactive and behaves accordingly:
+
+- Menus and messages never talk about "another server" or "the shared database". A match
+  whose arena was unloaded or deleted says so instead, and can still be ended from its menu.
+- Deleting an arena ends the private match on it immediately; the health check also ends a
+  session whose arena has vanished.
+- No database polling, heartbeats or dead-server sweeps run, and the entry-guard sweep slows
+  down to every 5 seconds since there is no replication race to cover.
+- A party member logging in is still routed to their leader's party-gated match; the leader
+  themselves is never auto-routed.
+
+Enabling the database on a standalone server is harmless but pointless, and the plugin warns
+about it at startup.
 
 1. Set up a MySQL/MariaDB database reachable from every server.
 2. On every server (hubs and arena servers alike), set in `config.yml`:
    ```yaml
    server_id: "unique-per-server"   # must be distinct on every server
-   is_hub_server: true              # only on hub/lobby servers
+   is_hub_server: true              # hubs only; a fallback, see below
    database:
      enabled: true
      host: "..."
@@ -628,6 +652,15 @@ flowchart LR
 **Arena names must be unique across the whole network.** Sessions are looked up by bare arena
 name, so two arena servers each having an arena with the same name will collide (the second
 overwrites the first's session row). Display names do not matter, only the MBedwars arena name.
+
+**Routing.** When a player has to be moved to an arena on another server, the plugin takes the
+arena's routing name (MBedwars' `@`-prefixed remote marker) from the RemoteAPI's own listing,
+so it is right on a hub and on an arena server that controls a match elsewhere alike.
+`is_hub_server` is only consulted for an arena the RemoteAPI cannot resolve at that moment.
+The transfer waits one ticket-poll interval (`database.ticket_poll_seconds`, plus half a
+second) so the join ticket has reached the arena's server before MBedwars asks it whether the
+join is allowed. A player who switches servers is not auto-routed back into a party-gated
+match they left; only a fresh login is.
 
 With MBedwars' RemoteAPI active but the database disabled, remote arenas are hidden from the map
 selector and refused by `/ea arena <map>`, because a private match on a remote arena could not
@@ -685,6 +718,11 @@ property of the party plugin, not something ExclusiveArenas controls.
 - **Arena names with whitespace break some features.** Several actions pass the arena name
   through dispatched commands (`/bw join`, the network join command template). The plugin warns
   about such arenas at startup.
+- **Timeline edits only carry across servers with matching catalogs.** Timeline entries are
+  stored by catalog id. If a hub runs the config catalog while the arena's server runs
+  MBedwarsTweaks' gen tiers (or the two `timeline.events` sections differ), the arena's server
+  keeps the host's chosen match length but cannot map the other entries and falls back to its
+  own defaults for them. Keep `timeline.events` and the Tweaks setup identical across servers.
 
 ---
 
@@ -708,6 +746,9 @@ Maven repository, so their jars go in `libs/`:
    ```
 3. The plugin jar is at `build/libs/ExclusiveArenas-1.2.0.jar`. The MariaDB driver and HikariCP
    are shaded in and relocated under `com.slg.exclusivearenas.libs`.
+
+End-to-end tests that drive real Mineflayer bots against a local server live in `tests/e2e/`
+(see its README). They cover the command surface, the menus and the hotbar items.
 
 ---
 

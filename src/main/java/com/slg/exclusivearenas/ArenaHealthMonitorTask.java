@@ -63,9 +63,20 @@ public final class ArenaHealthMonitorTask extends BukkitRunnable {
         long maxMatchSeconds = Math.max(60,
                 TimelineService.parseTime(plugin.getEaConfig().str("timeline.max_match_time", "60:00")));
 
+        // Standalone (no network, no shared database): every session's arena must be here, so a
+        // missing one is gone for good — not "hosted elsewhere".
+        boolean standalone = plugin.getDatabase() == null && !plugin.isRemoteApiActive();
+
         for (PrivateSession session : sessions.getAllSessions()) {
             Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
-            if (arena == null || !arena.exists()) continue; // hosted on another server — not ours to check
+            if (arena == null || !arena.exists()) {
+                if (standalone) {
+                    plugin.getLogger().warning("[Health] Session for '" + session.getArenaName()
+                            + "' is still active but the arena no longer exists — ending the session.");
+                    plugin.endMatch(session);
+                }
+                continue; // otherwise hosted on another server — not ours to check
+            }
 
             if (arena.getStatus() == ArenaStatus.STOPPED) {
                 plugin.getLogger().warning("[Health] Session for '" + session.getArenaName()

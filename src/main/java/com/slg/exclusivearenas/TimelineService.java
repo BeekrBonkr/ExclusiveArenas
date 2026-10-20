@@ -148,6 +148,8 @@ public final class TimelineService {
     private final Logger logger;
     private Map<String, Definition> definitions = new LinkedHashMap<>();
     private String matchEndId = MATCH_END_ID_FALLBACK;
+    /** The config catalog's Match End id, remembered even while Tweaks' tiers replace the catalog. */
+    private String configMatchEndId = MATCH_END_ID_FALLBACK;
     private boolean enabled = true;
     /** True when the definitions come from MBedwarsTweaks' gen tiers (see TweaksTimelineBridge). */
     private boolean tweaksBackend = false;
@@ -219,6 +221,7 @@ public final class TimelineService {
                     Type.MATCH_END, null, 1.0, "The match ends.", true));
         }
         this.matchEndId = endId;
+        this.configMatchEndId = endId;
         this.definitions = defs;
         this.tweaksBackend = false; // re-applied by the bridge after each (re)load
     }
@@ -451,6 +454,12 @@ public final class TimelineService {
                 if (e.isCustom() || definitions.containsKey(e.id())) {
                     out.add(e);
                     hasEnd |= e.id().equals(matchEndId);
+                } else if (!hasEnd && isMatchEndAlias(e.id())) {
+                    // Edited on a server whose catalog names Match End differently — a hub on the
+                    // config catalog while this backend runs MBedwarsTweaks' tiers, say. The other
+                    // entries can't be mapped across, but the host's chosen match length can.
+                    out.add(new SessionSettings.TimelineEntry(matchEndId, e.seconds()));
+                    hasEnd = true;
                 }
             }
             if (!hasEnd) {
@@ -460,6 +469,11 @@ public final class TimelineService {
         }
         sortWithEndLast(out);
         return out;
+    }
+
+    /** Match End ids another server's catalog may have stored this session's end under. */
+    private boolean isMatchEndAlias(String id) {
+        return id != null && (id.equals(configMatchEndId) || id.equals(MATCH_END_ID_FALLBACK));
     }
 
     // ── Editing operations (used by the timeline GUI) ─────────────────────────────

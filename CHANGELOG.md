@@ -92,6 +92,77 @@ All notable changes to ExclusiveArenas are documented here.
   time/weather. Configurable via the new `%summary%` placeholder in each button's lore.
 
 ### Fixed
+- **Standalone servers were detected as networked**: MBedwars always installs a RemoteAPI,
+  and `isAPIActive()` is true for its local-only stub too, so every "is this a network?" check
+  said yes on a plain single server. Detection now also requires `!isLocalOnly()`, which is
+  what separates the stub from a real ProxySync setup. The startup line now reads
+  "networked (MBedwars proxy sync active)" or "standalone (no proxy sync)".
+- **Standalone servers no longer get network wording or dead ends**: with MBedwars' RemoteAPI
+  inactive, a match whose arena was unloaded or deleted now says "That arena isn't loaded on
+  this server" instead of "on another server", its buttons carry a matching lore line instead
+  of "no shared database to relay through", and End Match actually ends it. Deleting an arena
+  ends the private match on it, the health check ends a session whose arena vanished, the
+  builder's policy hint no longer implies a party plugin exists when none is installed, and
+  expired join tickets are purged without a database.
+- **Cross-server join ticket spent too early**: the backend's remote pre-join check consumed
+  the ticket, so the player's actual arrival hit the join gate with nothing left and a
+  Join-Code guest could land in the arena unregistered. The pre-join now only peeks; arrival
+  spends the ticket.
+- **Party members bounced back into a match on every server switch**: the login auto-route
+  now skips server hops (RemoteAPI login time), never targets the leader's own match, and does
+  nothing when the player is already in the arena.
+- **Rejoin as Player failed for Join-Code guests**: the spectator-rejoin item now re-grants
+  the guest's ticket before dispatching `/bw join`, since their original one was spent on entry.
+- **Party members were shown a denial right before being admitted**: when the party hook
+  answers synchronously (the common case) a member is admitted directly instead of denied and
+  summoned a tick later.
+- **Arena-server-to-arena-server routing**: `/ea join`, `/ea goto` and Go to Arena from an
+  arena server for a match hosted on another now use the arena's routing name from MBedwars'
+  RemoteAPI (`is_hub_server` is only a fallback), so they no longer dispatch a bare name the
+  local MBedwars can't resolve. Cross-server moves also wait one ticket-poll interval so the
+  ticket has reached the arena's server before MBedwars asks it whether the join is allowed.
+- **Timeline and Match Rules edits wrongly blocked when the arena's status is unknown**: an
+  arena this server can't see (standalone server whose arena was unloaded, backend not listed
+  right now) no longer counts as "the round has started"; edits are saved for the next round
+  and Match Controls says the status is unavailable rather than claiming the match began.
+  `/ea timeline …` now applies the same remote-aware gate as the menus.
+- **Hub/backend mismatches**: a hub with no arenas of its own and the database off now explains
+  that remote arenas need the shared database instead of "no arenas"; remote arena names no
+  longer leak the `@` marker into the selector, the builder or tab completion (which also
+  broke a draft reservation when the two forms met); Environment and Force Win no longer open
+  for a remote arena only to swallow every click; reveal-border/team-size/weather/time use the
+  right "arena is elsewhere" message instead of the team-management one; the Tweaks backend
+  warning is only shown for a local arena; `/ea preset delete` reports the real outcome.
+- **Session bookkeeping across servers**: a mirrored session keeps its original creation time
+  (the stale-session clock no longer restarts on every foreign write); a host's chosen match
+  length survives when the arena's server names Match End differently (MBedwarsTweaks tiers vs
+  config catalog); the abandon/stale/inactivity sweeps end a local arena's match the way End
+  Match does (min-players, team size and weather restored, players cleared) instead of only
+  dropping the record; a clean shutdown ends locally hosted matches and removes the server's
+  heartbeat row, so a quick restart no longer re-gates fresh arenas under ghost sessions and
+  the rest of the network no longer logs a clean stop as a crash.
+- **Random Scatter dropped players into the void**: it kept each player's current height and
+  picked any X/Z in the arena region, which on a sky map is mostly air above nothing. It now
+  looks for solid ground inside the arena's vertical span (up to 40 tries per player) and
+  leaves a player put rather than send them to their death. Found by the bot tests.
+- **A frozen or paused host who wasn't standing still could not open any menu**: the freeze
+  snapped positions back through a Bukkit teleport, and a Bukkit teleport closes open
+  inventories, so a host who paused while in the air (after Random Scatter, say) had every
+  menu closed the same tick it opened and could not reach Resume. The freeze now cancels
+  horizontal movement only and lets gravity finish. Found by the end-to-end bot tests.
+- **Freeze / PvP-off / Emergency Pause toggled in the lobby leaked into the next match**: the
+  per-arena flag was only cleared when a running round ended, so a toggle made before the
+  start stayed set through End Match and the next match on that arena began frozen. These
+  three now refuse outside a running round, and ending a match clears the flags regardless.
+- **"Rejoin as Player" never worked**: the handler was registered as a lobby-hotbar item, but a
+  spectator holds MBedwars' spectator hotbar, so the item MBedwars showed from
+  `spectator-hotbar.yml` reported "missing an handler". It is now registered as a spectator
+  item (and still as a lobby item for older configs). README corrected accordingly. Found by
+  the end-to-end bot tests.
+- **`/ea reload` now works from the console** (it was "Players only" like every other
+  subcommand).
+- **Kick All (keep host) printed "Missing lang key: kickall.kicked-kept-host"**: the message
+  was never added to `lang.yml`. Found by the new end-to-end bot tests (`tests/e2e/`).
 - **MBedwarsTweaks 5.1.1 timeline bridge never engaged**: since Tweaks 5.1.1 loads its gen-tier
   config inside its own MBedwars ready-callback, which can run *after* ExclusiveArenas' own init
   when ExclusiveArenas happens to enable first. The bridge then found zero tiers and quietly fell
@@ -130,6 +201,11 @@ All notable changes to ExclusiveArenas are documented here.
   live lobby state, not part of the setup a preset describes, so it is carried across untouched.
 
 ### Changed
+- **Deployment-aware startup**: a database enabled with no RemoteAPI active is warned about,
+  the whitespace-in-arena-name warning also covers remote arenas a hub routes to, the
+  entry-guard sweep runs every 5 seconds without a database, and the database startup line
+  lists all five tables. `lang.yml` v6 adds `general.arena-not-loaded`; `guis.yml` v6 adds
+  `global.arena-not-loaded-lore` and rewords the Admin Panel lore to be network-neutral.
 - **Built against MBedwars 5.5.9.1 and MBedwarsTweaks 5.1.1** (previously 5.5.6 / 5.0.2). No
   source changes were needed for the MBedwars API itself; the one deprecated call (remote
   spectator add during a cross-server summon) now uses `SpectateRemotePlayerInfo`, keeping the

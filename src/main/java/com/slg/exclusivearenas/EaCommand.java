@@ -71,6 +71,13 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!(sender instanceof Player p)) {
+            // Everything else is menu/arena-bound, but a reload is an admin chore that has to
+            // work from the console (and from scripts / panels) too.
+            if (args.length >= 1 && args[0].equalsIgnoreCase("reload")) {
+                plugin.reload();
+                sender.sendMessage(Lang.msg("general.reloaded"));
+                return true;
+            }
             sender.sendMessage(Lang.msg("general.players-only"));
             return true;
         }
@@ -332,7 +339,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
         if (session == null) return;
         Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
         if (arena == null || !arena.exists()) {
-            p.sendMessage(Lang.msg("teams.requires-local"));
+            p.sendMessage(plugin.arenaUnreachableMessage());
             return;
         }
         plugin.getQuickActions().revealBorder(p, arena);
@@ -381,7 +388,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
 
         Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
         if (arena == null || !arena.exists()) {
-            p.sendMessage(Lang.msg("teams.requires-local"));
+            p.sendMessage(plugin.arenaUnreachableMessage());
             return;
         }
         if (!plugin.canChangeTeamSize(arena)) {
@@ -436,7 +443,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
 
         Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
         if (arena == null || !arena.exists()) {
-            p.sendMessage(Lang.msg("teams.requires-local"));
+            p.sendMessage(plugin.arenaUnreachableMessage());
             return;
         }
         session.getSettings().setWeatherType(type == ArenaWeatherType.UNTOUCHED ? null : type.name());
@@ -463,7 +470,7 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
 
         Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
         if (arena == null || !arena.exists()) {
-            p.sendMessage(Lang.msg("teams.requires-local"));
+            p.sendMessage(plugin.arenaUnreachableMessage());
             return;
         }
         session.getSettings().setTimeType(type == ArenaTimeType.UNTOUCHED ? null : type.name());
@@ -637,8 +644,13 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
      * team-select being gated to the lobby.
      */
     private boolean timelineEditable(Player p, PrivateSession session) {
-        Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
-        if (arena != null && !arena.getStatus().isLobby()) {
+        // Remote-aware like the GUI's gate (GuiListener#timelineEditable): a session hosted on
+        // another server resolves to no local arena, and treating that as "editable" would let
+        // a mid-round match be edited from the hub — saved, confirmed, and never applied. Only
+        // a status that is KNOWN to be past the lobby blocks; an arena this server simply can't
+        // see (standalone server whose arena was unloaded, backend not listed right now) still
+        // takes the edit, since the settings are replicated and apply from the next round.
+        if (ArenaNames.lobbyState(session.getArenaName()) == ArenaNames.LobbyState.NOT_LOBBY) {
             p.sendMessage(Lang.msg("timeline.lobby-only"));
             return false;
         }
@@ -888,8 +900,12 @@ public final class EaCommand implements CommandExecutor, TabCompleter {
                         p.sendMessage(Lang.msg("cmd.preset-unknown", "%name%", requested));
                         return;
                     }
-                    plugin.getPresetService().delete(p.getUniqueId(), name);
-                    p.sendMessage(Lang.msg("presets.deleted", "%name%", name));
+                    // Callback overload: in database mode the delete resolves asynchronously,
+                    // and confirming before it lands would report success for a failed delete.
+                    plugin.getPresetService().delete(p.getUniqueId(), name, ok -> {
+                        if (!p.isOnline()) return;
+                        p.sendMessage(Lang.msg(ok ? "presets.deleted" : "presets.delete-failed", "%name%", name));
+                    });
                 });
             }
 
