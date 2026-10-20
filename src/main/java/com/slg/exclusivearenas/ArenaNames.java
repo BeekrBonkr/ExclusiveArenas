@@ -40,8 +40,8 @@ public final class ArenaNames {
      */
     public static RemoteArena findRemote(String name) {
         try {
-            RemoteAPI api = BedwarsAPI.getRemoteAPI();
-            if (api == null || !api.isAPIActive()) return null;
+            RemoteAPI api = remoteApi();
+            if (api == null) return null;
             String canonical = canonical(name);
             RemoteArena ra = api.getArenaByExactName(canonical);
             if (ra == null || !ra.exists()) ra = api.getArenaByExactName("@" + canonical);
@@ -49,6 +49,68 @@ public final class ArenaNames {
         } catch (Throwable t) {
             return null;
         }
+    }
+
+    /**
+     * MBedwars' RemoteAPI when it is up on this server (proxy/network mode), else null. The
+     * single place that knows the null + {@code isAPIActive()} rule; on a standalone server
+     * this is always null and every caller falls back to purely local behaviour.
+     */
+    public static RemoteAPI remoteApi() {
+        try {
+            RemoteAPI api = BedwarsAPI.getRemoteAPI();
+            return api != null && api.isAPIActive() ? api : null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** True when this server is part of an MBedwars network (RemoteAPI active). */
+    public static boolean remoteApiActive() {
+        return remoteApi() != null;
+    }
+
+    /**
+     * The name to hand MBedwars' join command to route a player to an arena that is not on
+     * this server. Taken from the RemoteAPI's own listing (which carries the '@' remote marker
+     * exactly as this server knows the arena), so it is right on a hub and on a sibling
+     * backend alike without the admin having to set {@code is_hub_server}. That flag remains
+     * the fallback when the RemoteAPI cannot resolve the arena.
+     */
+    public static String routeName(String name, boolean hubConfigured) {
+        String canonical = canonical(name);
+        RemoteArena ra = findRemote(canonical);
+        if (ra != null && !ra.isLocal() && ra.getName() != null && !ra.getName().isBlank()) {
+            return ra.getName();
+        }
+        return hubConfigured ? "@" + canonical : canonical;
+    }
+
+    /** What is known about an arena's lobby status from this server. */
+    public enum LobbyState {
+        /** In its lobby (local, or confirmed via RemoteAPI). */
+        LOBBY,
+        /** Running, resetting, stopped — anything but the lobby. */
+        NOT_LOBBY,
+        /** Neither local nor visible through the RemoteAPI (standalone server whose arena was
+         *  unloaded, a backend not currently listed, RemoteAPI inactive, …). */
+        UNKNOWN
+    }
+
+    /**
+     * Tri-state version of {@link #isLobbyStatus}: callers that only need to refuse an action
+     * once the round has actually started (editing replicated settings, for example) should
+     * block on {@link LobbyState#NOT_LOBBY} only, instead of treating "can't see the arena" as
+     * "the round began".
+     */
+    public static LobbyState lobbyState(String arenaName) {
+        Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(canonical(arenaName));
+        if (local != null && local.exists()) {
+            return local.getStatus().isLobby() ? LobbyState.LOBBY : LobbyState.NOT_LOBBY;
+        }
+        RemoteArena remote = findRemote(arenaName);
+        if (remote == null) return LobbyState.UNKNOWN;
+        return remote.getStatus().isLobby() ? LobbyState.LOBBY : LobbyState.NOT_LOBBY;
     }
 
     /**

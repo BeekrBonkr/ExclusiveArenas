@@ -188,7 +188,8 @@ public final class Database {
             }
         }
         logger.info("ExclusiveArenas connected to database; tables '" + sessionsTable
-                + "' / '" + ticketsTable + "' / '" + commandsTable + "' ready.");
+                + "' / '" + ticketsTable + "' / '" + commandsTable + "' / '" + presetsTable
+                + "' / '" + serversTable + "' ready.");
     }
 
     private void addColumnIfMissing(Connection c, String table, String column, String definition) {
@@ -485,6 +486,21 @@ public final class Database {
                     "INSERT INTO `" + serversTable + "` (server_id, last_heartbeat) "
                             + "VALUES (?,ROUND(UNIX_TIMESTAMP(NOW(3))*1000)) "
                             + "ON DUPLICATE KEY UPDATE last_heartbeat=VALUES(last_heartbeat)")) {
+                ps.setString(1, settings.serverId());
+                ps.executeUpdate();
+            }
+        });
+    }
+
+    /**
+     * Removes this server's own heartbeat row — for a CLEAN shutdown, so the rest of the
+     * network doesn't later treat the silence as a crash and log a purge for a server that
+     * simply stopped. Only meaningful once this server's own sessions have been ended.
+     */
+    public void deleteOwnHeartbeat() {
+        submit("delete heartbeat", c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "DELETE FROM `" + serversTable + "` WHERE server_id=?")) {
                 ps.setString(1, settings.serverId());
                 ps.executeUpdate();
             }

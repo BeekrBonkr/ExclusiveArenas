@@ -27,10 +27,12 @@ public final class SpectatorRejoinHandler extends LobbyItemHandler {
 
     public static final String ID = "exclusivearenas:rejoin_as_player";
 
+    private final ExclusiveArenasPlugin plugin;
     private final PrivateSessionService sessions;
 
-    public SpectatorRejoinHandler(Plugin plugin, PrivateSessionService sessions) {
+    public SpectatorRejoinHandler(ExclusiveArenasPlugin plugin, PrivateSessionService sessions) {
         super(ID, plugin);
+        this.plugin = plugin;
         this.sessions = sessions;
     }
 
@@ -49,6 +51,14 @@ public final class SpectatorRejoinHandler extends LobbyItemHandler {
 
     @Override
     public void handleUse(Player player, Arena arena, LobbyItem item) {
+        // The join goes back through our own gate, and a guest's original ticket was spent on
+        // their first entry — without a fresh one a Join-Code match would turn its own
+        // spectator away here. They're already inside this very session, so re-authorising
+        // them is safe.
+        PrivateSession session = sessions.getByArena(arena);
+        if (session != null) {
+            plugin.getTicketService().grant(player.getUniqueId(), session.getSessionId(), arena.getName());
+        }
         // MBedwars' own command reports success/failure (full, no longer in lobby, …) to the
         // player itself, so there's nothing left for us to check or message here.
         player.performCommand("bw join " + arena.getName());

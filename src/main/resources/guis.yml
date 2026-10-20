@@ -23,7 +23,7 @@
 # Do not change 'config-version': the plugin uses it to upgrade this file in
 # place when you install a newer version (your edits are preserved).
 # ─────────────────────────────────────────────────────────────────────────────
-config-version: 5
+config-version: 6
 
 # Materials used to decorate every menu.
 global:
@@ -34,8 +34,10 @@ global:
   # Appended to a button's lore when its action can't be performed from this server:
   # remote-unavailable — the action is strictly local to the arena's own server.
   # relay-unavailable  — the action could be relayed, but no shared database is connected.
+  # arena-not-loaded   — standalone server (no network): the match's arena was unloaded/deleted.
   remote-unavailable-lore: "&c✖ Unavailable — the arena is on another server."
   relay-unavailable-lore: "&c✖ Unavailable — no shared database to relay through."
+  arena-not-loaded-lore: "&c✖ Unavailable — the arena isn't loaded on this server."
 
 # ── Main menu (/ea) ──────────────────────────────────────────────────────────
 # Placeholders: %hosting% (matches hosted), %limit% (max allowed)
@@ -104,7 +106,7 @@ main:
       name: "&c&lAdmin Panel"
       lore:
         - "&7View and control &fevery&7 active"
-        - "&7private match on this server."
+        - "&7private match."
         - "&8"
         - "&8▶ Click to open"
       glint: false

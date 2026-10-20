@@ -175,6 +175,12 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                     + "actually hosts it, so remote arenas are hidden from the map selector. Enable "
                     + "database.* in config.yml to host private matches across the network.");
         }
+        if (!remoteApi && eaConfig.bool("database.enabled", false)) {
+            getLogger().warning("ExclusiveArenas' shared database is enabled but MBedwars' RemoteAPI is "
+                    + "not active on this server — sessions from other servers will be mirrored here, "
+                    + "but their arenas can't be seen or routed to. On a standalone server set "
+                    + "database.enabled: false; on a network, enable MBedwars' proxy support.");
+        }
     }
 
     /**
@@ -185,10 +191,22 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
      * Warn once at startup so an admin knows those features will misbehave for such arenas.
      */
     private void warnAboutArenaNamesWithWhitespace() {
-        List<String> offenders = new ArrayList<>();
+        Set<String> offenders = new java.util.LinkedHashSet<>();
         for (Arena arena : BedwarsAPI.getGameAPI().getArenas()) {
             String name = arena.getName();
             if (name != null && name.chars().anyMatch(Character::isWhitespace)) offenders.add(name);
+        }
+        // A hub routes to arenas it doesn't host — those names go through the join command too.
+        RemoteAPI remote = ArenaNames.remoteApi();
+        if (remote != null) {
+            try {
+                for (RemoteArena ra : remote.getArenas()) {
+                    String name = ra == null ? null : ArenaNames.canonical(ra.getName());
+                    if (name != null && name.chars().anyMatch(Character::isWhitespace)) offenders.add(name);
+                }
+            } catch (Throwable ignored) {
+                // listing failure — the local check above still stands
+            }
         }
         if (offenders.isEmpty()) return;
         getLogger().warning("These arena names contain whitespace: " + String.join(", ", offenders)
@@ -198,12 +216,17 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
     /** True when MBedwars' RemoteAPI (proxy/network mode) is up on this server. */
     public boolean isRemoteApiActive() {
-        try {
-            RemoteAPI api = BedwarsAPI.getRemoteAPI();
-            return api != null && api.isAPIActive();
-        } catch (Throwable t) {
-            return false;
-        }
+        return ArenaNames.remoteApiActive();
+    }
+
+    /**
+     * The right "can't act on that arena from here" message for this deployment. On a
+     * networked server a session's arena that isn't local lives on another backend; on a
+     * standalone server it can only mean the arena was unloaded or deleted — telling that
+     * admin about "another server" would send them looking for a network that doesn't exist.
+     */
+    public String arenaUnreachableMessage() {
+        return Lang.msg(isRemoteApiActive() ? "general.arena-other-server" : "general.arena-not-loaded");
     }
 
     /**
@@ -308,7 +331,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
     /** Loads lang.yml and guis.yml (versioned, self-healing) and points the static accessors at them. */
     private void loadLangAndGuis() {
-        this.langYaml = new VersionedYaml(this, addon.getDataFolder(), "lang.yml", 5, (config, fromVersion) -> {
+        this.langYaml = new VersionedYaml(this, addon.getDataFolder(), "lang.yml", 6, (config, fromVersion) -> {
             boolean changed = false;
             if (fromVersion < 2) {
                 // v2 retired the toggle-spectate item's two-state (on/off) rendering — it's now
@@ -339,13 +362,13 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             // operations) — VersionedYaml restores those by itself, so there is nothing to
             // transform for that step beyond the version stamp.
             // v5 likewise only ADDS keys (the join-attempt throttle and the /ea buff
-            // validation messages).
+            // validation messages). v6 adds general.arena-not-loaded.
             return changed;
         });
         this.langYaml.load();
         Lang.init(langYaml);
 
-        this.guisYaml = new VersionedYaml(this, addon.getDataFolder(), "guis.yml", 5, (config, fromVersion) -> {
+        this.guisYaml = new VersionedYaml(this, addon.getDataFolder(), "guis.yml", 6, (config, fromVersion) -> {
             boolean changed = false;
             if (fromVersion < 2) {
                 // v2 grew the Help menu a row (command reference cards for the new /ea
@@ -396,6 +419,8 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                 config.set("timeline-add.buttons.custom-info", null);
                 changed = true;
             }
+            // v6 only ADDS global.arena-not-loaded-lore (restored automatically) and rewords the
+            // bundled Admin Panel lore — an existing file keeps its own wording.
             return changed;
         });
         this.guisYaml.load();
@@ -505,7 +530,10 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         // 1s) — that poll is the dominant source of the race this recovers from, so sweeping
         // any slower would just add avoidable extra delay on top of it. The sweep itself is a
         // pure in-memory scan (no I/O), so the tighter interval costs nothing.
-        long entryGuardTicks = Math.max(20L, eaConfig.intNum("database.ticket_poll_seconds", 1) * 20L);
+        // Without a database there is no poll race to chase — a slower sweep is plenty.
+        long entryGuardTicks = eaConfig.bool("database.enabled", false)
+                ? Math.max(20L, eaConfig.intNum("database.ticket_poll_seconds", 1) * 20L)
+                : 100L;
         this.entryGuardTask = new ArenaEntryGuardTask(sessionService, ticketService)
                 .runTaskTimer(this, entryGuardTicks, entryGuardTicks);
     }
@@ -726,9 +754,36 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         if (timelineEngine != null) timelineEngine.shutdown();
         unregisterConditionVariable();
         unregisterLobbyItemHandlers();
+        endLocallyHostedSessions();
+        if (database != null) database.deleteOwnHeartbeat(); // a clean stop, not a crash
         teardownDatabase();
         if (addon != null && addon.isRegistered()) addon.unregister();
         getLogger().info("ExclusiveArenas disabled.");
+    }
+
+    /**
+     * On shutdown, every private match whose arena is on THIS server dies with the server —
+     * its arena restarts empty. Ending the sessions now (and, in database mode, deleting their
+     * shared rows before the pool closes) keeps a quick restart from re-gating those fresh
+     * arenas under ghost sessions nobody can get into, and lets the rest of the network see
+     * them end instead of waiting for the dead-server sweep. Sessions on other servers' arenas
+     * are left alone — they are theirs.
+     */
+    private void endLocallyHostedSessions() {
+        if (sessionService == null) return;
+        for (PrivateSession session : new ArrayList<>(sessionService.getAllSessions())) {
+            Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+            if (arena == null || !arena.exists()) continue;
+            try {
+                restoreArenaMinPlayers(session, arena);
+                restoreArenaPlayersPerTeam(session, arena);
+                resetArenaEnvironment(session, arena);
+                sessionService.endSession(session);
+            } catch (Throwable t) {
+                getLogger().warning("Could not end the private match on '" + session.getArenaName()
+                        + "' during shutdown: " + t.getMessage());
+            }
+        }
     }
 
     // ── Public API for listeners / commands ───────────────────────────────────
@@ -821,7 +876,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             return;
         }
         if (!remoteCommandService.isAvailable()) {
-            actor.sendMessage(Lang.msg("general.arena-other-server"));
+            actor.sendMessage(arenaUnreachableMessage());
             return;
         }
         remoteCommandService.enqueue(type, session, payload);
@@ -1127,17 +1182,46 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             return;
         }
 
-        // On a hub, MBedwars identifies a backend arena by its '@'-prefixed remote name, so the
-        // join command needs that form. On the backend itself the arena is local (handled above).
-        String routeName = eaConfig.bool("is_hub_server", false) ? "@" + canonical : canonical;
+        // Not on this server. Standalone (no RemoteAPI) that can only mean the arena was
+        // unloaded or deleted — there is nowhere to route to, so say so instead of dispatching
+        // a proxy join command MBedwars would reject with its own generic error.
+        if (!isRemoteApiActive()) {
+            player.sendMessage(Lang.msg("route.arena-unavailable", "%arena%", canonical));
+            return;
+        }
+
+        // MBedwars identifies an arena on another backend by its '@'-prefixed remote name, so
+        // the join command needs that form. ArenaNames takes it straight from the RemoteAPI's
+        // listing when it can, with is_hub_server as the fallback for arenas it can't resolve.
+        String routeName = ArenaNames.routeName(canonical, eaConfig.bool("is_hub_server", false));
         String template = eaConfig.str("network.join_command_template", "bw join %arena%");
         String command = template.replace("%arena%", routeName).replace("%player%", player.getName());
-        try {
-            Bukkit.dispatchCommand(player, command);
-        } catch (Throwable t) {
-            getLogger().warning("Failed to dispatch join command for " + arenaName + ": " + t.getMessage());
-            player.sendMessage(Lang.msg("route.arena-unavailable", "%arena%", arenaName));
+        afterTicketReplicated(() -> {
+            if (!player.isOnline()) return;
+            try {
+                Bukkit.dispatchCommand(player, command);
+            } catch (Throwable t) {
+                getLogger().warning("Failed to dispatch join command for " + arenaName + ": " + t.getMessage());
+                player.sendMessage(Lang.msg("route.arena-unavailable", "%arena%", arenaName));
+            }
+        });
+    }
+
+    /**
+     * Runs a cross-server move only once the join ticket just granted for it has had time to
+     * reach the arena's server: the ticket is written to the shared database asynchronously and
+     * the backend only learns of it on its next ticket poll, while MBedwars may ask that backend
+     * whether the join is allowed the moment the transfer starts. Sending straight away races
+     * the gate and can bounce a legitimately authorised player. Runs immediately with no
+     * database (nothing to replicate).
+     */
+    private void afterTicketReplicated(Runnable move) {
+        if (database == null) {
+            move.run();
+            return;
         }
+        long ticks = Math.max(20L, eaConfig.intNum("database.ticket_poll_seconds", 1) * 20L) + 10L;
+        Bukkit.getScheduler().runTaskLater(this, move, ticks);
     }
 
     /**
@@ -1202,7 +1286,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             return;
         }
         if (!remoteCommandService.isAvailable()) {
-            actor.sendMessage(Lang.msg("general.arena-other-server"));
+            actor.sendMessage(arenaUnreachableMessage());
             return;
         }
         remoteCommandService.enqueue(RemoteCommandService.Type.START_MATCH, session);
@@ -1221,8 +1305,16 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             actor.sendMessage(Lang.msg("match.ended", "%arena%", session.getArenaName()));
             return;
         }
+        // Not here and not active anywhere this server can see: on a standalone server that is
+        // an arena that was unloaded or deleted, and the session must still be endable — there
+        // is no other server for it to be on. Networked, the RemoteAPI confirms it's gone.
+        if (!isRemoteApiActive() || !ArenaNames.isActiveStatus(session.getArenaName())) {
+            endMatch(session);
+            actor.sendMessage(Lang.msg("match.ended", "%arena%", session.getArenaName()));
+            return;
+        }
         if (!remoteCommandService.isAvailable()) {
-            actor.sendMessage(Lang.msg("general.arena-other-server"));
+            actor.sendMessage(arenaUnreachableMessage());
             return;
         }
         remoteCommandService.enqueue(RemoteCommandService.Type.END_MATCH, session);
@@ -1553,7 +1645,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     public void moveArenaPlayersToTeam(Player actor, PrivateSession session, Team team, Set<UUID> playerIds) {
         Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
         if (arena == null || !arena.exists()) {
-            actor.sendMessage(Lang.msg("general.arena-other-server"));
+            actor.sendMessage(arenaUnreachableMessage());
             return;
         }
         if (!arena.getStatus().isLobby()) {
@@ -1590,7 +1682,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     public void distributePlayersToTeams(Player actor, PrivateSession session) {
         Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
         if (arena == null || !arena.exists()) {
-            actor.sendMessage(Lang.msg("general.arena-other-server"));
+            actor.sendMessage(arenaUnreachableMessage());
             return;
         }
         if (!arena.getStatus().isLobby()) {
@@ -1681,28 +1773,32 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                 RemotePlayer rp = api.getOnlinePlayer(memberId);
                 RemoteArena ra = ArenaNames.findRemote(arenaName);
                 if (rp != null && rp.isOnline() && !rp.isPlaying() && ra != null) {
-                    if (ra.getStatus() == ArenaStatus.RUNNING) {
-                        // ignoreArenaStatus=true mirrors what the (now deprecated) 3-arg overload
-                        // did: the status was checked as RUNNING a moment ago, don't re-gate on it.
-                        SpectateRemotePlayerInfo info = new SpectateRemotePlayerInfo()
-                                .setPlayer(rp)
-                                .setReason(SpectateReason.ENTER)
-                                .setIgnoreArenaStatus(true);
-                        ra.addSpectator(info, result -> {
-                            if (onSuccess != null && result != null && result.wasSuccessful()) {
-                                Bukkit.getScheduler().runTask(this, onSuccess);
-                            }
-                        });
-                    } else {
-                        ra.addPlayer(rp, result -> {
-                            if (onSuccess == null || result == null) return;
-                            RemotePlayerAddResult.PlayerResult pr = result.getPlayerResult(memberId);
-                            if (pr == RemotePlayerAddResult.PlayerResult.SUCCESS
-                                    || pr == RemotePlayerAddResult.PlayerResult.SUCCESS_SPECTATE) {
-                                Bukkit.getScheduler().runTask(this, onSuccess);
-                            }
-                        });
-                    }
+                    afterTicketReplicated(() -> {
+                        if (!rp.isOnline() || !ra.exists()) return;
+                        if (ra.getStatus() == ArenaStatus.RUNNING) {
+                            // ignoreArenaStatus=true mirrors what the (now deprecated) 3-arg
+                            // overload did: the status was checked as RUNNING a moment ago,
+                            // don't re-gate on it.
+                            SpectateRemotePlayerInfo info = new SpectateRemotePlayerInfo()
+                                    .setPlayer(rp)
+                                    .setReason(SpectateReason.ENTER)
+                                    .setIgnoreArenaStatus(true);
+                            ra.addSpectator(info, result -> {
+                                if (onSuccess != null && result != null && result.wasSuccessful()) {
+                                    Bukkit.getScheduler().runTask(this, onSuccess);
+                                }
+                            });
+                        } else {
+                            ra.addPlayer(rp, result -> {
+                                if (onSuccess == null || result == null) return;
+                                RemotePlayerAddResult.PlayerResult pr = result.getPlayerResult(memberId);
+                                if (pr == RemotePlayerAddResult.PlayerResult.SUCCESS
+                                        || pr == RemotePlayerAddResult.PlayerResult.SUCCESS_SPECTATE) {
+                                    Bukkit.getScheduler().runTask(this, onSuccess);
+                                }
+                            });
+                        }
+                    });
                     return;
                 }
             }

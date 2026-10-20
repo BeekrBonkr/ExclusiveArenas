@@ -11,7 +11,7 @@
 # Do not change 'config-version': the plugin uses it to upgrade this file
 # in place when you install a newer version (your edits are preserved).
 # ─────────────────────────────────────────────────────────────────────────────
-config-version: 5
+config-version: 6
 
 general:
   # Sent when the console tries to run /ea.
@@ -24,8 +24,12 @@ general:
   reloaded: "&aExclusiveArenas configuration reloaded."
   # Shown when a menu action targets a match that has ended meanwhile.
   match-gone: "&cThat match no longer exists."
-  # Generic "you can't do this from this server" notice.
+  # Generic "you can't do this from this server" notice (networked servers: the arena lives
+  # on another backend).
   arena-other-server: "&cThe arena is on another server."
+  # Same situation on a standalone server, where there IS no other server: the match's arena
+  # was unloaded or deleted.
+  arena-not-loaded: "&cThat arena isn't loaded on this server."
   not-in-arena: "&cYou are not in an arena."
   not-private-match: "&cThis is not a private match."
 

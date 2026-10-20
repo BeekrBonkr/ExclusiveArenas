@@ -582,14 +582,33 @@ your live layout file(s) under `plugins/MBedwars/arenasgui-layouts/`:
 
 ExclusiveArenas runs single-server out of the box (fully in memory) or across any number of hubs
 and arena servers, sharing state through its own MySQL/MariaDB database. It does not use
-MBedwars' internal storage or its RemoteAPI messaging, since MBedwars exposes no general
-cross-plugin messaging channel and may run on a non-shared SQLite backend.
+MBedwars' internal storage or its RemoteAPI messaging for that state, since MBedwars may run on
+a non-shared SQLite backend. The RemoteAPI is still used, when it is active, to see remote
+arenas, resolve their routing names and move players between servers.
+
+### Standalone servers
+
+A single server with no proxy needs no configuration beyond dropping the jar in: leave
+`database.enabled: false` and ignore `server_id`, `is_hub_server` and the `network` section.
+The plugin detects that MBedwars' RemoteAPI is inactive and behaves accordingly:
+
+- Menus and messages never talk about "another server" or "the shared database". A match
+  whose arena was unloaded or deleted says so instead, and can still be ended from its menu.
+- Deleting an arena ends the private match on it immediately; the health check also ends a
+  session whose arena has vanished.
+- No database polling, heartbeats or dead-server sweeps run, and the entry-guard sweep slows
+  down to every 5 seconds since there is no replication race to cover.
+- A party member logging in is still routed to their leader's party-gated match; the leader
+  themselves is never auto-routed.
+
+Enabling the database on a standalone server is harmless but pointless, and the plugin warns
+about it at startup.
 
 1. Set up a MySQL/MariaDB database reachable from every server.
 2. On every server (hubs and arena servers alike), set in `config.yml`:
    ```yaml
    server_id: "unique-per-server"   # must be distinct on every server
-   is_hub_server: true              # only on hub/lobby servers
+   is_hub_server: true              # hubs only; a fallback, see below
    database:
      enabled: true
      host: "..."
@@ -628,6 +647,15 @@ flowchart LR
 **Arena names must be unique across the whole network.** Sessions are looked up by bare arena
 name, so two arena servers each having an arena with the same name will collide (the second
 overwrites the first's session row). Display names do not matter, only the MBedwars arena name.
+
+**Routing.** When a player has to be moved to an arena on another server, the plugin takes the
+arena's routing name (MBedwars' `@`-prefixed remote marker) from the RemoteAPI's own listing,
+so it is right on a hub and on an arena server that controls a match elsewhere alike.
+`is_hub_server` is only consulted for an arena the RemoteAPI cannot resolve at that moment.
+The transfer waits one ticket-poll interval (`database.ticket_poll_seconds`, plus half a
+second) so the join ticket has reached the arena's server before MBedwars asks it whether the
+join is allowed. A player who switches servers is not auto-routed back into a party-gated
+match they left; only a fresh login is.
 
 With MBedwars' RemoteAPI active but the database disabled, remote arenas are hidden from the map
 selector and refused by `/ea arena <map>`, because a private match on a remote arena could not
@@ -685,6 +713,11 @@ property of the party plugin, not something ExclusiveArenas controls.
 - **Arena names with whitespace break some features.** Several actions pass the arena name
   through dispatched commands (`/bw join`, the network join command template). The plugin warns
   about such arenas at startup.
+- **Timeline edits only carry across servers with matching catalogs.** Timeline entries are
+  stored by catalog id. If a hub runs the config catalog while the arena's server runs
+  MBedwarsTweaks' gen tiers (or the two `timeline.events` sections differ), the arena's server
+  keeps the host's chosen match length but cannot map the other entries and falls back to its
+  own defaults for them. Keep `timeline.events` and the Tweaks setup identical across servers.
 
 ---
 

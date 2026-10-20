@@ -46,13 +46,23 @@ public final class PrivateSession implements SettingsHolder {
 
     public PrivateSession(UUID sessionId, UUID owner, String arenaName,
                           JoinPolicy joinPolicy, String joinCode, boolean isPublic) {
+        this(sessionId, owner, arenaName, joinPolicy, joinCode, isPublic, Instant.now());
+    }
+
+    /**
+     * For a session mirrored from the shared database: keeps the ORIGINAL creation time, so
+     * the stale-session clock measures the match's real age on every server rather than
+     * restarting whenever another server first sees (or re-writes) the row.
+     */
+    public PrivateSession(UUID sessionId, UUID owner, String arenaName,
+                          JoinPolicy joinPolicy, String joinCode, boolean isPublic, Instant createdAt) {
         this.sessionId = sessionId;
         this.owner = owner;
         this.arenaName = arenaName;
         this.joinPolicy = joinPolicy;
         this.joinCode = joinCode;
         this.isPublic = isPublic;
-        this.createdAt = Instant.now();
+        this.createdAt = createdAt != null ? createdAt : Instant.now();
     }
 
     public UUID getSessionId() { return sessionId; }
