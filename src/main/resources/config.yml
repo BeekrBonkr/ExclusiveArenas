@@ -23,9 +23,11 @@ stability:
   # deliberately, not a surprise. Until enabled, a stuck match is only ever logged, never touched.
   force_end_stuck_matches: false
 
-# Set true on your HUB/lobby server(s). When true, ExclusiveArenas prefixes the arena name
-# with '@' when routing a player to a match on another backend (MBedwars' remote-arena marker),
-# so cross-server joins work without you editing join_command_template by hand.
+# Fallback for routing a player to a match on another backend. ExclusiveArenas normally takes
+# the arena's routing name (MBedwars' '@'-prefixed remote-arena marker) straight from MBedwars'
+# RemoteAPI, so this is only consulted for an arena the RemoteAPI can't resolve at that moment:
+# true prefixes '@' then, false sends the bare name. Set true on hub/lobby servers. Ignored
+# entirely on a standalone server.
 is_hub_server: false
 
 # Unique id for THIS backend server. Stamped on sessions it creates in the shared database.

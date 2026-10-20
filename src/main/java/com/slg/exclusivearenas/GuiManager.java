@@ -11,6 +11,7 @@ import de.marcely.bedwars.api.game.shop.ShopPage;
 import de.marcely.bedwars.api.game.shop.price.ShopPrice;
 import de.marcely.bedwars.api.remote.RemoteAPI;
 import de.marcely.bedwars.api.remote.RemoteArena;
+import de.marcely.bedwars.api.remote.RemoteServer;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -268,8 +269,13 @@ public final class GuiManager {
         boolean codePolicy = session.getJoinPolicy() == JoinPolicy.CODE;
         Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
         boolean onThisServer = local != null && local.exists();
+        boolean networked = ArenaNames.remoteApiActive();
         boolean relayAvailable = plugin.getRemoteCommandService().isAvailable();
-        boolean lobbyNow = ArenaNames.isLobbyStatus(session.getArenaName());
+        ArenaNames.LobbyState state = ArenaNames.lobbyState(session.getArenaName());
+        boolean lobbyNow = state == ArenaNames.LobbyState.LOBBY;
+        // Can't see the arena from here at all (standalone server whose arena was unloaded, a
+        // backend not listed right now) — don't claim the match began, say the status is unknown.
+        boolean statusUnknown = state == ArenaNames.LobbyState.UNKNOWN;
 
         // Live status card: configured name + the live status lines as lore.
         int statusSlot = GuiStyle.slot("controls.buttons.status-card");
@@ -283,7 +289,8 @@ public final class GuiManager {
 
         String teamsNote = onThisServer && lobbyNow ? "&8▶ Click to open"
                 : (onThisServer ? "&cOnly available while in the lobby."
-                        : "&cRequires being on the arena's server.");
+                        : (networked ? "&cRequires being on the arena's server."
+                                     : "&cThe arena isn't loaded on this server."));
         GuiStyle.place(inv, "controls.buttons.manage-teams", "%availability%", teamsNote);
 
         GuiStyle.place(inv, "controls.buttons.policy",
@@ -293,8 +300,9 @@ public final class GuiManager {
                         : "&7Only your party members can join.");
 
         int startSlot = GuiStyle.place(inv,
-                lobbyNow ? "controls.buttons.start-lobby" : "controls.buttons.start-running",
-                "%remote_note%", onThisServer ? "" : "&8(controlling remotely)");
+                lobbyNow || statusUnknown ? "controls.buttons.start-lobby" : "controls.buttons.start-running",
+                "%remote_note%", onThisServer ? ""
+                        : (statusUnknown ? "&8(arena status unavailable)" : "&8(controlling remotely)"));
 
         if (codePolicy) {
             GuiStyle.place(inv, session.isPublic()
@@ -312,8 +320,9 @@ public final class GuiManager {
 
         // Start / Kick All / End Match execute on the arena's own server — from here they need
         // the shared database to relay through; say so on the buttons instead of failing quietly.
-        if (!onThisServer && !relayAvailable) {
-            String note = relayUnavailableLore();
+        // On a standalone server there is no "other server": the arena simply isn't loaded.
+        if (!onThisServer && (!relayAvailable || !networked)) {
+            String note = networked ? relayUnavailableLore() : arenaNotLoadedLore();
             appendLoreLine(inv, startSlot, note);
             appendLoreLine(inv, kickSlot, note);
             appendLoreLine(inv, endSlot, note);
@@ -346,6 +355,7 @@ public final class GuiManager {
 
         Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
         boolean onThisServer = local != null && local.exists();
+        boolean networked = ArenaNames.remoteApiActive();
         boolean relayAvailable = plugin.getRemoteCommandService().isAvailable();
 
         String[] actions = {
@@ -358,11 +368,11 @@ public final class GuiManager {
         };
         for (String action : actions) {
             int slot = GuiStyle.place(inv, "quick-actions.buttons." + action);
-            markIfRemoteUnavailable(inv, slot, action, onThisServer, relayAvailable);
+            markIfRemoteUnavailable(inv, slot, action, onThisServer, networked, relayAvailable);
         }
         if (plugin.getTimelineService().isEnabled()) {
             int slot = GuiStyle.place(inv, "quick-actions.buttons.skip-event");
-            markIfRemoteUnavailable(inv, slot, "skip-event", onThisServer, relayAvailable);
+            markIfRemoteUnavailable(inv, slot, "skip-event", onThisServer, networked, relayAvailable);
         }
         GuiStyle.place(inv, "quick-actions.buttons.back");
         p.openInventory(inv);
@@ -374,9 +384,12 @@ public final class GuiManager {
      * everything else only when there's no shared database to relay the click through.
      */
     private void markIfRemoteUnavailable(Inventory inv, int slot, String action,
-                                         boolean onThisServer, boolean relayAvailable) {
+                                         boolean onThisServer, boolean networked, boolean relayAvailable) {
         if (onThisServer || slot < 0) return;
-        if (LOCAL_ONLY_QUICK_ACTIONS.contains(action)) {
+        if (!networked) {
+            // Standalone: no other server to be on — the arena just isn't loaded here.
+            appendLoreLine(inv, slot, arenaNotLoadedLore());
+        } else if (LOCAL_ONLY_QUICK_ACTIONS.contains(action)) {
             appendLoreLine(inv, slot, remoteUnavailableLore());
         } else if (!relayAvailable) {
             appendLoreLine(inv, slot, relayUnavailableLore());
@@ -391,6 +404,12 @@ public final class GuiManager {
     private static String relayUnavailableLore() {
         return GuiStyle.rawString("global.relay-unavailable-lore",
                 "&c✖ Unavailable — no shared database to relay through.");
+    }
+
+    /** Standalone-server counterpart of the two above: the arena is gone, not elsewhere. */
+    private static String arenaNotLoadedLore() {
+        return GuiStyle.rawString("global.arena-not-loaded-lore",
+                "&c✖ Unavailable — the arena isn't loaded on this server.");
     }
 
     private static void appendLoreLine(Inventory inv, int slot, String line) {
@@ -475,7 +494,7 @@ public final class GuiManager {
         // the session's replicated settings and work from anywhere.
         Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
         if (local == null || !local.exists()) {
-            String note = remoteUnavailableLore();
+            String note = ArenaNames.remoteApiActive() ? remoteUnavailableLore() : arenaNotLoadedLore();
             appendLoreLine(inv, teamSizeSlot, note);
             appendLoreLine(inv, environmentSlot, note);
         }
@@ -1089,8 +1108,13 @@ public final class GuiManager {
         fillInteriorRow(inv, 27, accentMaterial());
         fillInteriorRow(inv, 36, accentMaterial());
 
-        boolean editable = isTimelineEditable(holder);
-        String lockNote = editable ? "" : "&c✖ The round has started — edits apply from the next one.";
+        ArenaNames.LobbyState state = timelineState(holder);
+        boolean editable = state != ArenaNames.LobbyState.NOT_LOBBY;
+        String lockNote = switch (state) {
+            case NOT_LOBBY -> "&c✖ The round has started — edits apply from the next one.";
+            case UNKNOWN -> "&8(arena status unavailable — edits apply from the next round)";
+            default -> "";
+        };
 
         GuiStyle.place(inv, "timeline.buttons.info");
         GuiStyle.place(inv, "timeline.buttons.add-event", "%locked%", lockNote);
@@ -1135,7 +1159,7 @@ public final class GuiManager {
                 "%max_custom%", String.valueOf(TimelineService.MAX_CUSTOM_EVENTS),
                 "%source%", holder.getSettings().getTimeline() == null
                         ? "&7Server defaults" : "&eCustomized for this match",
-                "%backend%", tweaksBackendNote(),
+                "%backend%", tweaksBackendNote(holder),
                 "%locked%", lockNote);
 
         // Nothing to clear on a schedule that's only Match End — the button would be a no-op
@@ -1190,11 +1214,17 @@ public final class GuiManager {
      * that have no gen-tier equivalent (buffs, weather, announcements, …) are skipped at runtime.
      * Say so where a host would otherwise build one and wonder why it never fired.
      */
-    private String tweaksBackendNote() {
-        return plugin.getTimelineService().isTweaksBackend()
-                ? "&c⚠ MBedwarsTweaks runs this server's timeline — events it has no equivalent "
-                        + "for (buffs, weather, announcements, …) won't fire."
-                : "";
+    private String tweaksBackendNote(SettingsHolder holder) {
+        if (!plugin.getTimelineService().isTweaksBackend()) return "";
+        // The note describes THIS server's backend. For a live session whose arena is on
+        // another server it may not apply at all (the arena's host decides), so only show it
+        // while the arena is local or the match hasn't been created yet.
+        if (holder instanceof PrivateSession session) {
+            Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+            if (local == null || !local.exists()) return "";
+        }
+        return "&c⚠ MBedwarsTweaks runs this server's timeline — events it has no equivalent "
+                + "for (buffs, weather, announcements, …) won't fire.";
     }
 
     private static int indexOfEvent(List<SessionSettings.TimelineEntry> timeline, String id) {
@@ -1211,12 +1241,19 @@ public final class GuiManager {
      * after a click that turns out to do nothing.
      */
     private boolean isTimelineEditable(SettingsHolder holder) {
-        if (!(holder instanceof PrivateSession session)) return true; // a draft has no round yet
-        // Remote-aware on purpose: for a session hosted on another server the local lookup
-        // resolves null, and treating that as "editable" would let a mid-round match be edited
-        // from the hub — the save would look successful but never apply (the engine snapshots
-        // the schedule at round start).
-        return ArenaNames.isLobbyStatus(session.getArenaName());
+        return timelineState(holder) != ArenaNames.LobbyState.NOT_LOBBY;
+    }
+
+    /**
+     * Remote-aware on purpose: for a session hosted on another server the local lookup
+     * resolves null, and treating that as "editable" would let a mid-round match be edited
+     * from the hub — the save would look successful but never apply (the engine snapshots
+     * the schedule at round start). An arena that can't be seen at all is UNKNOWN rather than
+     * "started": the settings are replicated and apply from the next round either way.
+     */
+    private ArenaNames.LobbyState timelineState(SettingsHolder holder) {
+        if (!(holder instanceof PrivateSession session)) return ArenaNames.LobbyState.LOBBY; // a draft has no round yet
+        return ArenaNames.lobbyState(session.getArenaName());
     }
 
     /**
@@ -1353,7 +1390,7 @@ public final class GuiManager {
                 GuiStyle.title("timeline-custom-type", "%arena%", holder.getArenaName()));
         frame(inv);
 
-        GuiStyle.place(inv, "timeline-custom-type.buttons.info", "%backend%", tweaksBackendNote());
+        GuiStyle.place(inv, "timeline-custom-type.buttons.info", "%backend%", tweaksBackendNote(holder));
 
         int i = 0;
         for (TimelineService.Type type : TimelineService.Type.values()) {
@@ -1962,7 +1999,9 @@ public final class GuiManager {
                 "%policy_desc%", isParty
                         ? "&7Only your party members can join."
                         : "&7Players join with &f/ea join <code>",
-                "%policy_reason%", isParty ? "&8(You lead a party)" : "&8(You aren't leading a party)");
+                "%policy_reason%", isParty ? "&8(You lead a party)"
+                        : (PartyResolver.hasPartiesHook() ? "&8(You aren't leading a party)"
+                                                           : "&8(No party plugin installed)"));
 
         if (d.getJoinPolicy() == JoinPolicy.CODE) {
             GuiStyle.place(inv, d.isPublic() ? "builder.buttons.public-on" : "builder.buttons.public-off",
@@ -2038,9 +2077,17 @@ public final class GuiManager {
         }
 
         if (entries.isEmpty()) {
-            GuiStyle.place(inv, "arena-select.buttons.empty", "%reason%",
-                    all.isEmpty() ? "&8There are no BedWars arenas to reserve."
-                            : "&8Try clearing a filter below.");
+            String reason;
+            if (!all.isEmpty()) {
+                reason = "&8Try clearing a filter below.";
+            } else if (countHiddenRemoteArenas() > 0) {
+                // A hub with no arenas of its own and the shared database off: the network's
+                // arenas exist, they just can't be gated from here. Say that, not "no arenas".
+                reason = "&8Remote arenas need the shared database (database.enabled).";
+            } else {
+                reason = "&8There are no BedWars arenas to reserve.";
+            }
+            GuiStyle.place(inv, "arena-select.buttons.empty", "%reason%", reason);
         }
 
         if (pg > 0) GuiStyle.place(inv, "arena-select.buttons.previous-page", "%target%", String.valueOf(pg));
@@ -2217,6 +2264,26 @@ public final class GuiManager {
                 .toList();
     }
 
+    /**
+     * Remote arenas the selector is hiding because the shared database isn't connected (see
+     * {@link #collectArenas}) — distinguishes "this network has no arenas" from "they can't be
+     * reserved from here" on the selector's empty-state pane.
+     */
+    private int countHiddenRemoteArenas() {
+        if (plugin.getDatabase() != null) return 0;
+        RemoteAPI remote = ArenaNames.remoteApi();
+        if (remote == null) return 0;
+        int hidden = 0;
+        try {
+            for (RemoteArena ra : remote.getArenas()) {
+                if (ra != null && ra.exists() && !ra.isLocal()) hidden++;
+            }
+        } catch (Throwable ignored) {
+            // listing failure — nothing to count
+        }
+        return hidden;
+    }
+
     private List<ArenaEntry> collectArenas() {
         List<ArenaEntry> list = new ArrayList<>();
         // Without the shared database, a session on a remote arena would never reach the
@@ -2224,11 +2291,15 @@ public final class GuiManager {
         // there. Only offer remote arenas when the network store is actually connected.
         boolean networkStoreReady = plugin.getDatabase() != null;
         try {
-            RemoteAPI remote = RemoteAPI.get();
-            if (remote != null && remote.isAPIActive()) {
+            RemoteAPI remote = ArenaNames.remoteApi();
+            if (remote != null) {
                 for (RemoteArena ra : remote.getArenas()) {
                     if (ra != null && ra.exists() && (ra.isLocal() || networkStoreReady)) {
-                        list.add(new ArenaEntry(ra.getName(), !ra.isLocal(),
+                        // Canonical (bare) name: the '@' remote marker is only how the RemoteAPI
+                        // lists the arena from here, not its name — sessions, reservations and
+                        // tab completion all work on the bare form, and the remote flag already
+                        // carries the "where" for the lore.
+                        list.add(new ArenaEntry(ArenaNames.canonical(ra.getName()), !ra.isLocal(),
                                 ra.getEnabledTeams().size(), ra.getPlayersPerTeam(), ra.getIcon()));
                     }
                 }
