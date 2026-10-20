@@ -133,11 +133,16 @@ public final class SyncService {
                 purgeIds.add(row.sessionId());
                 purgeArenas.add(row.arenaName());
             }
-            if (!purgeIds.isEmpty() || spared == 0) {
+            if (!purgeIds.isEmpty()) {
                 plugin.getLogger().warning("ExclusiveArenas: server '" + deadServerId
                         + "' has stopped sending heartbeats — treating it as crashed; purging "
                         + purgeIds.size() + " orphaned session(s)"
                         + (spared > 0 ? " (" + spared + " spared: arena still active)" : "") + ".");
+            } else if (spared == 0) {
+                // Nothing of its left to clean up — a server that restarted (or shut down
+                // cleanly before it learned to drop its own row) is not a crash worth a warning.
+                plugin.getLogger().info("ExclusiveArenas: server '" + deadServerId
+                        + "' has stopped sending heartbeats and left no sessions behind — dropping its row.");
             } else {
                 // Everything it wrote is still live — nothing to purge yet, so don't warn on
                 // every sweep; the heartbeat row stays until its sessions end (or get adopted).

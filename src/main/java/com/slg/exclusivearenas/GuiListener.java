@@ -317,7 +317,10 @@ public final class GuiListener implements Listener {
         }
 
         DraftPrivateMatch d = drafts.getOrCreate(p.getUniqueId());
-        if (d.getArenaName() != null && !d.getArenaName().equalsIgnoreCase(name)) {
+        // Compare canonical forms: a draft name that only differs by the '@' remote marker is
+        // the SAME arena, and releasing it here would drop the reservation just taken above.
+        if (d.getArenaName() != null
+                && !ArenaNames.canonical(d.getArenaName()).equalsIgnoreCase(ArenaNames.canonical(name))) {
             sessions.releaseDraftArena(d.getArenaName(), p.getUniqueId());
         }
         d.setArenaName(name);
@@ -397,6 +400,10 @@ public final class GuiListener implements Listener {
         } else if (slot == GuiStyle.slot("arena-config.buttons.match-rules")) {
             gui.openMatchRules(p, session, gh.adminView());
         } else if (slot == GuiStyle.slot("arena-config.buttons.environment")) {
+            // Weather/time act on the live arena object, so the editor is only useful on the
+            // server that hosts it — say so instead of opening a menu that swallows every click.
+            Arena local = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+            if (local == null || !local.exists()) { p.sendMessage(plugin.arenaUnreachableMessage()); return; }
             gui.openEnvironment(p, session, gh.adminView());
         } else if (slot == GuiStyle.slot("arena-config.buttons.back")) {
             gui.openControls(p, session, gh.adminView());
@@ -582,7 +589,10 @@ public final class GuiListener implements Listener {
         }
 
         Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
-        if (arena == null || !arena.exists()) return;
+        if (arena == null || !arena.exists()) {
+            p.sendMessage(plugin.arenaUnreachableMessage());
+            return;
+        }
 
         if (slot == GuiStyle.slot("environment.buttons.weather")) {
             ArenaWeatherType current = ExclusiveArenasPlugin.parseWeatherType(session.getSettings().getWeatherType());
@@ -805,6 +815,10 @@ public final class GuiListener implements Listener {
             return;
         }
         if (slot == GuiStyle.slot("quick-actions.buttons.force-win")) {
+            // The team picker is built from the live arena's teams — nothing to pick from here
+            // when the arena isn't local, so say so rather than opening an empty menu.
+            Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
+            if (arena == null || !arena.exists()) { p.sendMessage(plugin.arenaUnreachableMessage()); return; }
             gui.openForceWin(p, session, gh.adminView());
             return;
         }
@@ -819,7 +833,7 @@ public final class GuiListener implements Listener {
         if (slot == GuiStyle.slot("quick-actions.buttons.reveal-border")) {
             Arena arena = BedwarsAPI.getGameAPI().getArenaByExactName(session.getArenaName());
             if (arena == null || !arena.exists()) {
-                p.sendMessage(Lang.msg("teams.requires-local"));
+                p.sendMessage(plugin.arenaUnreachableMessage());
                 return;
             }
             plugin.getQuickActions().revealBorder(p, arena);
@@ -1074,8 +1088,11 @@ public final class GuiListener implements Listener {
         if (!(holder instanceof PrivateSession session)) return true;
         // Remote-aware on purpose (mirrors GuiManager#isTimelineEditable): a session hosted on
         // another server resolves to no local arena, and treating that as "editable" would let
-        // a mid-round match be edited from the hub — saved, confirmed, and never applied.
-        if (!ArenaNames.isLobbyStatus(session.getArenaName())) {
+        // a mid-round match be edited from the hub — saved, confirmed, and never applied. Only a
+        // status KNOWN to be past the lobby blocks, though: an arena this server can't see at
+        // all (unloaded on a standalone server, backend not listed right now) still takes the
+        // edit — these settings are replicated and apply from the next round either way.
+        if (ArenaNames.lobbyState(session.getArenaName()) == ArenaNames.LobbyState.NOT_LOBBY) {
             p.sendMessage(Lang.msg("timeline.lobby-only"));
             return false;
         }

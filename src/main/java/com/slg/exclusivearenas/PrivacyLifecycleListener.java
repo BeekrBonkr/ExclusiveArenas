@@ -2,6 +2,7 @@ package com.slg.exclusivearenas;
 
 import de.marcely.bedwars.api.arena.Arena;
 import de.marcely.bedwars.api.arena.KickReason;
+import de.marcely.bedwars.api.event.arena.ArenaDeleteEvent;
 import de.marcely.bedwars.api.event.arena.ArenaLobbyCountdownStartEvent;
 import de.marcely.bedwars.api.event.arena.ArenaStatusChangeEvent;
 import de.marcely.bedwars.api.event.arena.RoundEndEvent;
@@ -66,6 +67,20 @@ public final class PrivacyLifecycleListener implements Listener {
      * countdown is unconditionally suppressed; the match only ever starts via the host's
      * explicit Start button/command ({@link ExclusiveArenasPlugin#startMatchNow}).
      */
+    /**
+     * An arena deleted (or unloaded) out from under its private match takes the match with it.
+     * Without this the session would linger — on a standalone server with no way to end it from
+     * the menus (there is no "other server" to relay to) until the stale-session sweep.
+     */
+    @EventHandler
+    public void onArenaDelete(ArenaDeleteEvent event) {
+        PrivateSession s = sessions.getByArena(event.getArena());
+        if (s == null) return;
+        plugin.getLogger().info("Arena '" + event.getArena().getName()
+                + "' was deleted while hosting a private match — ending the session.");
+        sessions.endSession(s);
+    }
+
     @EventHandler
     public void onLobbyCountdownStart(ArenaLobbyCountdownStartEvent event) {
         if (sessions.getByArena(event.getArena()) != null) event.setCancelled(true);
