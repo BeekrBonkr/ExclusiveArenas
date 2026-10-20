@@ -58,7 +58,7 @@ cleanup after a crashed server.
 
 ## Installation
 
-1. Drop `ExclusiveArenas-1.2.0.jar` into `plugins/MBedwars/add-ons/`.
+1. Drop `ExclusiveArenas-1.3.0.jar` into `plugins/MBedwars/add-ons/`.
 2. Restart the server.
 3. Edit `plugins/MBedwars/add-ons/ExclusiveArenas/config.yml` as needed, then run `/ea reload`
    (admin) to apply changes without a restart.
@@ -744,7 +744,7 @@ Maven repository, so their jars go in `libs/`:
    ```
    ./gradlew build
    ```
-3. The plugin jar is at `build/libs/ExclusiveArenas-1.2.0.jar`. The MariaDB driver and HikariCP
+3. The plugin jar is at `build/libs/ExclusiveArenas-1.3.0.jar`. The MariaDB driver and HikariCP
    are shaded in and relocated under `com.slg.exclusivearenas.libs`.
 
 ---
