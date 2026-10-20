@@ -92,6 +92,13 @@ All notable changes to ExclusiveArenas are documented here.
   time/weather. Configurable via the new `%summary%` placeholder in each button's lore.
 
 ### Fixed
+- **MBedwarsTweaks 5.1.1 timeline bridge never engaged**: since Tweaks 5.1.1 loads its gen-tier
+  config inside its own MBedwars ready-callback, which can run *after* ExclusiveArenas' own init
+  when ExclusiveArenas happens to enable first. The bridge then found zero tiers and quietly fell
+  back to the internal engine (`timeline backend: internal` in the startup log, custom timings no
+  longer shown on the scoreboard). The plugin now listens for Tweaks' `PostConfigLoadEvent` and
+  engages the bridge the moment the gen tiers are in, whatever the enable order. A `/tweaks
+  reload` that changes the tiers now refreshes the timeline defaults too.
 - **Distribute Players actually distributes evenly now**: players who already held a team kept
   their seats during the pass, so their old teams looked full to the capacity check and the
   round-robin could come out lopsided (e.g. 4 players on one team of two redistributing 1/3
@@ -123,6 +130,10 @@ All notable changes to ExclusiveArenas are documented here.
   live lobby state, not part of the setup a preset describes, so it is carried across untouched.
 
 ### Changed
+- **Built against MBedwars 5.5.9.1 and MBedwarsTweaks 5.1.1** (previously 5.5.6 / 5.0.2). No
+  source changes were needed for the MBedwars API itself; the one deprecated call (remote
+  spectator add during a cross-server summon) now uses `SpectateRemotePlayerInfo`, keeping the
+  same ignore-arena-status behaviour the old overload had.
 - Renamed "Arena Settings" to "Arena Modifiers" throughout every menu, message, and doc.
 - `guis.yml` is now version 5 and `lang.yml` version 4. Both upgrade in place, keeping your
   edits. `timeline-add.buttons.custom-info` (the "run this command instead" note) is removed by

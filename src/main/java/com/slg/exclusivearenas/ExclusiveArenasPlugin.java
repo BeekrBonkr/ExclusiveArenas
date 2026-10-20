@@ -14,6 +14,7 @@ import de.marcely.bedwars.api.remote.RemoteAPI;
 import de.marcely.bedwars.api.remote.RemoteArena;
 import de.marcely.bedwars.api.remote.RemotePlayer;
 import de.marcely.bedwars.api.remote.RemotePlayerAddResult;
+import de.marcely.bedwars.api.remote.SpectateRemotePlayerInfo;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -96,6 +97,13 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         this.quickActions   = new QuickActionsService(this);
         this.timelineEngine = new EventTimelineEngine(this, sessionService, timelineService);
         this.presetService  = new PresetService(this, addon.getDataFolder());
+        if (Bukkit.getPluginManager().getPlugin("MBedwarsTweaks") != null) {
+            // Tweaks (5.1.1+) loads its gen-tier config in its own BedwarsAPI.onReady callback,
+            // which may run after ours — so the bridge is (re)attempted whenever Tweaks reports
+            // its configs loaded, not just once here. The listener class imports the Tweaks API
+            // and must only be touched while that plugin is actually installed.
+            TweaksConfigListener.register(this);
+        }
         setupTweaksBridge();
 
         applyTunables();
@@ -155,7 +163,11 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                 + (parties ? "present" : "absent (every private match will be join-code gated)")
                 + ", RemoteAPI " + (remoteApi ? "active" : "inactive")
                 + ", MBedwarsTweaks " + (tweaks ? ("present (timeline backend: "
-                        + (tweaksBridge != null ? "tweaks" : "internal") + ")") : "absent") + ".");
+                        + (tweaksBridge != null ? "tweaks"
+                            : "internal".equalsIgnoreCase(eaConfig.str("timeline.backend", "auto"))
+                                ? "internal, by config"
+                                : "internal until MBedwarsTweaks' gen-tier config has loaded")
+                        + ")") : "absent") + ".");
 
         if (remoteApi && !eaConfig.bool("database.enabled", false)) {
             getLogger().warning("MBedwars' RemoteAPI is active but ExclusiveArenas' shared database is "
@@ -429,6 +441,22 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             Bukkit.getPluginManager().registerEvents(bridge, this);
             getLogger().info("MBedwarsTweaks detected — its gen tiers now provide the default "
                     + "event timeline, and custom timings will show on the scoreboard.");
+        }
+    }
+
+    /**
+     * Called (on the main thread) each time MBedwarsTweaks finishes loading its configs — the
+     * first time during startup and again on every {@code /tweaks reload}. The first load is
+     * what engages the bridge on servers where Tweaks' config arrives after our own init; later
+     * loads re-read the gen tiers into the timeline defaults (an active bridge is kept, with its
+     * live per-round state, see {@link #setupTweaksBridge()}).
+     */
+    void onTweaksConfigLoaded(boolean firstLoad) {
+        if (!isEnabled() || timelineService == null) return;
+        boolean hadBridge = tweaksBridge != null;
+        setupTweaksBridge();
+        if (!firstLoad && hadBridge && tweaksBridge != null) {
+            getLogger().info("MBedwarsTweaks reloaded its configs — timeline defaults refreshed from its gen tiers.");
         }
     }
 
@@ -1654,7 +1682,13 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                 RemoteArena ra = ArenaNames.findRemote(arenaName);
                 if (rp != null && rp.isOnline() && !rp.isPlaying() && ra != null) {
                     if (ra.getStatus() == ArenaStatus.RUNNING) {
-                        ra.addSpectator(rp, SpectateReason.ENTER, result -> {
+                        // ignoreArenaStatus=true mirrors what the (now deprecated) 3-arg overload
+                        // did: the status was checked as RUNNING a moment ago, don't re-gate on it.
+                        SpectateRemotePlayerInfo info = new SpectateRemotePlayerInfo()
+                                .setPlayer(rp)
+                                .setReason(SpectateReason.ENTER)
+                                .setIgnoreArenaStatus(true);
+                        ra.addSpectator(info, result -> {
                             if (onSuccess != null && result != null && result.wasSuccessful()) {
                                 Bukkit.getScheduler().runTask(this, onSuccess);
                             }
