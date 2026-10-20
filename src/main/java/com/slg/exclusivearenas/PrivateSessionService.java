@@ -423,7 +423,8 @@ public final class PrivateSessionService {
             policy = JoinPolicy.PARTY;
         }
         PrivateSession session = new PrivateSession(
-                row.sessionId(), row.owner(), row.arenaName(), policy, row.joinCode(), row.isPublic());
+                row.sessionId(), row.owner(), row.arenaName(), policy, row.joinCode(), row.isPublic(),
+                row.createdAt() > 0 ? java.time.Instant.ofEpochMilli(row.createdAt()) : null);
         session.setAutoSummon(row.autoSummon());
         session.setSettings(SessionSettings.fromJson(row.settings()));
         return session;

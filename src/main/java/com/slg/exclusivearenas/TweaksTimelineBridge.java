@@ -93,7 +93,13 @@ public final class TweaksTimelineBridge implements Listener {
                                           TimelineService timelines) {
         try {
             TweaksTimelineBridge bridge = new TweaksTimelineBridge(plugin, sessions, timelines);
-            if (!bridge.rebuildDefaults()) return null;
+            if (!bridge.rebuildDefaults()) {
+                // Either Tweaks genuinely has no gen tiers configured, or (Tweaks 5.1.1+) it simply
+                // hasn't loaded its config yet — its PostConfigLoadEvent re-triggers this later.
+                plugin.getLogger().info("MBedwarsTweaks has no gen tiers loaded (yet) — using the internal "
+                        + "timeline engine until its gen-tier config is in.");
+                return null;
+            }
             return bridge;
         } catch (Throwable t) {
             plugin.getLogger().warning("MBedwarsTweaks is present but its gen-tiers API could not be "
