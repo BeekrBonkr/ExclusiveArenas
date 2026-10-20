@@ -49,8 +49,8 @@ cleanup after a crashed server.
 |---|---|---|
 | [Paper](https://papermc.io/) | 1.21.x (built against the 1.21.4 API; earlier versions are untested) | Yes |
 | Java | 21+ | Yes |
-| [MBedwars](https://mbedwars.com/) | 5.5.x (built against 5.5.6). ExclusiveArenas registers as a real MBedwars add-on | Yes |
-| [MBedwarsTweaks](https://www.spigotmc.org/resources/mbedwars-tweaks.98926/) | 5.0.x (built against 5.0.2). If installed, the event timeline drives Tweaks' own gen-tier schedule so the scoreboard's next-event timer stays accurate. See [Event timeline](#event-timeline) | Optional |
+| [MBedwars](https://mbedwars.com/) | 5.5.9+ (built against 5.5.9.1). ExclusiveArenas registers as a real MBedwars add-on | Yes |
+| [MBedwarsTweaks](https://www.spigotmc.org/resources/mbedwars-tweaks.98926/) | 5.1.x (built against 5.1.1; 5.0.x still works). If installed, the event timeline drives Tweaks' own gen-tier schedule so the scoreboard's next-event timer stays accurate. See [Event timeline](#event-timeline) | Optional |
 | Party plugin | Any plugin with an MBedwars `PartiesHook` implementation. Needed for party-gated matches; without one every match is join-code gated | Optional |
 | MySQL / MariaDB | Any recent version. Only needed for multi-server networks, see [Network setup](#network-multi-server-setup). The JDBC driver and connection pool are bundled | Optional |
 
@@ -700,7 +700,8 @@ See `config.yml`. Every key is commented inline, including the setup snippets re
 The build uses Gradle with the shadow plugin. MBedwars and MBedwarsTweaks are not on a public
 Maven repository, so their jars go in `libs/`:
 
-1. Put `MBedwars.jar` and `MBedwarsTweaks-5.0.2.jar` in `libs/`.
+1. Put `MBedwars-5.5.9.1.jar` and `MBedwarsTweaks-5.1.1.jar` in `libs/` (or point the two
+   `compileOnly files(...)` lines in `build.gradle` at whatever jars you have).
 2. Run the build:
    ```
    ./gradlew build
