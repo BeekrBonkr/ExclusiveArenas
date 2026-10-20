@@ -237,6 +237,8 @@ status:
 kickall:
   # %count%
   kicked: "&aKicked &f%count%&a player(s) from the arena."
+  # Shift-click / "keephost": everyone but the host was removed. %count%
+  kicked-kept-host: "&aKicked &f%count%&a player(s) from the arena — you stayed."
   none: "&7There was nobody to kick."
   # %arena%
   sent: "&aSent the kick-all request to &f%arena%&a."

@@ -504,10 +504,35 @@ public final class QuickActionsService implements Listener {
         tell(actor, arena, Lang.msg("quick.buffed", "%count%", String.valueOf(count)));
     }
 
+    /**
+     * Freeze / PvP-off / Emergency Pause are mid-round tools. Toggled in the lobby they would
+     * set a per-arena flag that nothing clears until the NEXT round ends (the cleanup in
+     * {@link #onStatusChange} fires on leaving RUNNING), so the following match on that arena
+     * would start frozen. Refuse outside a running round instead.
+     */
+    private boolean requireRunning(Player actor, Arena arena) {
+        if (arena.getStatus() == ArenaStatus.RUNNING) return true;
+        tell(actor, arena, Lang.msg("quick.running-only"));
+        return false;
+    }
+
+    /**
+     * Drops every per-arena toggle (freeze, PvP-off, pause) for an arena whose private match
+     * just ended — the status-change cleanup only covers a round that actually ran.
+     */
+    public void clearArenaToggles(Arena arena) {
+        if (arena == null) return;
+        String k = key(arena.getName());
+        frozenArenas.remove(k);
+        pvpDisabledArenas.remove(k);
+        pausedArenas.remove(k);
+    }
+
     // ── Freeze ───────────────────────────────────────────────────────────────────
 
     /** Toggles whether everyone in the arena is locked in place — a "hold on a second" button. */
     public void toggleFreeze(Player actor, PrivateSession session, Arena arena) {
+        if (!requireRunning(actor, arena)) return;
         String k = key(arena.getName());
         if (!frozenArenas.add(k)) {
             frozenArenas.remove(k);
@@ -600,6 +625,7 @@ public final class QuickActionsService implements Listener {
 
     /** Toggles whether players can damage each other at all in this arena. */
     public void togglePvp(Player actor, PrivateSession session, Arena arena) {
+        if (!requireRunning(actor, arena)) return;
         String k = key(arena.getName());
         if (!pvpDisabledArenas.add(k)) {
             pvpDisabledArenas.remove(k);
@@ -636,6 +662,7 @@ public final class QuickActionsService implements Listener {
 
     /** Freezes movement AND holds off every pending timeline event until resumed. */
     public void togglePause(Player actor, PrivateSession session, Arena arena) {
+        if (!requireRunning(actor, arena)) return;
         String k = key(arena.getName());
         boolean nowPaused = pausedArenas.add(k);
         if (!nowPaused) pausedArenas.remove(k);

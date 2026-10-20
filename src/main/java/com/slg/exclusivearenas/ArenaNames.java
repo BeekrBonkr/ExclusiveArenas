@@ -52,14 +52,17 @@ public final class ArenaNames {
     }
 
     /**
-     * MBedwars' RemoteAPI when it is up on this server (proxy/network mode), else null. The
-     * single place that knows the null + {@code isAPIActive()} rule; on a standalone server
-     * this is always null and every caller falls back to purely local behaviour.
+     * MBedwars' RemoteAPI when this server is actually part of a network, else null. The
+     * single place that knows the rule, which is NOT just "is there a RemoteAPI": MBedwars
+     * always installs one, and {@code isAPIActive()} only says it is the registered instance
+     * — on a standalone server it is a local-only stub that lists this server's own arenas.
+     * {@code isLocalOnly()} is what tells that stub apart from the ProxySync implementation
+     * a networked server runs. Every caller falls back to purely local behaviour on null.
      */
     public static RemoteAPI remoteApi() {
         try {
             RemoteAPI api = BedwarsAPI.getRemoteAPI();
-            return api != null && api.isAPIActive() ? api : null;
+            return api != null && api.isAPIActive() && !api.isLocalOnly() ? api : null;
         } catch (Throwable t) {
             return null;
         }

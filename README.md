@@ -477,12 +477,13 @@ add-on folder, or in the shared database on a network so they follow you across 
 
 ## Custom lobby hotbar items
 
-ExclusiveArenas registers four MBedwars lobby hotbar item handlers. Registering only makes a
-handler available by id; nothing appears until you add an entry referencing it to your live
-`lobby-hotbar.yml` under `plugins/MBedwars/configs/` (see MBedwars' docs for the exact versioned
-path). The slot is yours; name and item are placeholders, since every handler overrides its own
-icon, name and lore at render time. All four only appear inside a private match.
-`toggle-spectate` and `rejoin-as-player` are mutually exclusive, so they can share a slot.
+ExclusiveArenas registers four MBedwars hotbar item handlers. Registering only makes a
+handler available by id; nothing appears until you add an entry referencing it to MBedwars'
+hotbar files (see MBedwars' docs for the exact versioned path). Three go in `lobby-hotbar.yml`.
+`rejoin-as-player` goes in `spectator-hotbar.yml`: a spectator holds MBedwars' spectator
+hotbar, not the lobby one, so a lobby entry would never reach them. The slot is yours; name and
+item are placeholders, since every handler overrides its own icon, name and lore at render
+time. All four only appear inside a private match.
 
 ```yaml
 open-controls:
@@ -497,17 +498,21 @@ toggle-spectate:
   handler: 'exclusivearenas:toggle_spectate'   # visible to any active player
   item: 'gray_dye'                             # hidden once they are spectating
 
-rejoin-as-player:
-  name: '&aRejoin as Player'
-  slot: 3
-  handler: 'exclusivearenas:rejoin_as_player'  # visible to any spectator
-  item: 'lime_dye'                             # hidden once the round is running or full
-
 summon-party:
   name: '&eSummon Party'
   slot: 4
   handler: 'exclusivearenas:summon_party'      # host only, party-gated matches only
   item: 'ender_pearl'
+```
+
+And in `spectator-hotbar.yml`:
+
+```yaml
+rejoin-as-player:
+  name: '&aRejoin as Player'
+  slot: 1
+  handler: 'exclusivearenas:rejoin_as_player'  # visible to any spectator of a private match
+  item: 'lime_dye'                             # hidden once the round is running or full
 ```
 
 - `exclusivearenas:open_controls`: opens Match Controls for the host.
@@ -741,6 +746,9 @@ Maven repository, so their jars go in `libs/`:
    ```
 3. The plugin jar is at `build/libs/ExclusiveArenas-1.2.0.jar`. The MariaDB driver and HikariCP
    are shaded in and relocated under `com.slg.exclusivearenas.libs`.
+
+End-to-end tests that drive real Mineflayer bots against a local server live in `tests/e2e/`
+(see its README). They cover the command surface, the menus and the hotbar items.
 
 ---
 

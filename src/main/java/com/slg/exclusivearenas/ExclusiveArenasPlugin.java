@@ -65,6 +65,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
     private org.bukkit.scheduler.BukkitTask bossBarSchedulerTask;
     private SpectateOnStartHandler spectateOnStartHandler;
     private SpectatorRejoinHandler spectatorRejoinHandler;
+    private SpectatorRejoinHandler.LobbyVariant spectatorRejoinLobbyHandler;
     private PartySummonLobbyItemHandler partySummonLobbyItemHandler;
     private TeamLockListener teamLockListener;
     private MatchControlsLobbyItemHandler matchControlsLobbyItemHandler;
@@ -161,7 +162,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
 
         getLogger().info("MBedwars environment: parties hook "
                 + (parties ? "present" : "absent (every private match will be join-code gated)")
-                + ", RemoteAPI " + (remoteApi ? "active" : "inactive")
+                + ", " + (remoteApi ? "networked (MBedwars proxy sync active)" : "standalone (no proxy sync)")
                 + ", MBedwarsTweaks " + (tweaks ? ("present (timeline backend: "
                         + (tweaksBridge != null ? "tweaks"
                             : "internal".equalsIgnoreCase(eaConfig.str("timeline.backend", "auto"))
@@ -236,6 +237,8 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
      *   - "exclusivearenas:open_controls"    → visible only to the match's host; opens Match Controls.
      *   - "exclusivearenas:toggle_spectate"  → any active player; opts out of playing.
      *   - "exclusivearenas:rejoin_as_player" → any spectator; rejoins as a player (lobby only).
+     *                                          Registered as a SPECTATOR item (spectator-hotbar.yml)
+     *                                          and, for compatibility, as a lobby item too.
      *   - "exclusivearenas:summon_party"     → host only, party-gated matches; summons the party.
      */
     private void registerLobbyItemHandlers() {
@@ -246,8 +249,12 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
             this.spectateOnStartHandler = new SpectateOnStartHandler(this, sessionService);
             BedwarsAPI.getGameAPI().registerLobbyItemHandler(spectateOnStartHandler);
 
+            // Spectators hold MBedwars' SPECTATOR hotbar, so the rejoin item is primarily a
+            // spectator-item handler; the lobby variant only covers an older lobby-hotbar entry.
             this.spectatorRejoinHandler = new SpectatorRejoinHandler(this, sessionService);
-            BedwarsAPI.getGameAPI().registerLobbyItemHandler(spectatorRejoinHandler);
+            BedwarsAPI.getGameAPI().registerSpectatorItemHandler(spectatorRejoinHandler);
+            this.spectatorRejoinLobbyHandler = new SpectatorRejoinHandler.LobbyVariant(this, sessionService);
+            BedwarsAPI.getGameAPI().registerLobbyItemHandler(spectatorRejoinLobbyHandler);
 
             this.partySummonLobbyItemHandler = new PartySummonLobbyItemHandler(this, sessionService);
             BedwarsAPI.getGameAPI().registerLobbyItemHandler(partySummonLobbyItemHandler);
@@ -265,7 +272,10 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                 BedwarsAPI.getGameAPI().unregisterLobbyItemHandler(spectateOnStartHandler);
             }
             if (spectatorRejoinHandler != null) {
-                BedwarsAPI.getGameAPI().unregisterLobbyItemHandler(spectatorRejoinHandler);
+                BedwarsAPI.getGameAPI().unregisterSpectatorItemHandler(spectatorRejoinHandler);
+            }
+            if (spectatorRejoinLobbyHandler != null) {
+                BedwarsAPI.getGameAPI().unregisterLobbyItemHandler(spectatorRejoinLobbyHandler);
             }
             if (partySummonLobbyItemHandler != null) {
                 BedwarsAPI.getGameAPI().unregisterLobbyItemHandler(partySummonLobbyItemHandler);
@@ -276,6 +286,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         matchControlsLobbyItemHandler = null;
         spectateOnStartHandler = null;
         spectatorRejoinHandler = null;
+        spectatorRejoinLobbyHandler = null;
         partySummonLobbyItemHandler = null;
     }
 
@@ -778,6 +789,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
                 restoreArenaMinPlayers(session, arena);
                 restoreArenaPlayersPerTeam(session, arena);
                 resetArenaEnvironment(session, arena);
+                if (quickActions != null) quickActions.clearArenaToggles(arena);
                 sessionService.endSession(session);
             } catch (Throwable t) {
                 getLogger().warning("Could not end the private match on '" + session.getArenaName()
@@ -1328,6 +1340,7 @@ public final class ExclusiveArenasPlugin extends JavaPlugin {
         restoreArenaMinPlayers(session, arena);
         restoreArenaPlayersPerTeam(session, arena);
         resetArenaEnvironment(session, arena);
+        if (quickActions != null) quickActions.clearArenaToggles(arena);
         sessionService.endSession(session);
         if (arena != null && arena.exists()) {
             arena.broadcast(Lang.msg("match.ended-broadcast"));
