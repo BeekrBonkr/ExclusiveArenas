@@ -735,11 +735,11 @@ See `config.yml`. Every key is commented inline, including the setup snippets re
 
 ## Building from source
 
-The build uses Gradle with the shadow plugin. MBedwars and MBedwarsTweaks are not on a public
-Maven repository, so their jars go in `libs/`:
+The build uses Gradle with the shadow plugin. The MBedwars API comes from MBedwars' public Maven
+repository. MBedwarsTweaks is not on one, so its jar goes in `libs/`:
 
-1. Put `MBedwars-5.5.9.1.jar` and `MBedwarsTweaks-5.1.1.jar` in `libs/` (or point the two
-   `compileOnly files(...)` lines in `build.gradle` at whatever jars you have).
+1. Put `MBedwarsTweaks-5.1.1.jar` in `libs/` (or point the `compileOnly files(...)` line in
+   `build.gradle` at whatever jar you have).
 2. Run the build:
    ```
    ./gradlew build

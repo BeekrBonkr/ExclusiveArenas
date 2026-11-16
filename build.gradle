@@ -9,11 +9,12 @@ version = '1.3.0'
 repositories {
     mavenCentral()
     maven { url = 'https://repo.papermc.io/repository/maven-public/' }
+    maven { url = 'https://repo.marcely.de/repository/maven-public/' }
 }
 
 dependencies {
     compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
-    compileOnly files('libs/MBedwars-5.5.9.1.jar')
+    compileOnly 'de.marcely.bedwars:API:5.5.9.1'
     // Optional at runtime (softdepend) — only the TweaksTimelineBridge class touches it,
     // and that class is never loaded unless the MBedwarsTweaks plugin is present.
     compileOnly files('libs/MBedwarsTweaks-5.1.1.jar')
